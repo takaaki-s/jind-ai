@@ -649,7 +649,7 @@ func (m *Manager) FindByClaudeSessionID(ccSessionID string) (*Session, bool) {
 }
 
 // HandleHookEvent processes a Claude Code hook event and updates session status
-func (m *Manager) HandleHookEvent(ccSessionID, ccvaletSessionID, eventName, notificationType string) {
+func (m *Manager) HandleHookEvent(ccSessionID, ccvaletSessionID, eventName, notificationType, cwd string) {
 	var session *Session
 	var ok bool
 
@@ -681,6 +681,16 @@ func (m *Manager) HandleHookEvent(ccSessionID, ccvaletSessionID, eventName, noti
 		session.ClaudeSessionID = ccSessionID
 	}
 
+	// Update CWD from Claude Code's actual working directory
+	cwdChanged := false
+	if cwd != "" && session.WorkDir != cwd {
+		session.CurrentWorkDir = cwd
+		session.WorkDir = cwd
+		cwdChanged = true
+	} else if cwd != "" {
+		session.CurrentWorkDir = cwd
+	}
+
 	switch eventName {
 	case "UserPromptSubmit":
 		session.Status = StatusThinking
@@ -706,10 +716,15 @@ func (m *Manager) HandleHookEvent(ccSessionID, ccvaletSessionID, eventName, noti
 	}
 	m.mu.Unlock()
 
-	// Persist status change and send notifications
-	if oldStatus != session.Status {
+	// Persist status/CWD change and send notifications
+	if oldStatus != session.Status || cwdChanged {
 		m.store.Save(session)
-		debugLog("[HOOK] Session %s: %s -> %s (hook: %s)", sessionName, oldStatus, session.Status, eventName)
+		if oldStatus != session.Status {
+			debugLog("[HOOK] Session %s: %s -> %s (hook: %s)", sessionName, oldStatus, session.Status, eventName)
+		}
+		if cwdChanged {
+			debugLog("[HOOK] Session %s: CWD updated to %s", sessionName, cwd)
+		}
 	}
 
 	switch eventName {

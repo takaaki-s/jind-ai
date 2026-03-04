@@ -17,6 +17,7 @@ type hookInput struct {
 	SessionID        string `json:"session_id"`
 	HookEventName    string `json:"hook_event_name"`
 	NotificationType string `json:"notification_type,omitempty"`
+	CWD              string `json:"cwd,omitempty"`
 }
 
 // hookLog writes a debug log line to ~/.ccvalet/hook-debug.log when CCVALET_DEBUG=1.
@@ -77,6 +78,7 @@ var hookCmd = &cobra.Command{
 			CcvaletSessionID: ccvaletSessionID,
 			HookEventName:    input.HookEventName,
 			NotificationType: input.NotificationType,
+			CWD:              input.CWD,
 		}); err != nil {
 			hookLog("SendHook failed: %v", err)
 		}

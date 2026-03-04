@@ -218,6 +218,7 @@ type HookRequest struct {
 	CcvaletSessionID string `json:"ccvalet_session_id,omitempty"`
 	HookEventName    string `json:"hook_event_name"`
 	NotificationType string `json:"notification_type,omitempty"`
+	CWD              string `json:"cwd,omitempty"`
 }
 
 func (s *Server) handleHook(data json.RawMessage) Response {
@@ -225,7 +226,7 @@ func (s *Server) handleHook(data json.RawMessage) Response {
 	if err := json.Unmarshal(data, &req); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
-	s.manager.HandleHookEvent(req.SessionID, req.CcvaletSessionID, req.HookEventName, req.NotificationType)
+	s.manager.HandleHookEvent(req.SessionID, req.CcvaletSessionID, req.HookEventName, req.NotificationType, req.CWD)
 	return Response{Success: true}
 }
 
