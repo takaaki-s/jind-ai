@@ -399,7 +399,10 @@ func (c *Client) SetupAutoCleanDeadPanes() error {
 }
 
 // TagManagedPane marks a pane with PaneKeepTag so it is preserved on exit.
+// Also sets remain-on-exit at the pane level, so only managed panes stay
+// after process exit. User-added panes (untagged) are immediately destroyed.
 func (c *Client) TagManagedPane(target string) error {
+	c.SetPaneOption(target, "remain-on-exit", "on")
 	return c.SetPaneOption(target, PaneKeepTag, "1")
 }
 

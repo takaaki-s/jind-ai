@@ -144,21 +144,21 @@ func (m *Manager) ensureTmuxClient() {
 
 // configureInnerTmux applies ccvalet-specific settings to the inner tmux server.
 // User's ~/.tmux.conf is automatically loaded by tmux on server startup.
-// Only ccvalet-specific settings (remain-on-exit, pane-died hook) are added here.
 // Must only be called after the inner tmux server is confirmed to exist (i.e., after
 // a session has been created).
 // This is called every time a session is started (not just once) because the inner
 // tmux server may have exited and restarted between sessions. The overhead is minimal.
+//
+// Note: remain-on-exit is NOT set globally. It is set per-pane only on managed
+// (tagged) panes via TagManagedPane, so user-added panes are immediately destroyed
+// on exit instead of showing "Pane is dead".
 func (m *Manager) configureInnerTmux() {
 	if m.tmuxClient == nil {
 		return
 	}
-	if err := m.tmuxClient.SetOption("remain-on-exit", "on", true); err != nil {
-		debugLog("[TMUX] Inner tmux server not ready: %v", err)
-		return
-	}
+	// pane-died hook as safety net: kill any dead panes that lack the keep tag.
 	m.tmuxClient.SetupAutoCleanDeadPanes()
-	debugLog("[TMUX] Inner tmux server configured (remain-on-exit, pane-died hook)")
+	debugLog("[TMUX] Inner tmux server configured (pane-died hook)")
 }
 
 // NewManager creates a new session manager

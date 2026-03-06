@@ -103,8 +103,7 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 	tuiPaneID, _ := tc.GetPaneID(windowTarget)
 
 	// Configure the outer session
-	tc.SetOption("remain-on-exit", "on", true) // Keep all panes on exit (managed panes need this)
-	tc.SetupAutoCleanDeadPanes()               // Auto-kill untagged dead panes
+	tc.SetupAutoCleanDeadPanes() // Safety net: auto-kill untagged dead panes
 	if tuiPaneID != "" {
 		tc.TagManagedPane(tuiPaneID) // TUI pane survives exit
 	}
