@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/takaaki-s/claude-code-valet/internal/config"
 	"github.com/takaaki-s/claude-code-valet/internal/session"
 )
 
@@ -962,147 +964,63 @@ func TestApplySearchFilter(t *testing.T) {
 	})
 }
 
-// --- s2time ---
+// --- convertDirHistoryEntries ---
 
-func TestS2time(t *testing.T) {
-	tests := []struct {
-		name string
-		nano int64
-	}{
-		{
-			name: "zero",
-			nano: 0,
-		},
-		{
-			name: "one second",
-			nano: int64(time.Second),
-		},
-		{
-			name: "specific timestamp",
-			nano: time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC).UnixNano(),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := s2time(tt.nano)
-			want := time.Unix(0, tt.nano)
-			if !got.Equal(want) {
-				t.Errorf("s2time(%d) = %v, want %v", tt.nano, got, want)
-			}
-		})
-	}
-}
-
-// --- computeDirHistory ---
-
-func TestComputeDirHistory(t *testing.T) {
+func TestConvertDirHistoryEntries(t *testing.T) {
 	now := time.Now()
 
-	t.Run("empty sessions returns empty", func(t *testing.T) {
-		got := computeDirHistory(nil, "local", 5)
+	t.Run("empty input returns empty", func(t *testing.T) {
+		got := convertDirHistoryEntries(nil, "local")
 		if len(got) != 0 {
-			t.Errorf("computeDirHistory(nil) should return empty, got %d entries", len(got))
+			t.Errorf("convertDirHistoryEntries(nil) should return empty, got %d entries", len(got))
 		}
 	})
 
-	t.Run("deduplicates by WorkDir keeping most recent", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/home/user/proj", LastActiveAt: now.Add(-2 * time.Hour)},
-			{WorkDir: "/home/user/proj", LastActiveAt: now.Add(-1 * time.Hour)},
-			{WorkDir: "/home/user/other", LastActiveAt: now.Add(-3 * time.Hour)},
+	t.Run("local host converts home prefix to tilde in DisplayPath", func(t *testing.T) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("cannot determine home directory")
 		}
-		got := computeDirHistory(sessions, "local", 5)
-		if len(got) != 2 {
-			t.Fatalf("computeDirHistory should deduplicate, got %d entries, want 2", len(got))
+		entries := []config.DirHistoryEntry{
+			{Path: home + "/myproject", HostID: "local", LastUsedAt: now},
 		}
-		// Sorted by most recent first: /home/user/proj (1h ago), then /home/user/other (3h ago)
-		if got[0].Path != "/home/user/proj" {
-			t.Errorf("first entry Path = %q, want %q", got[0].Path, "/home/user/proj")
-		}
-		if got[1].Path != "/home/user/other" {
-			t.Errorf("second entry Path = %q, want %q", got[1].Path, "/home/user/other")
-		}
-	})
 
-	t.Run("sorted by LastActiveAt descending", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/a", LastActiveAt: now.Add(-3 * time.Hour)},
-			{WorkDir: "/b", LastActiveAt: now.Add(-1 * time.Hour)},
-			{WorkDir: "/c", LastActiveAt: now.Add(-2 * time.Hour)},
-		}
-		got := computeDirHistory(sessions, "local", 5)
-		if len(got) != 3 {
-			t.Fatalf("got %d entries, want 3", len(got))
-		}
-		if got[0].Path != "/b" {
-			t.Errorf("first entry = %q, want /b (most recent)", got[0].Path)
-		}
-		if got[1].Path != "/c" {
-			t.Errorf("second entry = %q, want /c", got[1].Path)
-		}
-		if got[2].Path != "/a" {
-			t.Errorf("third entry = %q, want /a (oldest)", got[2].Path)
-		}
-	})
+		got := convertDirHistoryEntries(entries, "local")
 
-	t.Run("limited to maxEntries", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/a", LastActiveAt: now.Add(-1 * time.Hour)},
-			{WorkDir: "/b", LastActiveAt: now.Add(-2 * time.Hour)},
-			{WorkDir: "/c", LastActiveAt: now.Add(-3 * time.Hour)},
-			{WorkDir: "/d", LastActiveAt: now.Add(-4 * time.Hour)},
-		}
-		got := computeDirHistory(sessions, "local", 2)
-		if len(got) != 2 {
-			t.Fatalf("got %d entries, want 2 (maxEntries=2)", len(got))
-		}
-		if got[0].Path != "/a" {
-			t.Errorf("first entry = %q, want /a", got[0].Path)
-		}
-		if got[1].Path != "/b" {
-			t.Errorf("second entry = %q, want /b", got[1].Path)
-		}
-	})
-
-	t.Run("filters by hostID", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/local/proj", HostID: "", LastActiveAt: now},
-			{WorkDir: "/remote/proj", HostID: "remote1", LastActiveAt: now},
-		}
-		got := computeDirHistory(sessions, "local", 5)
 		if len(got) != 1 {
-			t.Fatalf("got %d entries, want 1 (local only)", len(got))
+			t.Fatalf("expected 1 entry, got %d", len(got))
 		}
-		if got[0].Path != "/local/proj" {
-			t.Errorf("entry Path = %q, want %q", got[0].Path, "/local/proj")
+		if got[0].Path != home+"/myproject" {
+			t.Errorf("Path should remain absolute: got %q", got[0].Path)
 		}
-	})
-
-	t.Run("filters by remote hostID", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/local/proj", HostID: "", LastActiveAt: now},
-			{WorkDir: "/remote/proj", HostID: "remote1", LastActiveAt: now},
-		}
-		got := computeDirHistory(sessions, "remote1", 5)
-		if len(got) != 1 {
-			t.Fatalf("got %d entries, want 1 (remote1 only)", len(got))
-		}
-		if got[0].Path != "/remote/proj" {
-			t.Errorf("entry Path = %q, want %q", got[0].Path, "/remote/proj")
+		if got[0].DisplayPath != "~/myproject" {
+			t.Errorf("DisplayPath = %q, want %q", got[0].DisplayPath, "~/myproject")
 		}
 	})
 
-	t.Run("skips sessions with empty WorkDir", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "", LastActiveAt: now},
-			{WorkDir: "/valid", LastActiveAt: now},
+	t.Run("remote host does not apply tilde conversion", func(t *testing.T) {
+		entries := []config.DirHistoryEntry{
+			{Path: "~/remote-project", HostID: "remote-dev", LastUsedAt: now},
 		}
-		got := computeDirHistory(sessions, "local", 5)
+
+		got := convertDirHistoryEntries(entries, "remote-dev")
+
 		if len(got) != 1 {
-			t.Fatalf("got %d entries, want 1 (empty WorkDir skipped)", len(got))
+			t.Fatalf("expected 1 entry, got %d", len(got))
 		}
-		if got[0].Path != "/valid" {
-			t.Errorf("entry Path = %q, want %q", got[0].Path, "/valid")
+		if got[0].DisplayPath != "~/remote-project" {
+			t.Errorf("DisplayPath = %q, want %q", got[0].DisplayPath, "~/remote-project")
+		}
+	})
+
+	t.Run("preserves LastUsedAt", func(t *testing.T) {
+		entries := []config.DirHistoryEntry{
+			{Path: "/a", HostID: "local", LastUsedAt: now},
+		}
+
+		got := convertDirHistoryEntries(entries, "local")
+		if !got[0].LastUsedAt.Equal(now) {
+			t.Errorf("LastUsedAt not preserved")
 		}
 	})
 }

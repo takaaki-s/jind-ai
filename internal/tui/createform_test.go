@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/takaaki-s/claude-code-valet/internal/config"
 	"github.com/takaaki-s/claude-code-valet/internal/daemon"
-	"github.com/takaaki-s/claude-code-valet/internal/session"
 )
 
 // --- hasMultipleHosts ---
@@ -174,67 +174,30 @@ func TestCreateFormModel_SelectHost(t *testing.T) {
 	})
 }
 
-// --- computeDirHistory (additional cases not in model_test.go) ---
+// --- convertDirHistoryEntries (additional cases) ---
 
-func TestComputeDirHistory_TildeConversion(t *testing.T) {
+func TestConvertDirHistoryEntries_MultipleEntries(t *testing.T) {
+	now := time.Now()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("cannot determine home directory")
 	}
-	now := time.Now()
 
-	t.Run("local host converts home prefix to tilde in DisplayPath", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: home + "/myproject", LastActiveAt: now},
-		}
+	entries := []config.DirHistoryEntry{
+		{Path: home + "/project1", HostID: "local", LastUsedAt: now},
+		{Path: home + "/project2", HostID: "local", LastUsedAt: now.Add(-time.Hour)},
+	}
 
-		result := computeDirHistory(sessions, "local", 10)
+	result := convertDirHistoryEntries(entries, "local")
 
-		if len(result) != 1 {
-			t.Fatalf("expected 1 entry, got %d", len(result))
-		}
-		if result[0].Path != home+"/myproject" {
-			t.Errorf("Path should remain absolute: got %q", result[0].Path)
-		}
-		if result[0].DisplayPath != "~/myproject" {
-			t.Errorf("DisplayPath = %q, want %q", result[0].DisplayPath, "~/myproject")
-		}
-	})
-
-	t.Run("remote host does not apply tilde conversion", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/remote/home/project", HostID: "remote-dev", LastActiveAt: now},
-		}
-
-		result := computeDirHistory(sessions, "remote-dev", 10)
-
-		if len(result) != 1 {
-			t.Fatalf("expected 1 entry, got %d", len(result))
-		}
-		// For remote hosts, DisplayPath should match Path (no tilde conversion)
-		if result[0].DisplayPath != "/remote/home/project" {
-			t.Errorf("DisplayPath = %q, want %q (no tilde conversion for remote)", result[0].DisplayPath, "/remote/home/project")
-		}
-	})
-}
-
-func TestComputeDirHistory_EmptyHostIDNormalization(t *testing.T) {
-	now := time.Now()
-
-	t.Run("empty hostID parameter is treated as local", func(t *testing.T) {
-		sessions := []session.Info{
-			{WorkDir: "/home/user/proj1", HostID: "", LastActiveAt: now},
-			{WorkDir: "/remote/proj", HostID: "remote-dev", LastActiveAt: now},
-		}
-
-		// Pass empty string for hostID (function normalizes to "local")
-		result := computeDirHistory(sessions, "", 10)
-
-		if len(result) != 1 {
-			t.Fatalf("expected 1 local entry, got %d", len(result))
-		}
-		if result[0].Path != "/home/user/proj1" {
-			t.Errorf("Path = %q, want %q", result[0].Path, "/home/user/proj1")
-		}
-	})
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result))
+	}
+	if result[0].DisplayPath != "~/project1" {
+		t.Errorf("DisplayPath[0] = %q, want %q", result[0].DisplayPath, "~/project1")
+	}
+	if result[1].DisplayPath != "~/project2" {
+		t.Errorf("DisplayPath[1] = %q, want %q", result[1].DisplayPath, "~/project2")
+	}
 }

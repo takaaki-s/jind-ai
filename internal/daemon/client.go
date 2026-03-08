@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/takaaki-s/claude-code-valet/internal/config"
 	"github.com/takaaki-s/claude-code-valet/internal/notify"
 	"github.com/takaaki-s/claude-code-valet/internal/session"
 )
@@ -225,6 +226,45 @@ func (c *Client) NotificationHistoryWithHostID() ([]notify.Entry, error) {
 		entries[i].HostID = c.hostID
 	}
 	return entries, nil
+}
+
+// DirHistory はディレクトリ使用履歴を取得する
+func (c *Client) DirHistory(hostID string, maxEntries int) ([]config.DirHistoryEntry, error) {
+	data, _ := json.Marshal(struct {
+		HostID     string `json:"host_id"`
+		MaxEntries int    `json:"max_entries"`
+	}{HostID: hostID, MaxEntries: maxEntries})
+
+	resp, err := c.send(Request{Action: "dir-history", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+
+	var entries []config.DirHistoryEntry
+	if err := json.Unmarshal(resp.Data, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// RemoveDirHistory はディレクトリ履歴エントリを削除する
+func (c *Client) RemoveDirHistory(hostID, path string) error {
+	data, _ := json.Marshal(struct {
+		HostID string `json:"host_id"`
+		Path   string `json:"path"`
+	}{HostID: hostID, Path: path})
+
+	resp, err := c.send(Request{Action: "remove-dir-history", Data: data})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return errors.New(resp.Error)
+	}
+	return nil
 }
 
 // ListHosts はホスト一覧を取得する

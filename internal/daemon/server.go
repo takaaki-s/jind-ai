@@ -207,6 +207,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleHook(req.Data)
 	case "notification-history":
 		return s.handleNotificationHistory()
+	case "dir-history":
+		return s.handleDirHistory(req.Data)
+	case "remove-dir-history":
+		return s.handleRemoveDirHistory(req.Data)
 	default:
 		return Response{Success: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
@@ -323,6 +327,13 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 	}
 
 	s.createMu.Unlock()
+
+	// Record directory usage in persistent history
+	histHostID := req.HostID
+	if histHostID == "" {
+		histHostID = "local"
+	}
+	_ = s.stateMgr.RecordDirUsage(histHostID, req.WorkDir)
 
 	// Start session in background if requested
 	if req.Start {
@@ -552,6 +563,43 @@ func (s *Server) handleListHosts() Response {
 
 	data, _ := json.Marshal(hosts)
 	return Response{Success: true, Data: data}
+}
+
+func (s *Server) handleDirHistory(data json.RawMessage) Response {
+	var req struct {
+		HostID     string `json:"host_id"`
+		MaxEntries int    `json:"max_entries"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.HostID == "" {
+		req.HostID = "local"
+	}
+	if req.MaxEntries <= 0 {
+		req.MaxEntries = 5
+	}
+
+	entries := s.stateMgr.GetDirHistory(req.HostID, req.MaxEntries)
+	respData, _ := json.Marshal(entries)
+	return Response{Success: true, Data: respData}
+}
+
+func (s *Server) handleRemoveDirHistory(data json.RawMessage) Response {
+	var req struct {
+		HostID string `json:"host_id"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.HostID == "" {
+		req.HostID = "local"
+	}
+	if err := s.stateMgr.RemoveDirHistory(req.HostID, req.Path); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	return Response{Success: true}
 }
 
 // replaceEnv replaces or appends an environment variable in the given env slice.

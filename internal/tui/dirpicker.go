@@ -50,6 +50,13 @@ type HistoryEntry struct {
 	Path        string    // フルパスまたは ~/... 形式
 	DisplayPath string    // 表示用パス（~ 展開済み）
 	LastUsedAt  time.Time // 最終利用日時
+	HostID      string    // ホストID（"local" またはリモートホストID）
+}
+
+// DirHistoryRemoveMsg is emitted when a history entry should be removed from persistent storage.
+type DirHistoryRemoveMsg struct {
+	HostID string
+	Path   string
 }
 
 // DirPickerModel is a directory browser component for selecting a working directory.
@@ -271,6 +278,27 @@ func (m DirPickerModel) Update(msg tea.Msg) (DirPickerModel, tea.Cmd) {
 				if m.cursor < historyLen {
 					// 履歴エントリ選択: 即座にそのパスを返す
 					entry := m.filteredHistory[m.cursor]
+
+					// ローカルの場合: ディレクトリ存在チェック
+					if !m.IsRemote() {
+						checkPath := entry.Path
+						if strings.HasPrefix(checkPath, "~/") {
+							if home, err := os.UserHomeDir(); err == nil {
+								checkPath = filepath.Join(home, checkPath[2:])
+							}
+						}
+						if info, err := os.Stat(checkPath); err != nil || !info.IsDir() {
+							// 存在しない: 表示リストから除去 + 削除メッセージを返す
+							m.removeFilteredHistoryEntry(m.cursor)
+							return m, func() tea.Msg {
+								return DirHistoryRemoveMsg{
+									HostID: entry.HostID,
+									Path:   entry.Path,
+								}
+							}
+						}
+					}
+
 					m.selected = true
 					m.result = entry.Path
 					return m, nil
@@ -652,6 +680,28 @@ func (m *DirPickerModel) updateFilteredHistory() {
 	}
 	if m.cursor >= m.totalItems() {
 		m.cursor = 0
+	}
+}
+
+// removeFilteredHistoryEntry removes a history entry at the given index from
+// both filteredHistory and historyDirs, adjusting the cursor as needed.
+func (m *DirPickerModel) removeFilteredHistoryEntry(idx int) {
+	if idx < 0 || idx >= len(m.filteredHistory) {
+		return
+	}
+	removed := m.filteredHistory[idx]
+	m.filteredHistory = append(m.filteredHistory[:idx], m.filteredHistory[idx+1:]...)
+
+	// historyDirsからも除去
+	for i, h := range m.historyDirs {
+		if h.Path == removed.Path && h.HostID == removed.HostID {
+			m.historyDirs = append(m.historyDirs[:i], m.historyDirs[i+1:]...)
+			break
+		}
+	}
+
+	if m.cursor >= m.totalItems() && m.cursor > 0 {
+		m.cursor--
 	}
 }
 
