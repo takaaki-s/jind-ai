@@ -2,10 +2,17 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/takaaki-s/claude-code-valet/internal/config"
+	"github.com/takaaki-s/claude-code-valet/internal/host"
+	"github.com/takaaki-s/claude-code-valet/internal/notify"
+	"github.com/takaaki-s/claude-code-valet/internal/session"
 )
 
 // setupTestServer creates a Server and Client connected via a Unix socket in t.TempDir().
@@ -717,5 +724,204 @@ func TestIntegration_GetSessionByList(t *testing.T) {
 	}
 	if got.CreatedAt.IsZero() {
 		t.Error("CreatedAt is zero")
+	}
+}
+
+// --- pollRemoteOnce tests ---
+
+// mockSlaveClient implements host.SlaveClient for testing pollRemoteOnce.
+type mockSlaveClient struct {
+	entries []notify.Entry
+	err     error
+	running bool
+}
+
+func (m *mockSlaveClient) IsRunning() bool {
+	return m.running
+}
+
+func (m *mockSlaveClient) ListWithHostID() ([]session.Info, error) {
+	return nil, nil
+}
+
+func (m *mockSlaveClient) NotificationHistoryWithHostID() ([]notify.Entry, error) {
+	return m.entries, m.err
+}
+
+func TestPollRemoteOnce_NewEntries(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	t1 := time.Now().Add(-2 * time.Second)
+	t2 := time.Now().Add(-1 * time.Second)
+
+	mock := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{
+			{SessionID: "s1", SessionName: "alpha", Type: "permission", Message: "[alpha] waiting", Timestamp: t1, HostID: "ec2"},
+			{SessionID: "s2", SessionName: "beta", Type: "task_complete", Message: "[beta] done", Timestamp: t2, HostID: "ec2"},
+		},
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	lastSeen := make(map[string]time.Time)
+	server.pollRemoteOnce(lastSeen)
+
+	// lastSeen should be advanced to t2 (the latest entry)
+	if !lastSeen["ec2"].Equal(t2) {
+		t.Errorf("lastSeen[ec2]: got %v, want %v", lastSeen["ec2"], t2)
+	}
+}
+
+func TestPollRemoteOnce_SkipsAlreadySeen(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	t1 := time.Now().Add(-2 * time.Second)
+	t2 := time.Now().Add(-1 * time.Second)
+
+	mock := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{
+			{SessionID: "s1", Type: "permission", Timestamp: t1, HostID: "ec2"},
+			{SessionID: "s2", Type: "task_complete", Timestamp: t2, HostID: "ec2"},
+		},
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	// Pre-set lastSeen to t2, so both entries should be skipped
+	lastSeen := map[string]time.Time{"ec2": t2}
+	server.pollRemoteOnce(lastSeen)
+
+	// lastSeen should remain unchanged
+	if !lastSeen["ec2"].Equal(t2) {
+		t.Errorf("lastSeen[ec2] should not change: got %v, want %v", lastSeen["ec2"], t2)
+	}
+}
+
+func TestPollRemoteOnce_PartialNew(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	t1 := time.Now().Add(-3 * time.Second)
+	t2 := time.Now().Add(-2 * time.Second)
+	t3 := time.Now().Add(-1 * time.Second)
+
+	mock := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{
+			{SessionID: "s1", Type: "permission", Timestamp: t1, HostID: "ec2"},
+			{SessionID: "s2", Type: "task_complete", Timestamp: t2, HostID: "ec2"},
+			{SessionID: "s3", Type: "permission", Timestamp: t3, HostID: "ec2"},
+		},
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	// Only t1 has been seen; t2 and t3 should be new
+	lastSeen := map[string]time.Time{"ec2": t1}
+	server.pollRemoteOnce(lastSeen)
+
+	if !lastSeen["ec2"].Equal(t3) {
+		t.Errorf("lastSeen[ec2]: got %v, want %v", lastSeen["ec2"], t3)
+	}
+}
+
+func TestPollRemoteOnce_MultipleHosts(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	t1 := time.Now().Add(-2 * time.Second)
+	t2 := time.Now().Add(-1 * time.Second)
+
+	mock1 := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{
+			{SessionID: "s1", Type: "permission", Timestamp: t1, HostID: "ec2"},
+		},
+	}
+	mock2 := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{
+			{SessionID: "s2", Type: "task_complete", Timestamp: t2, HostID: "docker"},
+		},
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{
+		{ID: "ec2", Type: "ssh"},
+		{ID: "docker", Type: "docker"},
+	})
+	registry.SetClient("ec2", mock1)
+	registry.SetClient("docker", mock2)
+	server.hostRegistry = registry
+
+	lastSeen := make(map[string]time.Time)
+	server.pollRemoteOnce(lastSeen)
+
+	if !lastSeen["ec2"].Equal(t1) {
+		t.Errorf("lastSeen[ec2]: got %v, want %v", lastSeen["ec2"], t1)
+	}
+	if !lastSeen["docker"].Equal(t2) {
+		t.Errorf("lastSeen[docker]: got %v, want %v", lastSeen["docker"], t2)
+	}
+}
+
+func TestPollRemoteOnce_NilClient(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	// Client is nil (not yet connected)
+	server.hostRegistry = registry
+
+	lastSeen := make(map[string]time.Time)
+	// Should not panic
+	server.pollRemoteOnce(lastSeen)
+
+	if _, ok := lastSeen["ec2"]; ok {
+		t.Error("lastSeen should not have entry for host with nil client")
+	}
+}
+
+func TestPollRemoteOnce_ClientError(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	mock := &mockSlaveClient{
+		running: true,
+		err:     fmt.Errorf("connection refused"),
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	lastSeen := make(map[string]time.Time)
+	server.pollRemoteOnce(lastSeen)
+
+	if _, ok := lastSeen["ec2"]; ok {
+		t.Error("lastSeen should not have entry when client returns error")
+	}
+}
+
+func TestPollRemoteOnce_EmptyEntries(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	mock := &mockSlaveClient{
+		running: true,
+		entries: []notify.Entry{},
+	}
+
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	lastSeen := make(map[string]time.Time)
+	server.pollRemoteOnce(lastSeen)
+
+	if _, ok := lastSeen["ec2"]; ok {
+		t.Error("lastSeen should not have entry for host with empty entries")
 	}
 }

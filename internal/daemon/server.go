@@ -502,29 +502,36 @@ func (s *Server) pollRemoteNotifications() {
 		case <-ticker.C:
 		}
 
-		for _, h := range s.hostRegistry.Remotes() {
-			if h.Client == nil {
+		s.pollRemoteOnce(lastSeen)
+	}
+}
+
+// pollRemoteOnce performs a single iteration of remote notification polling.
+// It fetches notification histories from all remote slaves, compares against
+// lastSeen timestamps, and sends local desktop notifications for new entries.
+func (s *Server) pollRemoteOnce(lastSeen map[string]time.Time) {
+	for _, h := range s.hostRegistry.Remotes() {
+		if h.Client == nil {
+			continue
+		}
+		entries, err := h.Client.NotificationHistoryWithHostID()
+		if err != nil {
+			continue
+		}
+		cutoff := lastSeen[h.ID]
+		for _, entry := range entries {
+			if !entry.Timestamp.After(cutoff) {
 				continue
 			}
-			entries, err := h.Client.NotificationHistoryWithHostID()
-			if err != nil {
-				continue
+			// New entry — send local desktop notification
+			switch entry.Type {
+			case "permission":
+				s.manager.NotifyDesktop("Permission Required", entry.Message)
+			case "task_complete":
+				s.manager.NotifyDesktop("Task Complete", entry.Message)
 			}
-			cutoff := lastSeen[h.ID]
-			for _, entry := range entries {
-				if !entry.Timestamp.After(cutoff) {
-					continue
-				}
-				// New entry — send local desktop notification
-				switch entry.Type {
-				case "permission":
-					s.manager.NotifyDesktop("Permission Required", entry.Message)
-				case "task_complete":
-					s.manager.NotifyDesktop("Task Complete", entry.Message)
-				}
-				if entry.Timestamp.After(lastSeen[h.ID]) {
-					lastSeen[h.ID] = entry.Timestamp
-				}
+			if entry.Timestamp.After(lastSeen[h.ID]) {
+				lastSeen[h.ID] = entry.Timestamp
 			}
 		}
 	}
