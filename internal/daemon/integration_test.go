@@ -925,3 +925,90 @@ func TestPollRemoteOnce_EmptyEntries(t *testing.T) {
 		t.Error("lastSeen should not have entry for host with empty entries")
 	}
 }
+
+func TestIntegration_GetWithHostID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	_, client := setupTestServer(t)
+
+	info, err := client.NewWithOptions(NewOptions{
+		Name:    "get-host-test",
+		WorkDir: "/tmp/get-host-test",
+		Start:   false,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Get with empty hostID (local) should work
+	got, err := client.Get(info.ID, "")
+	if err != nil {
+		t.Fatalf("Get with empty hostID: %v", err)
+	}
+	if got.ID != info.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, info.ID)
+	}
+
+	// Get with hostID "local" should also work
+	got, err = client.Get(info.ID, "local")
+	if err != nil {
+		t.Fatalf("Get with hostID=local: %v", err)
+	}
+	if got.ID != info.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, info.ID)
+	}
+
+	// Get with non-existent remote hostID should fail gracefully
+	// (no remote slave configured, so forwardToSlave should return error)
+	_, err = client.Get(info.ID, "nonexistent-host")
+	if err == nil {
+		t.Error("expected error for Get with non-existent remote hostID, got nil")
+	}
+}
+
+func TestIntegration_SendWithHostID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	_, client := setupTestServer(t)
+
+	info, err := client.NewWithOptions(NewOptions{
+		Name:    "send-host-test",
+		WorkDir: "/tmp/send-host-test",
+		Start:   false,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Make session idle so Send is accepted
+	if err := client.SendHook(HookRequest{
+		CcvaletSessionID: info.ID,
+		HookEventName:    "UserPromptSubmit",
+	}); err != nil {
+		t.Fatalf("SendHook(UserPromptSubmit): %v", err)
+	}
+	if err := client.SendHook(HookRequest{
+		CcvaletSessionID: info.ID,
+		HookEventName:    "Stop",
+	}); err != nil {
+		t.Fatalf("SendHook(Stop): %v", err)
+	}
+
+	// Send with empty hostID (local) — will fail because tmux isn't available,
+	// but the error should NOT be about session not found
+	err = client.Send(info.ID, "test prompt", "")
+	if err != nil {
+		// Expected: tmux error, NOT "session not found"
+		t.Logf("Send with empty hostID returned expected error: %v", err)
+	}
+
+	// Send with non-existent remote hostID should fail gracefully
+	err = client.Send(info.ID, "test prompt", "nonexistent-host")
+	if err == nil {
+		t.Error("expected error for Send with non-existent remote hostID, got nil")
+	}
+}

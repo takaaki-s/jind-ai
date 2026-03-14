@@ -395,6 +395,11 @@ func (s *Server) handleGet(data json.RawMessage) Response {
 		return Response{Success: false, Error: err.Error()}
 	}
 
+	// Forward to the corresponding slave if destined for a remote host
+	if req.HostID != "" && req.HostID != "local" {
+		return s.forwardToSlave(req.HostID, Request{Action: "get", Data: data})
+	}
+
 	sess, ok := s.manager.Get(req.ID)
 	if !ok {
 		return Response{Success: false, Error: fmt.Sprintf("session not found: %s", req.ID)}
@@ -426,6 +431,7 @@ func (s *Server) handleGet(data json.RawMessage) Response {
 type SendRequest struct {
 	ID     string `json:"id"`
 	Prompt string `json:"prompt"`
+	HostID string `json:"host_id,omitempty"` // Target host (empty = "local")
 }
 
 func (s *Server) handleSend(data json.RawMessage) Response {
@@ -433,6 +439,12 @@ func (s *Server) handleSend(data json.RawMessage) Response {
 	if err := json.Unmarshal(data, &req); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
+
+	// Forward to the corresponding slave if destined for a remote host
+	if req.HostID != "" && req.HostID != "local" {
+		return s.forwardToSlave(req.HostID, Request{Action: "send", Data: data})
+	}
+
 	if req.Prompt == "" {
 		return Response{Success: false, Error: "prompt is required"}
 	}

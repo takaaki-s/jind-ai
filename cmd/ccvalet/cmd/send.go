@@ -53,12 +53,12 @@ Use "-" as the prompt to read from stdin:
 
 		client := daemon.NewClient(getSocketPath())
 
-		sessionID, sessionName, err := resolveSession(client, nameOrID)
+		sessionID, sessionName, hostID, err := resolveSession(client, nameOrID)
 		if err != nil {
 			return err
 		}
 
-		if err := client.Send(sessionID, prompt); err != nil {
+		if err := client.Send(sessionID, prompt, hostID); err != nil {
 			return err
 		}
 

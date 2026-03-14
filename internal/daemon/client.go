@@ -106,11 +106,9 @@ func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, error) {
 	return &info, nil
 }
 
-// Get retrieves a single session by ID
-func (c *Client) Get(id string) (*session.Info, error) {
-	data, _ := json.Marshal(struct {
-		ID string `json:"id"`
-	}{ID: id})
+// Get retrieves a single session by ID, optionally on a remote host
+func (c *Client) Get(id string, hostID string) (*session.Info, error) {
+	data, _ := json.Marshal(IDRequest{ID: id, HostID: hostID})
 
 	resp, err := c.send(Request{Action: "get", Data: data})
 	if err != nil {
@@ -127,9 +125,9 @@ func (c *Client) Get(id string) (*session.Info, error) {
 	return &info, nil
 }
 
-// Send sends a prompt to a session
-func (c *Client) Send(id, prompt string) error {
-	data, _ := json.Marshal(SendRequest{ID: id, Prompt: prompt})
+// Send sends a prompt to a session, optionally on a remote host
+func (c *Client) Send(id, prompt, hostID string) error {
+	data, _ := json.Marshal(SendRequest{ID: id, Prompt: prompt, HostID: hostID})
 	resp, err := c.send(Request{Action: "send", Data: data})
 	if err != nil {
 		return err

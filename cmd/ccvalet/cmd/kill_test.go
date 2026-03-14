@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+
+	"github.com/takaaki-s/claude-code-valet/internal/session"
 )
 
 func TestRenderActionResultJSON(t *testing.T) {
@@ -53,4 +55,90 @@ func TestRenderActionResultJSON(t *testing.T) {
 			t.Errorf("expected name %q, got %v", "other-session", parsed["name"])
 		}
 	})
+}
+
+func TestResolveSession_ReturnsHostID(t *testing.T) {
+	// resolveSession should return hostID from the session info.
+	// We test the logic by calling resolveSessionFromList directly.
+
+	tests := []struct {
+		name       string
+		sessions   []session.Info
+		nameOrID   string
+		wantID     string
+		wantName   string
+		wantHostID string
+		wantErr    bool
+	}{
+		{
+			name: "local session by name",
+			sessions: []session.Info{
+				{ID: "aaa", Name: "my-session", HostID: "local"},
+			},
+			nameOrID:   "my-session",
+			wantID:     "aaa",
+			wantName:   "my-session",
+			wantHostID: "local",
+		},
+		{
+			name: "remote session by name",
+			sessions: []session.Info{
+				{ID: "bbb", Name: "remote-sess", HostID: "ec2-prod"},
+			},
+			nameOrID:   "remote-sess",
+			wantID:     "bbb",
+			wantName:   "remote-sess",
+			wantHostID: "ec2-prod",
+		},
+		{
+			name: "session by ID",
+			sessions: []session.Info{
+				{ID: "ccc-123", Name: "some-session", HostID: "docker-dev"},
+			},
+			nameOrID:   "ccc-123",
+			wantID:     "ccc-123",
+			wantName:   "some-session",
+			wantHostID: "docker-dev",
+		},
+		{
+			name: "session with empty hostID",
+			sessions: []session.Info{
+				{ID: "ddd", Name: "no-host", HostID: ""},
+			},
+			nameOrID:   "no-host",
+			wantID:     "ddd",
+			wantName:   "no-host",
+			wantHostID: "",
+		},
+		{
+			name:     "not found",
+			sessions: []session.Info{},
+			nameOrID: "nonexistent",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, name, hostID, err := resolveSessionFromList(tt.sessions, tt.nameOrID)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if id != tt.wantID {
+				t.Errorf("id: got %q, want %q", id, tt.wantID)
+			}
+			if name != tt.wantName {
+				t.Errorf("name: got %q, want %q", name, tt.wantName)
+			}
+			if hostID != tt.wantHostID {
+				t.Errorf("hostID: got %q, want %q", hostID, tt.wantHostID)
+			}
+		})
+	}
 }
