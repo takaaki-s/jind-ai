@@ -29,7 +29,7 @@ type Manager struct {
 	configMgr  *config.Manager
 	tmuxClient tmux.Runner // tmux client for session management
 	mu         sync.RWMutex
-	dataDir    string
+	configDir  string
 }
 
 // SetTmuxClient sets the tmux client for tmux-based session management.
@@ -145,7 +145,7 @@ func NewManager(dataDir, configDir string, configMgr *config.Manager) (*Manager,
 		store:     store,
 		notifier:  notify.NewNotifier(),
 		configMgr: configMgr,
-		dataDir:   dataDir,
+		configDir: configDir,
 	}
 
 	// Load existing sessions
@@ -444,7 +444,7 @@ func (m *Manager) startSessionTmux(session *Session) error {
 	claudeCmd := "claude"
 	execPath, err := os.Executable()
 	if err == nil {
-		if hooksPath, err := ensureHooksSettingsFile(m.dataDir, execPath); err == nil {
+		if hooksPath, err := ensureHooksSettingsFile(m.configDir, execPath); err == nil {
 			claudeCmd = fmt.Sprintf("claude --settings %s", hooksPath)
 		} else {
 			debugLog("[HOOKS] Warning: failed to generate hooks settings: %v", err)
