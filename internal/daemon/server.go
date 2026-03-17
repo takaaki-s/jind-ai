@@ -28,6 +28,8 @@ import (
 
 var debugLog = debug.NewLogger("daemon-debug.log")
 
+const remoteReconnectInterval = 30 * time.Second
+
 // Server is the daemon server
 type Server struct {
 	socketPath   string
@@ -590,41 +592,78 @@ func (s *Server) initRemoteSlaves() {
 	}
 
 	for _, h := range s.hostRegistry.Remotes() {
-		// Build peer options for bidirectional routing
-		peerSocketPath := filepath.Join(tunnel.PeerSocketDir, s.hostID, "daemon.sock")
-		bootstrapOpts := host.BootstrapOptions{
-			PeerSocketPath: peerSocketPath,
-			PeerHostID:     s.hostID,
-		}
-		tunnelOpts := tunnel.TunnelOptions{
-			ReverseEnabled:    true,
-			LocalHostID:       s.hostID,
-			LocalDaemonSocket: s.socketPath,
-		}
-
-		// Step 1: Auto-start slave daemon (idempotent: no-op if already running)
-		if err := host.StartSlave(h.Config, bootstrapOpts); err != nil {
-			debugLog("[REMOTE] Failed to start slave on %s: %v", h.ID, err)
+		if err := s.connectRemoteSlave(h); err != nil {
+			debugLog("[REMOTE] Failed to connect to %s: %v", h.ID, err)
 			continue
 		}
-		debugLog("[REMOTE] Slave started on %s", h.ID)
-
-		// Step 2: Establish SSH tunnel / Docker connection (with reverse tunnel)
-		localSocket, err := s.tunnelMgr.Open(h.Config, tunnelOpts)
-		if err != nil {
-			debugLog("[REMOTE] Failed to open tunnel to %s: %v", h.ID, err)
-			continue
-		}
-
-		// Step 3: Create and register RemoteClient
-		client := NewRemoteClient(localSocket, h.ID)
-		s.hostRegistry.SetClient(h.ID, client)
-		debugLog("[REMOTE] Connected to slave %s via %s", h.ID, localSocket)
+		debugLog("[REMOTE] Connected to slave %s", h.ID)
 	}
 
 	// Start polling remote notification histories for desktop notifications
 	s.stopPoll = make(chan struct{})
 	go s.pollRemoteNotifications()
+	go s.watchRemoteConnections()
+}
+
+// connectRemoteSlave runs the full 3-step connection sequence for one remote host:
+// start slave daemon, open tunnel, register client.
+// Safe to call when already connected (tunnelMgr.Open handles the alive check).
+func (s *Server) connectRemoteSlave(h *host.Host) error {
+	peerSocketPath := filepath.Join(tunnel.PeerSocketDir, s.hostID, "daemon.sock")
+	bootstrapOpts := host.BootstrapOptions{
+		PeerSocketPath: peerSocketPath,
+		PeerHostID:     s.hostID,
+	}
+	tunnelOpts := tunnel.TunnelOptions{
+		ReverseEnabled:    true,
+		LocalHostID:       s.hostID,
+		LocalDaemonSocket: s.socketPath,
+	}
+	if err := host.StartSlave(h.Config, bootstrapOpts); err != nil {
+		return fmt.Errorf("start slave: %w", err)
+	}
+	localSocket, err := s.tunnelMgr.Open(h.Config, tunnelOpts)
+	if err != nil {
+		return fmt.Errorf("open tunnel: %w", err)
+	}
+	s.hostRegistry.SetClient(h.ID, NewRemoteClient(localSocket, h.ID))
+	return nil
+}
+
+// watchRemoteConnections periodically checks SSH tunnel liveness and reconnects
+// any dead tunnels. Runs until stopPoll is closed.
+func (s *Server) watchRemoteConnections() {
+	ticker := time.NewTicker(remoteReconnectInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopPoll:
+			return
+		case <-ticker.C:
+		}
+		s.reconnectDeadTunnels()
+	}
+}
+
+// reconnectDeadTunnels checks all configured SSH remote hosts and reconnects
+// any whose tunnel is no longer alive. Docker hosts are skipped (no process to restart).
+func (s *Server) reconnectDeadTunnels() {
+	for _, h := range s.hostRegistry.Remotes() {
+		if h.Config.Type != "ssh" {
+			continue
+		}
+		if s.tunnelMgr.IsAlive(h.ID) {
+			continue
+		}
+		debugLog("[REMOTE] Tunnel to %s is dead, attempting reconnect", h.ID)
+		go func(rh *host.Host) {
+			if err := s.connectRemoteSlave(rh); err != nil {
+				debugLog("[REMOTE] Reconnect to %s failed: %v", rh.ID, err)
+				return
+			}
+			debugLog("[REMOTE] Reconnected to %s", rh.ID)
+		}(h)
+	}
 }
 
 // pollRemoteNotifications periodically fetches notification histories from remote

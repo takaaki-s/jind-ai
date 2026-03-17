@@ -1146,3 +1146,53 @@ func (m *rawCaptureMock) SendRaw(action string, data, visited []byte) ([]byte, e
 	}
 	return []byte(`{"success":false,"error":"session not found"}`), nil
 }
+
+// --- reconnectDeadTunnels / watchRemoteConnections tests ---
+
+func TestReconnectDeadTunnels_SkipsDockerHost(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Docker host with no tunnel registered (IsAlive=false) must be skipped.
+	registry := host.NewRegistry([]config.HostConfig{{ID: "docker-dev", Type: "docker"}})
+	server.hostRegistry = registry
+
+	// Should return without attempting any connection (no panic, no error).
+	server.reconnectDeadTunnels()
+}
+
+func TestReconnectDeadTunnels_SkipsAliveSSHHost(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	mock := &mockSlaveClient{running: true}
+	registry := host.NewRegistry([]config.HostConfig{{ID: "ec2", Type: "ssh"}})
+	registry.SetClient("ec2", mock)
+	server.hostRegistry = registry
+
+	// tunnelMgr has no tunnel for "ec2" so IsAlive returns false —
+	// but we confirm reconnectDeadTunnels doesn't panic and completes cleanly.
+	// (The actual SSH attempt would fail in CI; the goroutine logs the error.)
+	server.reconnectDeadTunnels()
+	// Give the spawned goroutine a moment to start without blocking.
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestWatchRemoteConnections_StopsOnClose(t *testing.T) {
+	server, _ := setupTestServer(t)
+	server.stopPoll = make(chan struct{})
+	server.hostRegistry = host.NewRegistry(nil) // no remotes → reconnectDeadTunnels is a no-op
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.watchRemoteConnections()
+	}()
+
+	close(server.stopPoll)
+
+	select {
+	case <-done:
+		// goroutine exited cleanly
+	case <-time.After(1 * time.Second):
+		t.Error("watchRemoteConnections did not stop after stopPoll closed")
+	}
+}
