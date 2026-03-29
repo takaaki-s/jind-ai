@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -193,7 +194,7 @@ func TestE2E_DeleteWithTmuxCleanup(t *testing.T) {
 	}
 
 	// Delete
-	if err := client.Delete(info.ID, ""); err != nil {
+	if err := client.Delete(info.ID, "", false, false); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
@@ -254,7 +255,7 @@ func TestE2E_SessionDataPersistence(t *testing.T) {
 	}
 
 	// Delete should remove the file
-	if err := client.Delete(info.ID, ""); err != nil {
+	if err := client.Delete(info.ID, "", false, false); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := os.Stat(jsonPath); err == nil {
@@ -379,7 +380,7 @@ func TestE2E_MultipleSessionsTmux(t *testing.T) {
 
 	// Delete the rest
 	for _, i := range []int{0, 2} {
-		if err := client.Delete(sessions[i].id, ""); err != nil {
+		if err := client.Delete(sessions[i].id, "", false, false); err != nil {
 			t.Fatalf("Delete(%d): %v", i, err)
 		}
 	}
@@ -430,5 +431,212 @@ func TestE2E_HookCWDUpdateOnStartedSession(t *testing.T) {
 	}
 	if sessions[0].Status != session.StatusThinking {
 		t.Errorf("Status = %q, want %q", sessions[0].Status, session.StatusThinking)
+	}
+}
+
+// setupGitWorktree creates a temp git repo with a worktree and returns (repoDir, worktreeDir).
+// Skips the test if git is not available.
+func setupGitWorktree(t *testing.T) (string, string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir := t.TempDir()
+
+	// git init
+	cmd := exec.Command("git", "-C", repoDir, "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s: %v", out, err)
+	}
+
+	// Configure git user for commit
+	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+
+	// Create initial commit (required for worktree)
+	dummyFile := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(dummyFile, []byte("init"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	cmd = exec.Command("git", "-C", repoDir, "commit", "-m", "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %s: %v", out, err)
+	}
+
+	// Create worktree
+	worktreeDir := filepath.Join(repoDir, "wt")
+	cmd = exec.Command("git", "-C", repoDir, "worktree", "add", worktreeDir, "-b", "test-branch")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %s: %v", out, err)
+	}
+
+	return repoDir, worktreeDir
+}
+
+func TestE2E_DeleteWithWorktreeCleanup(t *testing.T) {
+	t.Cleanup(func() { cleanupTmuxSessions(t) })
+
+	client := setupE2E(t)
+	_, worktreeDir := setupGitWorktree(t)
+
+	info, err := client.NewWithOptions(daemon.NewOptions{
+		Name:    "wt-cleanup",
+		WorkDir: worktreeDir,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Delete with worktree removal
+	if err := client.Delete(info.ID, "", true, false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Session should be gone
+	sessions, err := client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+
+	// Worktree directory should be removed
+	if _, err := os.Stat(worktreeDir); !os.IsNotExist(err) {
+		t.Errorf("worktree directory should be removed, but still exists")
+	}
+}
+
+func TestE2E_DeleteWithoutWorktreeCleanup(t *testing.T) {
+	t.Cleanup(func() { cleanupTmuxSessions(t) })
+
+	client := setupE2E(t)
+	_, worktreeDir := setupGitWorktree(t)
+
+	info, err := client.NewWithOptions(daemon.NewOptions{
+		Name:    "wt-no-cleanup",
+		WorkDir: worktreeDir,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Delete without worktree removal
+	if err := client.Delete(info.ID, "", false, false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Session should be gone
+	sessions, err := client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+
+	// Worktree directory should still exist
+	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
+		t.Errorf("worktree directory should still exist after session-only delete")
+	}
+}
+
+func TestE2E_DeleteWorktreeDirty(t *testing.T) {
+	t.Cleanup(func() { cleanupTmuxSessions(t) })
+
+	client := setupE2E(t)
+	_, worktreeDir := setupGitWorktree(t)
+
+	// Create uncommitted file in worktree
+	dirtyFile := filepath.Join(worktreeDir, "dirty.txt")
+	if err := os.WriteFile(dirtyFile, []byte("uncommitted"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	info, err := client.NewWithOptions(daemon.NewOptions{
+		Name:    "wt-dirty",
+		WorkDir: worktreeDir,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Delete with worktree removal — should fail with ErrWorktreeDirty
+	err = client.Delete(info.ID, "", true, false)
+	if err == nil {
+		t.Fatal("expected ErrWorktreeDirty, got nil")
+	}
+	if !errors.Is(err, session.ErrWorktreeDirty) {
+		t.Fatalf("expected ErrWorktreeDirty, got: %v", err)
+	}
+
+	// Session should still exist
+	sessions, err := client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session (not deleted), got %d", len(sessions))
+	}
+
+	// Worktree should still exist
+	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
+		t.Error("worktree directory should still exist after dirty rejection")
+	}
+
+	// Force delete
+	if err := client.Delete(info.ID, "", true, true); err != nil {
+		t.Fatalf("force Delete: %v", err)
+	}
+
+	// Session should be gone
+	sessions, err = client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions after force delete, got %d", len(sessions))
+	}
+
+	// Worktree should be removed
+	if _, err := os.Stat(worktreeDir); !os.IsNotExist(err) {
+		t.Errorf("worktree directory should be removed after force delete")
+	}
+}
+
+func TestE2E_DeleteWorktreeAlreadyRemoved(t *testing.T) {
+	t.Cleanup(func() { cleanupTmuxSessions(t) })
+
+	client := setupE2E(t)
+	_, worktreeDir := setupGitWorktree(t)
+
+	info, err := client.NewWithOptions(daemon.NewOptions{
+		Name:    "wt-removed",
+		WorkDir: worktreeDir,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	// Manually remove the worktree directory
+	if err := os.RemoveAll(worktreeDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	// Delete with worktree removal — should succeed even though dir is gone
+	if err := client.Delete(info.ID, "", true, false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Session should be gone
+	sessions, err := client.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
 	}
 }

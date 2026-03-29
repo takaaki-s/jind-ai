@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -146,10 +147,12 @@ type Model struct {
 	currentPage int // Current page (0-indexed)
 
 	// Delete confirmation
-	confirmDelete      bool   // Whether delete confirmation is active
-	deleteTargetID     string // Session ID to delete
-	deleteTargetName   string // Session name to delete (for display)
-	deleteTargetHostID string // Host ID of session to delete
+	confirmDelete          bool   // Whether delete confirmation is active
+	deleteTargetID         string // Session ID to delete
+	deleteTargetName       string // Session name to delete (for display)
+	deleteTargetHostID     string // Host ID of session to delete
+	deleteTargetIsWorktree bool   // Whether the session is in a git worktree
+	confirmWorktreeForce   bool   // Whether force-delete worktree confirmation is active
 
 	// Kill confirmation
 	confirmKill      bool   // Whether kill confirmation is active
@@ -336,6 +339,11 @@ func (m *Model) applySearchFilter() {
 type sessionsMsg []session.Info
 type errMsg error
 type tickMsg time.Time
+type worktreeDirtyMsg struct {
+	sessionID string
+	hostID    string
+	name      string
+}
 
 // Commands
 func (m *Model) fetchSessions() tea.Msg {
@@ -652,22 +660,84 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Handle delete confirmation mode
 		if m.confirmDelete {
+			// Sub-confirmation: force delete dirty worktree
+			if m.confirmWorktreeForce {
+				switch msg.String() {
+				case "y", "Y":
+					m.processingMsg = "Deleting with worktree..."
+					m.needsReswitch = true
+					deleteID := m.deleteTargetID
+					deleteHostID := m.deleteTargetHostID
+					m.resetDeleteState()
+					client := m.client
+					return m, func() tea.Msg {
+						if err := client.Delete(deleteID, deleteHostID, true, true); err != nil {
+							return errMsg(fmt.Errorf("delete failed: %w", err))
+						}
+						sessions, err := client.List()
+						if err != nil {
+							return errMsg(err)
+						}
+						return sessionsMsg(sessions)
+					}
+				case "n", "N", "esc":
+					// Fall back: delete session only
+					m.processingMsg = "Deleting..."
+					m.needsReswitch = true
+					deleteID := m.deleteTargetID
+					deleteHostID := m.deleteTargetHostID
+					m.resetDeleteState()
+					client := m.client
+					return m, func() tea.Msg {
+						if err := client.Delete(deleteID, deleteHostID, false, false); err != nil {
+							return errMsg(fmt.Errorf("delete failed: %w", err))
+						}
+						sessions, err := client.List()
+						if err != nil {
+							return errMsg(err)
+						}
+						return sessionsMsg(sessions)
+					}
+				}
+				return m, nil
+			}
+
+			// Primary delete confirmation
 			switch msg.String() {
 			case "y", "Y", "enter":
 				m.processingMsg = "Deleting..."
-				m.confirmDelete = false
 				m.needsReswitch = true
-
 				deleteID := m.deleteTargetID
 				deleteHostID := m.deleteTargetHostID
-				m.deleteTargetID = ""
-				m.deleteTargetName = ""
-				m.deleteTargetHostID = ""
-
+				m.resetDeleteState()
 				client := m.client
-
 				return m, func() tea.Msg {
-					if err := client.Delete(deleteID, deleteHostID); err != nil {
+					if err := client.Delete(deleteID, deleteHostID, false, false); err != nil {
+						return errMsg(fmt.Errorf("delete failed: %w", err))
+					}
+					sessions, err := client.List()
+					if err != nil {
+						return errMsg(err)
+					}
+					return sessionsMsg(sessions)
+				}
+			case "w", "W":
+				if !m.deleteTargetIsWorktree {
+					return m, nil // ignore if not a worktree
+				}
+				m.processingMsg = "Deleting with worktree..."
+				m.needsReswitch = true
+				deleteID := m.deleteTargetID
+				deleteHostID := m.deleteTargetHostID
+				deleteName := m.deleteTargetName
+				m.resetDeleteState()
+				client := m.client
+				return m, func() tea.Msg {
+					err := client.Delete(deleteID, deleteHostID, true, false)
+					if err != nil {
+						if errors.Is(err, session.ErrWorktreeDirty) {
+							return worktreeDirtyMsg{sessionID: deleteID, hostID: deleteHostID, name: deleteName}
+						}
 						return errMsg(fmt.Errorf("delete failed: %w", err))
 					}
 					sessions, err := client.List()
@@ -677,10 +747,7 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return sessionsMsg(sessions)
 				}
 			case "n", "N", "esc":
-				m.confirmDelete = false
-				m.deleteTargetID = ""
-				m.deleteTargetName = ""
-				m.deleteTargetHostID = ""
+				m.resetDeleteState()
 				return m, nil
 			}
 			return m, nil
@@ -847,6 +914,7 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.deleteTargetID = sess.ID
 				m.deleteTargetName = sess.Name
 				m.deleteTargetHostID = sess.HostID
+				m.deleteTargetIsWorktree = sess.IsWorktree
 				return m, nil
 			}
 
@@ -1004,6 +1072,15 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case worktreeDirtyMsg:
+		m.processingMsg = ""
+		m.confirmDelete = true
+		m.confirmWorktreeForce = true
+		m.deleteTargetID = msg.sessionID
+		m.deleteTargetHostID = msg.hostID
+		m.deleteTargetName = msg.name
+		m.deleteTargetIsWorktree = true
+
 	case errMsg:
 		m.processingMsg = ""
 		m.err = msg
@@ -1034,6 +1111,11 @@ func (m Model) View() string {
 		return m.renderProcessingView()
 	}
 
+	// Delete confirmation overlay
+	if m.confirmDelete {
+		return m.renderDeleteConfirm()
+	}
+
 	boxWidth := m.width - 2
 	boxWidth = max(boxWidth, 20)
 	boxHeight := m.height - 3
@@ -1048,6 +1130,67 @@ func (m Model) View() string {
 // Size-independent: renders correctly even before WindowSizeMsg arrives after ZoomPane/JoinPane
 func (m Model) renderProcessingView() string {
 	return "\n  ⟳ " + m.processingMsg
+}
+
+func (m *Model) resetDeleteState() {
+	m.confirmDelete = false
+	m.confirmWorktreeForce = false
+	m.deleteTargetID = ""
+	m.deleteTargetName = ""
+	m.deleteTargetHostID = ""
+	m.deleteTargetIsWorktree = false
+}
+
+// renderDeleteConfirm renders a delete confirmation dialog as a box overlay.
+func (m Model) renderDeleteConfirm() string {
+	boxWidth := m.width - 2
+	boxWidth = max(boxWidth, 20)
+	boxHeight := m.height - 3
+	boxHeight = max(boxHeight, 5)
+
+	contentWidth := boxWidth - 4 // padding inside box
+	var lines []string
+
+	warnStyle := lipgloss.NewStyle().Foreground(warningColor).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(secondaryColor)
+	keyStyle := lipgloss.NewStyle().Foreground(primaryColor).Bold(true)
+
+	if m.confirmWorktreeForce {
+		// Force confirmation for dirty worktree
+		lines = append(lines,
+			warnStyle.Render("⚠ Worktree has uncommitted"),
+			warnStyle.Render("  changes"),
+			"",
+			keyStyle.Render("y")+dimStyle.Render(": force delete worktree"),
+			keyStyle.Render("n")+dimStyle.Render(": delete session only"),
+		)
+	} else if m.deleteTargetIsWorktree {
+		// Worktree session
+		name := truncateString(m.deleteTargetName, contentWidth-10)
+		lines = append(lines,
+			warnStyle.Render(fmt.Sprintf("Delete '%s'?", name)),
+			dimStyle.Render("Session is in a git worktree"),
+			"",
+			keyStyle.Render("y")+dimStyle.Render(": delete session only"),
+			keyStyle.Render("w")+dimStyle.Render(": delete session + worktree"),
+			keyStyle.Render("n")+dimStyle.Render(": cancel"),
+		)
+	} else {
+		// Normal session
+		name := truncateString(m.deleteTargetName, contentWidth-10)
+		lines = append(lines,
+			warnStyle.Render(fmt.Sprintf("Delete '%s'?", name)),
+			"",
+			keyStyle.Render("y")+dimStyle.Render(": delete"),
+			keyStyle.Render("n")+dimStyle.Render(": cancel"),
+		)
+	}
+
+	content := strings.Join(lines, "\n")
+	placed := lipgloss.Place(contentWidth, boxHeight, lipgloss.Center, lipgloss.Center, content)
+
+	boxStyle := createBoxStyle(boxWidth, boxHeight, m.focused)
+	return boxStyle.Render(placed)
 }
 
 // renderListContent renders the session list content
@@ -1154,11 +1297,6 @@ func (m Model) renderHelpLine() string {
 	if m.confirmKill {
 		name := truncateString(m.killTargetName, 20)
 		confirmMsg := fmt.Sprintf(" Kill '%s'? y:yes n:no", name)
-		return lipgloss.NewStyle().Foreground(warningColor).Bold(true).Render(confirmMsg)
-	}
-	if m.confirmDelete {
-		name := truncateString(m.deleteTargetName, 20)
-		confirmMsg := fmt.Sprintf(" Delete '%s'? y:yes n:no", name)
 		return lipgloss.NewStyle().Foreground(warningColor).Bold(true).Render(confirmMsg)
 	}
 	if m.searching {

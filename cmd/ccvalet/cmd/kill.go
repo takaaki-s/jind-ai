@@ -59,7 +59,7 @@ var deleteCmd = &cobra.Command{
 			return err
 		}
 
-		if err := client.Delete(sessionID, hostID); err != nil {
+		if err := client.Delete(sessionID, hostID, false, false); err != nil {
 			return err
 		}
 		if jsonOutput {

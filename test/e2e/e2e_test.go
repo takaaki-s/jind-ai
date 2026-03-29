@@ -109,7 +109,7 @@ func TestE2E_SessionLifecycle(t *testing.T) {
 	}
 
 	// Delete
-	if err := client.Delete(info.ID, ""); err != nil {
+	if err := client.Delete(info.ID, "", false, false); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestE2E_MultipleSessionsConcurrent(t *testing.T) {
 
 	// Delete all
 	for _, id := range ids {
-		if err := client.Delete(id, ""); err != nil {
+		if err := client.Delete(id, "", false, false); err != nil {
 			t.Fatalf("Delete(%s): %v", id, err)
 		}
 	}

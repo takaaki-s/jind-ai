@@ -2,8 +2,10 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,10 +17,13 @@ import (
 	"github.com/takaaki-s/claude-code-valet/internal/notify"
 	"github.com/takaaki-s/claude-code-valet/internal/tmux"
 	"github.com/takaaki-s/claude-code-valet/internal/transcript"
-	"os/exec"
 )
 
 var debugLog = debug.NewLogger("daemon-debug.log")
+
+// ErrWorktreeDirty is returned when a git worktree has uncommitted changes
+// and force removal was not requested.
+var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
 
 // Manager manages multiple Claude Code sessions
 type Manager struct {
@@ -544,15 +549,23 @@ func (m *Manager) updateGitBranch(session *Session, currentPath, lastTrackedPath
 	cmd := exec.Command("git", "-C", currentPath, "rev-parse", "--abbrev-ref", "HEAD")
 	if output, err := cmd.Output(); err == nil {
 		branch := strings.TrimSpace(string(output))
+		// Detect if currentPath is a git worktree (.git is a file, not a directory)
+		isWorktree := false
+		gitPath := filepath.Join(currentPath, ".git")
+		if fi, err := os.Lstat(gitPath); err == nil {
+			isWorktree = fi.Mode().IsRegular()
+		}
 		m.mu.Lock()
 		session.CurrentBranch = branch
 		session.IsGitRepo = true
+		session.IsWorktree = isWorktree
 		m.mu.Unlock()
 	} else if currentPath != lastTrackedPath {
 		// Only clear git info when entering a non-git directory
 		m.mu.Lock()
 		session.CurrentBranch = ""
 		session.IsGitRepo = false
+		session.IsWorktree = false
 		m.mu.Unlock()
 	}
 }
@@ -868,15 +881,35 @@ func (m *Manager) Kill(id string) error {
 	return nil
 }
 
-// Delete removes a session completely
-func (m *Manager) Delete(id string) error {
+// Delete removes a session completely.
+// If removeWorktree is true and the session's WorkDir is a git worktree,
+// the worktree will also be removed. If the worktree has uncommitted changes
+// and forceRemoveWorktree is false, ErrWorktreeDirty is returned.
+func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	session, ok := m.sessions[id]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("session %s not found", id)
 	}
+
+	workDir := session.WorkDir
+	m.mu.Unlock()
+
+	// Remove worktree if requested (outside lock to avoid blocking during exec).
+	// This runs before tmux kill so that ErrWorktreeDirty can abort without side effects.
+	if removeWorktree && workDir != "" {
+		if err := m.removeGitWorktree(workDir, forceRemoveWorktree); err != nil {
+			if errors.Is(err, ErrWorktreeDirty) {
+				return err
+			}
+			debugLog("[DELETE] worktree removal failed for %s: %v", workDir, err)
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// Kill the inner tmux session entirely
 	if m.tmuxClient != nil && session.TmuxWindowName != "" {
@@ -889,6 +922,55 @@ func (m *Manager) Delete(id string) error {
 	}
 
 	delete(m.sessions, id)
+	return nil
+}
+
+// removeGitWorktree removes a git worktree at the given path.
+// Returns ErrWorktreeDirty if the worktree has uncommitted changes and force is false.
+func (m *Manager) removeGitWorktree(workDir string, force bool) error {
+	// Skip if directory doesn't exist
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	// Verify it's actually a worktree (.git is a file, not a directory)
+	gitPath := filepath.Join(workDir, ".git")
+	fi, err := os.Lstat(gitPath)
+	if err != nil || fi.IsDir() {
+		return nil // Not a worktree; skip silently
+	}
+
+	// Read .git file to find the main repo
+	// Contents: "gitdir: /path/to/main/.git/worktrees/<name>"
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return fmt.Errorf("reading .git file: %w", err)
+	}
+	raw := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(raw, "gitdir: ") {
+		return nil // Not a standard worktree .git file
+	}
+	gitdir := strings.TrimPrefix(raw, "gitdir: ")
+
+	// Derive main repo: .git/worktrees/<name> → .git → repo root
+	mainGitDir := filepath.Dir(filepath.Dir(gitdir)) // .git
+	mainRepoDir := filepath.Dir(mainGitDir)          // repo root
+
+	args := []string{"-C", mainRepoDir, "worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, workDir)
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := string(output)
+		if !force && (strings.Contains(outStr, "modified or untracked") || strings.Contains(outStr, "is dirty")) {
+			return ErrWorktreeDirty
+		}
+		return fmt.Errorf("git worktree remove: %s", strings.TrimSpace(outStr))
+	}
 	return nil
 }
 

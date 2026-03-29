@@ -60,7 +60,7 @@ var cleanupStoppedCmd = &cobra.Command{
 
 		deletedSessions := 0
 		for _, s := range stoppedSessions {
-			if err := client.Delete(s.ID, ""); err != nil {
+			if err := client.Delete(s.ID, "", false, false); err != nil {
 				fmt.Printf("Warning: failed to delete session %s: %v\n", s.Name, err)
 			} else {
 				fmt.Printf("Deleted session: %s (%s)\n", s.Name, s.ID[:8])

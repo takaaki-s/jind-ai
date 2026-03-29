@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/takaaki-s/claude-code-valet/internal/config"
 	"github.com/takaaki-s/claude-code-valet/internal/notify"
@@ -203,14 +204,19 @@ func (c *Client) Kill(id string, hostID string) error {
 	return nil
 }
 
-// Delete deletes a session
-func (c *Client) Delete(id string, hostID string) error {
-	data, _ := json.Marshal(IDRequest{ID: id, HostID: hostID})
+// Delete deletes a session. If removeWorktree is true, the session's git worktree
+// will also be removed. If the worktree has uncommitted changes and forceRemoveWorktree
+// is false, an error is returned.
+func (c *Client) Delete(id, hostID string, removeWorktree, forceRemoveWorktree bool) error {
+	data, _ := json.Marshal(DeleteRequest{ID: id, HostID: hostID, RemoveWorktree: removeWorktree, ForceRemoveWorktree: forceRemoveWorktree})
 	resp, err := c.send(Request{Action: "delete", Data: data})
 	if err != nil {
 		return err
 	}
 	if !resp.Success {
+		if strings.Contains(resp.Error, session.ErrWorktreeDirty.Error()) {
+			return session.ErrWorktreeDirty
+		}
 		return errors.New(resp.Error)
 	}
 	return nil

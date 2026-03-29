@@ -57,6 +57,7 @@ type Session struct {
 	CurrentWorkDir string `json:"-"` // Current working directory (tmux pane_current_path)
 	CurrentBranch  string `json:"-"` // Current git branch
 	IsGitRepo      bool   `json:"-"` // Whether CurrentWorkDir is inside a git repository
+	IsWorktree     bool   `json:"-"` // Whether CurrentWorkDir is a git worktree (not the main repo)
 }
 
 // Info returns session information for display
@@ -76,6 +77,7 @@ type Info struct {
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
 	CurrentBranch  string `json:"current_branch,omitempty"`   // Current git branch
+	IsWorktree     bool   `json:"is_worktree,omitempty"`      // Whether WorkDir is a git worktree
 
 	// Last messages from transcript
 	LastUserMessage      string `json:"last_user_message,omitempty"`      // Last user message content (truncated)
@@ -118,5 +120,6 @@ func (s *Session) ToInfo() Info {
 		HostID:          s.HostID,
 		CurrentWorkDir:  s.CurrentWorkDir,
 		CurrentBranch:   s.CurrentBranch,
+		IsWorktree:      s.IsWorktree,
 	}
 }

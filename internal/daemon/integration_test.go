@@ -171,7 +171,7 @@ func TestIntegration_Delete(t *testing.T) {
 		t.Fatalf("NewWithOptions: %v", err)
 	}
 
-	if err := client.Delete(info.ID, ""); err != nil {
+	if err := client.Delete(info.ID, "", false, false); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
@@ -476,7 +476,7 @@ func TestIntegration_DeleteByHostID(t *testing.T) {
 	}
 
 	// Delete with hostID "local" — should be treated the same as empty
-	if err := client.Delete(info.ID, "local"); err != nil {
+	if err := client.Delete(info.ID, "local", false, false); err != nil {
 		t.Fatalf("Delete with hostID=local: %v", err)
 	}
 
@@ -608,7 +608,7 @@ func TestIntegration_DeleteNonExistent(t *testing.T) {
 
 	_, client := setupTestServer(t)
 
-	err := client.Delete("non-existent-id-12345", "")
+	err := client.Delete("non-existent-id-12345", "", false, false)
 	if err == nil {
 		t.Error("expected error when deleting non-existent session, got nil")
 	}
@@ -1112,7 +1112,7 @@ func TestIntegration_ForwardedRequestHostIDCleared(t *testing.T) {
 	server.hostRegistry = registry
 
 	// Issue a delete targeted at "ec2"
-	_ = client.Delete("some-id", "ec2")
+	_ = client.Delete("some-id", "ec2", false, false)
 
 	if receivedAction != "delete" {
 		t.Errorf("forwarded action = %q, want delete", receivedAction)
@@ -1139,9 +1139,9 @@ func TestIntegration_HandleList_SortedByFleet(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name          string
+		name           string
 		remoteSessions []session.Info
-		wantFleets    []string // expected Fleet order in result
+		wantFleets     []string // expected Fleet order in result
 	}{
 		{
 			name: "mixed fleet local and remote sessions",

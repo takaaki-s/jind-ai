@@ -41,7 +41,7 @@ type Server struct {
 	createMu       sync.Mutex      // Mutual exclusion for session creation
 	hostRegistry   *host.Registry  // Multi-host management
 	tunnelMgr      *tunnel.Manager // SSH tunnel management
-	stopPoll       chan struct{}    // Signal to stop background goroutines; initialized once in initRemoteSlaves, never reassigned
+	stopPoll       chan struct{}   // Signal to stop background goroutines; initialized once in initRemoteSlaves, never reassigned
 	reconnectingMu sync.Mutex      // Protects reconnecting map
 	reconnecting   map[string]bool // Tracks hosts with a reconnect goroutine in progress
 }
@@ -357,7 +357,7 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 	// Start session in background if requested
 	if req.Start {
 		if err := s.manager.StartBackground(sess.ID); err != nil {
-			_ = s.manager.Delete(sess.ID)
+			_ = s.manager.Delete(sess.ID, false, false)
 			return Response{Success: false, Error: err.Error()}
 		}
 	}
@@ -504,6 +504,14 @@ type IDRequest struct {
 	HostID string `json:"host_id,omitempty"` // Target host (empty = "local")
 }
 
+// DeleteRequest extends IDRequest with worktree removal options.
+type DeleteRequest struct {
+	ID                  string `json:"id"`
+	HostID              string `json:"host_id,omitempty"`
+	RemoveWorktree      bool   `json:"remove_worktree,omitempty"`
+	ForceRemoveWorktree bool   `json:"force_remove_worktree,omitempty"`
+}
+
 func (s *Server) handleStart(data json.RawMessage) Response {
 	var req IDRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -547,7 +555,7 @@ func (s *Server) handleKill(data json.RawMessage) Response {
 }
 
 func (s *Server) handleDelete(data json.RawMessage) Response {
-	var req IDRequest
+	var req DeleteRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
@@ -555,12 +563,12 @@ func (s *Server) handleDelete(data json.RawMessage) Response {
 	// Forward to the corresponding slave if destined for a remote host.
 	// Clear HostID in the forwarded payload so the slave handles it locally.
 	if req.HostID != "" && req.HostID != "local" {
-		fwdReq := IDRequest{ID: req.ID, HostID: ""}
+		fwdReq := DeleteRequest{ID: req.ID, RemoveWorktree: req.RemoveWorktree, ForceRemoveWorktree: req.ForceRemoveWorktree}
 		fwdData, _ := json.Marshal(fwdReq)
 		return s.forwardToHost(req.HostID, Request{Action: "delete", Data: fwdData})
 	}
 
-	if err := s.manager.Delete(req.ID); err != nil {
+	if err := s.manager.Delete(req.ID, req.RemoveWorktree, req.ForceRemoveWorktree); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
 

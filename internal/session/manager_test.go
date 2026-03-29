@@ -699,7 +699,7 @@ func TestManager_Delete(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	if err := mgr.Delete(sess.ID); err != nil {
+	if err := mgr.Delete(sess.ID, false, false); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
@@ -1138,7 +1138,7 @@ func TestManager_Kill_NoTmux(t *testing.T) {
 func TestManager_Delete_NotFound(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	err := mgr.Delete("nonexistent-session-id")
+	err := mgr.Delete("nonexistent-session-id", false, false)
 	if err == nil {
 		t.Fatal("expected error for non-existent session, got nil")
 	}
@@ -1161,7 +1161,7 @@ func TestManager_Delete_Success(t *testing.T) {
 	}
 
 	// Delete the first session
-	if err := mgr.Delete(sess1.ID); err != nil {
+	if err := mgr.Delete(sess1.ID, false, false); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
@@ -1197,7 +1197,7 @@ func TestManager_Delete_WithTmuxSession(t *testing.T) {
 
 	mock.sessions[sess.TmuxWindowName] = true
 
-	if err := mgr.Delete(sess.ID); err != nil {
+	if err := mgr.Delete(sess.ID, false, false); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 

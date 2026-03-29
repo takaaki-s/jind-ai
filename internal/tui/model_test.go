@@ -1119,4 +1119,3 @@ func TestGroupSessionsByFleet(t *testing.T) {
 		}
 	})
 }
-
