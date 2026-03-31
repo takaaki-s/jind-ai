@@ -58,6 +58,7 @@ type Session struct {
 	CurrentBranch  string `json:"-"` // Current git branch
 	IsGitRepo      bool   `json:"-"` // Whether CurrentWorkDir is inside a git repository
 	IsWorktree     bool   `json:"-"` // Whether CurrentWorkDir is a git worktree (not the main repo)
+	GitRepoRoot    string `json:"-"` // Git repository root directory basename (e.g., "myapp")
 }
 
 // Info returns session information for display
@@ -78,6 +79,7 @@ type Info struct {
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
 	CurrentBranch  string `json:"current_branch,omitempty"`   // Current git branch
 	IsWorktree     bool   `json:"is_worktree,omitempty"`      // Whether WorkDir is a git worktree
+	GitRepoRoot    string `json:"git_repo_root,omitempty"`    // Git repository root basename
 
 	// Last messages from transcript
 	LastUserMessage      string `json:"last_user_message,omitempty"`      // Last user message content (truncated)
@@ -121,5 +123,6 @@ func (s *Session) ToInfo() Info {
 		CurrentWorkDir:  s.CurrentWorkDir,
 		CurrentBranch:   s.CurrentBranch,
 		IsWorktree:      s.IsWorktree,
+		GitRepoRoot:     s.GitRepoRoot,
 	}
 }

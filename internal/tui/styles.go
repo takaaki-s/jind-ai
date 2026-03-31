@@ -12,6 +12,7 @@ var (
 	dimColor       = lipgloss.Color("#414868") // Dark gray
 	purpleColor    = lipgloss.Color("#bb9af7") // Purple (thinking)
 	cyanColor      = lipgloss.Color("#7dcfff") // Cyan (running)
+	foregroundColor = lipgloss.Color("#a9b1d6") // Light lavender (text)
 	// Title style (for header inside box)
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -34,6 +35,10 @@ var (
 	// Time style
 	timeStyle = lipgloss.NewStyle().
 			Foreground(dimColor)
+
+	// Path last segment style (brighter than helpStyle for emphasis)
+	pathLastSegStyle = lipgloss.NewStyle().
+				Foreground(foregroundColor)
 
 	// Status styles - Tokyo Night inspired
 	thinkingStyle = lipgloss.NewStyle().

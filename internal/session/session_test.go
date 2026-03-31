@@ -31,6 +31,7 @@ func TestToInfo_CopiesAllFields(t *testing.T) {
 		CurrentWorkDir: "/home/user/project/subdir",
 		CurrentBranch:  "feature/cool",
 		IsGitRepo:      true,
+		GitRepoRoot:    "project",
 	}
 
 	info := s.ToInfo()
@@ -74,6 +75,9 @@ func TestToInfo_CopiesAllFields(t *testing.T) {
 	}
 	if info.CurrentBranch != s.CurrentBranch {
 		t.Errorf("CurrentBranch: got %q, want %q", info.CurrentBranch, s.CurrentBranch)
+	}
+	if info.GitRepoRoot != s.GitRepoRoot {
+		t.Errorf("GitRepoRoot: got %q, want %q", info.GitRepoRoot, s.GitRepoRoot)
 	}
 
 	// LastUserMessage and LastAssistantMessage are NOT set by ToInfo (populated elsewhere)
@@ -208,6 +212,7 @@ func TestSession_JSONOmitsRuntimeFields(t *testing.T) {
 		CurrentWorkDir: "/tmp/omit/sub",
 		CurrentBranch:  "main",
 		IsGitRepo:      true,
+		GitRepoRoot:    "omit",
 	}
 
 	data, err := json.Marshal(s)
@@ -231,6 +236,8 @@ func TestSession_JSONOmitsRuntimeFields(t *testing.T) {
 		"current_branch",
 		"IsGitRepo",
 		"is_git_repo",
+		"GitRepoRoot",
+		"git_repo_root",
 	}
 
 	for _, field := range runtimeFields {

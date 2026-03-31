@@ -1306,22 +1306,16 @@ func (m Model) renderHelpLine() string {
 }
 
 // renderSession renders a single session in 1-line format with optional output preview
-// Format: >name (branch)                    STATUS    Last Active
+// Format: >name
 //
-//	details...
+//	├─ STATUS
+//	├─ repo  path (branch)
+//	├─ 👤 user message
+//	└─ 🤖 assistant message
 func (m Model) renderSession(sess session.Info, selected bool, width int) string {
 	var b strings.Builder
 
 	statusIcon, statusLabel, statusStyle := getStatusDisplay(sess.Status)
-
-	// Use LastActiveAt if available, otherwise CreatedAt
-	var lastActiveTime time.Time
-	if !sess.LastActiveAt.IsZero() {
-		lastActiveTime = sess.LastActiveAt
-	} else {
-		lastActiveTime = sess.CreatedAt
-	}
-	timeStr := timeAgo(lastActiveTime)
 
 	// --- Line 1: cursor + session name ---
 	availableForName := width - 2 // cursor(2)
@@ -1335,12 +1329,12 @@ func (m Model) renderSession(sess session.Info, selected bool, width int) string
 	}
 	b.WriteString("\n")
 
-	// Build metadata: [host] workdir (branch)
-	var metaParts []string
+	// Build metadata parts
+	var hostPart string
 	if sess.HostID != "" && sess.HostID != "local" {
-		metaParts = append(metaParts, "["+sess.HostID+"]")
+		hostPart = "[" + sess.HostID + "] "
 	}
-	// Use CurrentWorkDir if available, fall back to WorkDir
+
 	displayDir := sess.CurrentWorkDir
 	if displayDir == "" {
 		displayDir = sess.WorkDir
@@ -1349,46 +1343,77 @@ func (m Model) renderSession(sess session.Info, selected bool, width int) string
 		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(displayDir, home) {
 			displayDir = "~" + displayDir[len(home):]
 		}
-		metaParts = append(metaParts, displayDir)
 	}
+
+	branchSuffix := ""
 	if sess.CurrentBranch != "" {
-		metaParts = append(metaParts, "("+sess.CurrentBranch+")")
+		branchSuffix = " (" + sess.CurrentBranch + ")"
+	}
+
+	gitRootPart := ""
+	if sess.GitRepoRoot != "" {
+		gitRootPart = sess.GitRepoRoot + "  "
 	}
 
 	statusStr := statusIcon + " " + statusLabel
-	metaStr := strings.Join(metaParts, " ")
-	indent := "  ├─ "
 	indentWidth := 5
 
-	// Truncate metadata if needed
-	availableForMeta := width - indentWidth
-	if availableForMeta > 0 && runewidth.StringWidth(metaStr) > availableForMeta {
-		metaStr = truncateString(metaStr, availableForMeta)
+	// Determine connectors dynamically (last visible line gets └─)
+	metaConnector := "  ├─ "
+	userConnector := "  ├─ "
+	assistConnector := "  └─ "
+	if sess.LastAssistantMessage == "" {
+		if sess.LastUserMessage != "" {
+			userConnector = "  └─ "
+		} else {
+			metaConnector = "  └─ "
+		}
 	}
 
 	// --- Line 2: status (icon + label) ---
 	if selected {
-		b.WriteString(selectedItemStyle.Render(padLine(indent+statusStr, width)))
+		b.WriteString(selectedItemStyle.Render(padLine("  ├─ "+statusStr, width)))
 	} else {
-		b.WriteString(indent)
+		b.WriteString("  ├─ ")
 		b.WriteString(statusStyle.Render(statusStr))
 	}
 	b.WriteString("\n")
 
-	// --- Line 3: metadata ([host] repo (branch)) ---
-	if metaStr != "" {
+	// --- Line 3: metadata (repo  path (branch)) ---
+	if displayDir != "" || gitRootPart != "" {
+		availableForMeta := width - indentWidth
+		hostWidth := runewidth.StringWidth(hostPart)
+		branchWidth := runewidth.StringWidth(branchSuffix)
+		gitRootWidth := runewidth.StringWidth(gitRootPart)
+		availableForPath := availableForMeta - hostWidth - branchWidth - gitRootWidth
+
 		if selected {
-			b.WriteString(selectedItemStyle.Render(padLine(indent+metaStr, width)))
+			// Plain text for selected style
+			plainPath := truncateStringFromEnd(displayDir, max(availableForPath, 1))
+			metaStr := hostPart + gitRootPart + plainPath + branchSuffix
+			b.WriteString(selectedItemStyle.Render(padLine(metaConnector+metaStr, width)))
 		} else {
-			b.WriteString(indent)
-			b.WriteString(helpStyle.Render(metaStr))
+			b.WriteString(metaConnector)
+			if hostPart != "" {
+				b.WriteString(helpStyle.Render(hostPart))
+			}
+			if gitRootPart != "" {
+				b.WriteString(pathLastSegStyle.Render(sess.GitRepoRoot))
+				b.WriteString(helpStyle.Render("  "))
+			}
+			if displayDir != "" {
+				b.WriteString(renderPathDisplay(displayDir, max(availableForPath, 1)))
+			}
+			if branchSuffix != "" {
+				b.WriteString(helpStyle.Render(branchSuffix))
+			}
 		}
 		b.WriteString("\n")
 	}
 
-	// --- Line 3: last user message ---
+	// --- Line 4: last user message ---
 	if sess.LastUserMessage != "" {
-		prefix := "  ├─ 👤 "
+		prefix := userConnector + "👤 "
 		pWidth := lipgloss.Width(prefix)
 		msgWidth := width - pWidth
 		msgWidth = max(msgWidth, 10)
@@ -1397,14 +1422,14 @@ func (m Model) renderSession(sess session.Info, selected bool, width int) string
 		if selected {
 			b.WriteString(selectedItemStyle.Render(padLine(prefix+msgStr, width)))
 		} else {
-			b.WriteString("  ├─ " + helpStyle.Render("👤 "+msgStr))
+			b.WriteString(userConnector + helpStyle.Render("👤 "+msgStr))
 		}
 		b.WriteString("\n")
 	}
 
-	// --- Line 4: last assistant message ---
+	// --- Line 5: last assistant message ---
 	if sess.LastAssistantMessage != "" {
-		prefix := "  ├─ 🤖 "
+		prefix := assistConnector + "🤖 "
 		pWidth := lipgloss.Width(prefix)
 		msgWidth := width - pWidth
 		msgWidth = max(msgWidth, 10)
@@ -1413,21 +1438,74 @@ func (m Model) renderSession(sess session.Info, selected bool, width int) string
 		if selected {
 			b.WriteString(selectedItemStyle.Render(padLine(prefix+msgStr, width)))
 		} else {
-			b.WriteString("  ├─ " + helpStyle.Render("🤖 "+msgStr))
+			b.WriteString(assistConnector + helpStyle.Render("🤖 "+msgStr))
 		}
 		b.WriteString("\n")
 	}
 
-	// --- Last line: time ---
-	if selected {
-		b.WriteString(selectedItemStyle.Render(padLine("  └─ "+timeStr, width)))
-	} else {
-		b.WriteString("  └─ " + timeStyle.Render(timeStr))
+	// If no metadata, messages — show at least the last connector
+	if displayDir == "" && gitRootPart == "" && sess.LastUserMessage == "" && sess.LastAssistantMessage == "" {
+		if selected {
+			b.WriteString(selectedItemStyle.Render(padLine("  └─", width)))
+		} else {
+			b.WriteString("  └─")
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	return b.String()
 }
+
+// renderPathDisplay renders a directory path with the last segment emphasized.
+// If the path is too long for maxWidth, it truncates from the left,
+// preferring to drop full directory segments at a time.
+func renderPathDisplay(dir string, maxWidth int) string {
+	if dir == "" || maxWidth <= 0 {
+		return ""
+	}
+
+	lastSeg := filepath.Base(dir)
+	prefix := filepath.Dir(dir)
+	if prefix == "." {
+		prefix = ""
+	}
+
+	lastWidth := runewidth.StringWidth(lastSeg)
+
+	// Case: last segment alone is wider than maxWidth
+	if lastWidth > maxWidth {
+		return pathLastSegStyle.Render(truncateToWidth(lastSeg, maxWidth))
+	}
+
+	// Case: no prefix (single segment)
+	if prefix == "" {
+		return pathLastSegStyle.Render(lastSeg)
+	}
+
+	// Case: everything fits
+	full := prefix + "/" + lastSeg
+	if runewidth.StringWidth(full) <= maxWidth {
+		return helpStyle.Render(prefix+"/") + pathLastSegStyle.Render(lastSeg)
+	}
+
+	// Need truncation: try dropping segments from the left
+	trimmed := strings.TrimPrefix(prefix, "/")
+	parts := strings.Split(trimmed, "/")
+	for i := 1; i < len(parts); i++ {
+		candidate := strings.Join(parts[i:], "/")
+		display := "\u2026/" + candidate + "/" + lastSeg
+		if runewidth.StringWidth(display) <= maxWidth {
+			return helpStyle.Render("\u2026/"+candidate+"/") + pathLastSegStyle.Render(lastSeg)
+		}
+	}
+
+	// Fallback: "…/" + lastSeg
+	if 2+lastWidth <= maxWidth {
+		return helpStyle.Render("\u2026/") + pathLastSegStyle.Render(lastSeg)
+	}
+	return pathLastSegStyle.Render(lastSeg)
+}
+
 
 // padLine pads a string to the specified width with spaces.
 func padLine(s string, width int) string {

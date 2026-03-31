@@ -609,6 +609,94 @@ func TestTruncateFromEndToWidth(t *testing.T) {
 	}
 }
 
+// --- renderPathDisplay ---
+
+func TestRenderPathDisplay(t *testing.T) {
+	// renderPathDisplay returns lipgloss-styled strings, so we use strings.Contains
+	// to verify the text content rather than exact matching.
+	tests := []struct {
+		name        string
+		dir         string
+		maxWidth    int
+		contains    []string // substrings that must be present
+		notContains []string // substrings that must NOT be present
+	}{
+		{
+			name:     "empty dir",
+			dir:      "",
+			maxWidth: 40,
+			contains: nil,
+		},
+		{
+			name:     "single segment fits",
+			dir:      "myapp",
+			maxWidth: 10,
+			contains: []string{"myapp"},
+		},
+		{
+			name:     "full path fits",
+			dir:      "~/projects/myapp",
+			maxWidth: 40,
+			contains: []string{"~/projects/", "myapp"},
+		},
+		{
+			name:        "path needs truncation",
+			dir:         "~/very/long/path/to/myapp",
+			maxWidth:    20,
+			contains:    []string{"myapp"},
+			notContains: []string{"~/very/long/path/to/"},
+		},
+		{
+			name:        "path with ellipsis",
+			dir:         "~/a/b/c/d/myapp",
+			maxWidth:    14,
+			contains:    []string{"\u2026/", "myapp"},
+			notContains: []string{"~/a/"},
+		},
+		{
+			name:        "only last segment fits",
+			dir:         "~/a/b/c/d/myapp",
+			maxWidth:    7,
+			contains:    []string{"myapp"},
+			notContains: []string{"~/", "/a/"},
+		},
+		{
+			name:     "zero width",
+			dir:      "~/projects/myapp",
+			maxWidth: 0,
+			contains: nil,
+		},
+		{
+			name:     "home dir only",
+			dir:      "~",
+			maxWidth: 10,
+			contains: []string{"~"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderPathDisplay(tt.dir, tt.maxWidth)
+			if tt.contains == nil {
+				if got != "" {
+					t.Errorf("renderPathDisplay(%q, %d) = %q, want empty", tt.dir, tt.maxWidth, got)
+				}
+				return
+			}
+			for _, sub := range tt.contains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("renderPathDisplay(%q, %d) = %q, missing %q", tt.dir, tt.maxWidth, got, sub)
+				}
+			}
+			for _, sub := range tt.notContains {
+				if strings.Contains(got, sub) {
+					t.Errorf("renderPathDisplay(%q, %d) = %q, should not contain %q", tt.dir, tt.maxWidth, got, sub)
+				}
+			}
+		})
+	}
+}
+
 // --- buildStatusSummary ---
 
 func TestBuildStatusSummary(t *testing.T) {

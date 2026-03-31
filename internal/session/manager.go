@@ -546,9 +546,14 @@ func (m *Manager) startSessionTmux(session *Session) error {
 // It runs git rev-parse (lightweight, <5ms) and acquires the lock internally.
 // lastTrackedPath is used to avoid clearing git info on every poll when already in a non-git dir.
 func (m *Manager) updateGitBranch(session *Session, currentPath, lastTrackedPath string) {
-	cmd := exec.Command("git", "-C", currentPath, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.Command("git", "-C", currentPath, "rev-parse", "--abbrev-ref", "HEAD", "--show-toplevel")
 	if output, err := cmd.Output(); err == nil {
-		branch := strings.TrimSpace(string(output))
+		lines := strings.SplitN(strings.TrimSpace(string(output)), "\n", 2)
+		branch := lines[0]
+		var repoRoot string
+		if len(lines) >= 2 {
+			repoRoot = filepath.Base(lines[1])
+		}
 		// Detect if currentPath is a git worktree (.git is a file, not a directory)
 		isWorktree := false
 		gitPath := filepath.Join(currentPath, ".git")
@@ -559,6 +564,7 @@ func (m *Manager) updateGitBranch(session *Session, currentPath, lastTrackedPath
 		session.CurrentBranch = branch
 		session.IsGitRepo = true
 		session.IsWorktree = isWorktree
+		session.GitRepoRoot = repoRoot
 		m.mu.Unlock()
 	} else if currentPath != lastTrackedPath {
 		// Only clear git info when entering a non-git directory
@@ -566,6 +572,7 @@ func (m *Manager) updateGitBranch(session *Session, currentPath, lastTrackedPath
 		session.CurrentBranch = ""
 		session.IsGitRepo = false
 		session.IsWorktree = false
+		session.GitRepoRoot = ""
 		m.mu.Unlock()
 	}
 }
