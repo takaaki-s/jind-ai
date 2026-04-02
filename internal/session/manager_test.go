@@ -417,45 +417,91 @@ func TestManager_HandleHookEvent_CWDUpdate(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	newCwd := "/tmp/hook-cwd-changed"
-	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "UserPromptSubmit", "", newCwd, "")
+	// CWD to a non-git-root path: WorkDir should NOT update, only CurrentWorkDir
+	nonGitCwd := "/tmp/hook-cwd-subdir"
+	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "UserPromptSubmit", "", nonGitCwd, "")
 
 	got, ok := mgr.Get(sess.ID)
 	if !ok {
 		t.Fatal("Get returned ok=false")
 	}
-	if got.WorkDir != newCwd {
-		t.Errorf("WorkDir = %q, want %q", got.WorkDir, newCwd)
+	if got.WorkDir != "/tmp/hook-cwd" {
+		t.Errorf("WorkDir = %q, want %q (should not update for non-git-root)", got.WorkDir, "/tmp/hook-cwd")
 	}
-	if got.CurrentWorkDir != newCwd {
-		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, newCwd)
+	if got.CurrentWorkDir != nonGitCwd {
+		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, nonGitCwd)
+	}
+
+	// CWD to a git root (has .git): WorkDir SHOULD update
+	gitRootCwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitRootCwd, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "UserPromptSubmit", "", gitRootCwd, "")
+
+	got, ok = mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.WorkDir != gitRootCwd {
+		t.Errorf("WorkDir = %q, want %q (should update for git root)", got.WorkDir, gitRootCwd)
+	}
+	if got.CurrentWorkDir != gitRootCwd {
+		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, gitRootCwd)
 	}
 }
 
 func TestManager_HandleHookEvent_CwdChanged(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
-	sess, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/hook-cwdch", Name: "hcwdch"})
+	origDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(origDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	sess, err := mgr.CreateWithOptions(CreateOptions{WorkDir: origDir, Name: "hcwdch"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	newCwd := "/tmp/hook-cwdch-new"
-	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "CwdChanged", "", newCwd, "")
+	// CWD to a non-git-root: only CurrentWorkDir updates
+	subDir := filepath.Join(origDir, "subdir")
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "CwdChanged", "", subDir, "")
 
 	got, ok := mgr.Get(sess.ID)
 	if !ok {
 		t.Fatal("Get returned ok=false")
 	}
-	if got.WorkDir != newCwd {
-		t.Errorf("WorkDir = %q, want %q", got.WorkDir, newCwd)
+	if got.WorkDir != origDir {
+		t.Errorf("WorkDir = %q, want %q (should not update for subdirectory)", got.WorkDir, origDir)
 	}
-	if got.CurrentWorkDir != newCwd {
-		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, newCwd)
+	if got.CurrentWorkDir != subDir {
+		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, subDir)
 	}
 	// Status should remain unchanged (stopped from creation)
 	if got.Status != StatusStopped {
 		t.Errorf("Status = %q, want %q (unchanged)", got.Status, StatusStopped)
+	}
+
+	// CWD to a different git root (worktree): WorkDir SHOULD update
+	worktreeDir := t.TempDir()
+	// Simulate a git worktree (.git is a file, not a directory)
+	if err := os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: ../main/.git/worktrees/wt"), 0o644); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "CwdChanged", "", worktreeDir, "")
+
+	got, ok = mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.WorkDir != worktreeDir {
+		t.Errorf("WorkDir = %q, want %q (should update for worktree root)", got.WorkDir, worktreeDir)
+	}
+	if got.CurrentWorkDir != worktreeDir {
+		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, worktreeDir)
 	}
 }
 
@@ -1518,5 +1564,64 @@ func TestManager_IdleFallback_DaemonRecovery(t *testing.T) {
 	}
 	if got.Status != StatusRunning {
 		t.Errorf("Status = %q, want %q (should not change without hook)", got.Status, StatusRunning)
+	}
+}
+
+func TestIsWorktreePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/home/user/project", false},
+		{"/home/user/project/.git", false},
+		{"/home/user/project/src", false},
+		{"/home/user/project/.claude/worktrees/feat-xyz", true},
+		{"/home/user/project/.claude/worktrees/COR-24444", true},
+		{"/tmp/.claude/worktrees/test", true},
+		{"/home/user/project/.claude/workdir", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isWorktreePath(tt.path); got != tt.want {
+			t.Errorf("isWorktreePath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestManager_HandleHookEvent_CWDUpdate_WorktreePathSkipped(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	origDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(origDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	sess, err := mgr.CreateWithOptions(CreateOptions{WorkDir: origDir, Name: "wt-skip"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	// Simulate Claude Code's EnterWorktree: CWD moves to .claude/worktrees/xxx
+	worktreeDir := filepath.Join(origDir, ".claude", "worktrees", "feat-xyz")
+	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	// Worktree has a .git file (as real worktrees do)
+	if err := os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: ../../.git/worktrees/feat-xyz"), 0o644); err != nil {
+		t.Fatalf("write .git: %v", err)
+	}
+
+	mgr.HandleHookEvent(sess.ClaudeSessionID, sess.ID, "CwdChanged", "", worktreeDir, "")
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	// WorkDir must NOT be updated to the worktree path
+	if got.WorkDir != origDir {
+		t.Errorf("WorkDir = %q, want %q (should not update for .claude/worktrees path)", got.WorkDir, origDir)
+	}
+	// CurrentWorkDir should still be updated
+	if got.CurrentWorkDir != worktreeDir {
+		t.Errorf("CurrentWorkDir = %q, want %q", got.CurrentWorkDir, worktreeDir)
 	}
 }

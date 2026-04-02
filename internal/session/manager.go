@@ -405,6 +405,24 @@ func (m *Manager) startSession(session *Session) error {
 	return m.startSessionTmux(session)
 }
 
+// isWorktreePath returns true if the path is inside Claude Code's worktree
+// directory (.claude/worktrees/). These paths should not overwrite the
+// persisted WorkDir because the worktree may be deleted after ExitWorktree,
+// making the session unable to restart.
+func isWorktreePath(path string) bool {
+	return strings.Contains(path, "/.claude/worktrees/")
+}
+
+// isGitRoot returns true if the path contains a .git file or directory,
+// indicating it is a git repository root or worktree root.
+// Used to guard WorkDir updates: only paths that are project/worktree roots
+// should update the persisted WorkDir. Subdirectory navigation (e.g., into
+// .claude/workdir/) must not drift WorkDir away from the project root.
+func isGitRoot(path string) bool {
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
+}
+
 // expandTilde expands a leading ~ in a path to the current user's home directory.
 // This runs on the target machine (local or remote slave), so os.UserHomeDir()
 // returns the correct home directory for the environment where the session runs.
@@ -653,10 +671,13 @@ func (m *Manager) captureOutputTmux(session *Session) {
 			if currentPath != "" {
 				m.mu.Lock()
 				session.CurrentWorkDir = currentPath
-				// Update persistence if WorkDir changed (follows cd to worktree etc.)
-				workDirChanged := session.WorkDir != currentPath
-				if workDirChanged {
+				// Only update persisted WorkDir when the new path is a git root
+				// (project root or worktree root). This prevents WorkDir from
+				// drifting to subdirectories like .claude/workdir/.
+				workDirChanged := false
+				if session.WorkDir != currentPath && isGitRoot(currentPath) && !isWorktreePath(currentPath) {
 					session.WorkDir = currentPath
+					workDirChanged = true
 				}
 				m.mu.Unlock()
 				if workDirChanged {
@@ -743,14 +764,16 @@ func (m *Manager) HandleHookEvent(ccSessionID, ccvaletSessionID, eventName, noti
 		session.ClaudeSessionID = ccSessionID
 	}
 
-	// Update CWD from Claude Code's actual working directory
+	// Update CWD from Claude Code's actual working directory.
+	// Only update persisted WorkDir when the new path is a git root
+	// (project root or worktree root) to prevent drift to subdirectories.
 	cwdChanged := false
-	if cwd != "" && session.WorkDir != cwd {
+	if cwd != "" {
 		session.CurrentWorkDir = cwd
-		session.WorkDir = cwd
-		cwdChanged = true
-	} else if cwd != "" {
-		session.CurrentWorkDir = cwd
+		if session.WorkDir != cwd && isGitRoot(cwd) && !isWorktreePath(cwd) {
+			session.WorkDir = cwd
+			cwdChanged = true
+		}
 	}
 
 	sessionStarted := false
