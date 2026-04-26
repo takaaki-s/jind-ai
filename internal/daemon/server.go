@@ -217,6 +217,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleDirHistory(req.Data)
 	case "remove-dir-history":
 		return s.handleRemoveDirHistory(req.Data)
+	case "result":
+		return s.handleResult(req.Data)
 	default:
 		return Response{Success: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
@@ -497,6 +499,143 @@ func (s *Server) handleSend(data json.RawMessage) Response {
 		return Response{Success: false, Error: err.Error()}
 	}
 	return Response{Success: true}
+}
+
+// ResultRequest is the request payload for the "result" action.
+// Used by orchestrators to fetch structured transcript entries (text/thinking/
+// tool_use/tool_result) from a session, with optional incremental and filter modes.
+type ResultRequest struct {
+	ID         string `json:"id"`
+	HostID     string `json:"host_id,omitempty"`
+	Since      string `json:"since,omitempty"`       // ISO8601; only entries with Timestamp > Since are returned
+	Last       int    `json:"last,omitempty"`        // Truncate to last N entries (after filtering); 0 = no truncation
+	Tool       string `json:"tool,omitempty"`        // Keep entries that contain a tool_use or tool_result for this tool name
+	ErrorsOnly bool   `json:"errors_only,omitempty"` // Keep entries that contain at least one tool_result with is_error=true
+}
+
+// ResultResponse is the response payload for the "result" action.
+type ResultResponse struct {
+	SessionID       string             `json:"session_id"`
+	HostID          string             `json:"host_id"`
+	ClaudeSessionID string             `json:"claude_session_id,omitempty"`
+	Entries         []transcript.Entry `json:"entries"`
+	Truncated       bool               `json:"truncated,omitempty"` // true if Last truncation was applied
+}
+
+func (s *Server) handleResult(data json.RawMessage) Response {
+	var req ResultRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	// Forward to the corresponding slave if destined for a remote host.
+	if req.HostID != "" && req.HostID != "local" {
+		fwd := req
+		fwd.HostID = ""
+		fwdData, _ := json.Marshal(fwd)
+		return s.forwardToHost(req.HostID, Request{Action: "result", Data: fwdData})
+	}
+
+	if req.Last < 0 {
+		return Response{Success: false, Error: "last must be >= 0"}
+	}
+
+	sess, ok := s.manager.Get(req.ID)
+	if !ok {
+		return Response{Success: false, Error: fmt.Sprintf("session not found: %s", req.ID)}
+	}
+	info := sess.ToInfo()
+	hostID := info.HostID
+	if hostID == "" {
+		hostID = "local"
+	}
+
+	resp := ResultResponse{
+		SessionID:       info.ID,
+		HostID:          hostID,
+		ClaudeSessionID: info.ClaudeSessionID,
+		Entries:         []transcript.Entry{},
+	}
+
+	if info.ClaudeSessionID == "" {
+		respData, _ := json.Marshal(resp)
+		return Response{Success: true, Data: respData}
+	}
+
+	workDir := info.CurrentWorkDir
+	if workDir == "" {
+		workDir = info.WorkDir
+	}
+
+	reader := transcript.NewReader()
+	entries, err := reader.ReadEntries(workDir, info.ClaudeSessionID, req.Since)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	filtered := filterResultEntries(entries, req.Tool, req.ErrorsOnly)
+	if req.Last > 0 && len(filtered) > req.Last {
+		filtered = filtered[len(filtered)-req.Last:]
+		resp.Truncated = true
+	}
+	resp.Entries = filtered
+
+	respData, _ := json.Marshal(resp)
+	return Response{Success: true, Data: respData}
+}
+
+// filterResultEntries keeps entries that contain at least one block matching the
+// given tool name and/or error filter. An empty tool and errorsOnly=false returns
+// the input as-is. Tool name matching uses the tool_use's name; for a tool_result
+// entry, name matching requires having seen a corresponding tool_use earlier in
+// the input (matched by tool_use_id).
+func filterResultEntries(entries []transcript.Entry, tool string, errorsOnly bool) []transcript.Entry {
+	if tool == "" && !errorsOnly {
+		return entries
+	}
+	// Build tool_use_id -> name map by scanning forward.
+	useNameByID := map[string]string{}
+	if tool != "" {
+		for _, e := range entries {
+			for _, b := range e.Blocks {
+				if b.Kind == "tool_use" && b.ToolUseID != "" {
+					useNameByID[b.ToolUseID] = b.ToolName
+				}
+			}
+		}
+	}
+	out := make([]transcript.Entry, 0, len(entries))
+	for _, e := range entries {
+		if entryMatches(e, tool, errorsOnly, useNameByID) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func entryMatches(e transcript.Entry, tool string, errorsOnly bool, useNameByID map[string]string) bool {
+	for _, b := range e.Blocks {
+		switch b.Kind {
+		case "tool_use":
+			if errorsOnly {
+				continue
+			}
+			if tool == "" || b.ToolName == tool {
+				return true
+			}
+		case "tool_result":
+			if errorsOnly && !b.IsError {
+				continue
+			}
+			if tool == "" {
+				return true
+			}
+			if useNameByID[b.ToolUseID] == tool {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type IDRequest struct {

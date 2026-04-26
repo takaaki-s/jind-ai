@@ -156,6 +156,37 @@ ccvalet session wait my-session --timeout 300
 ccvalet session output my-session --last 1
 ```
 
+#### Orchestration: parent Claude driving child sessions
+
+For richer orchestration (e.g. a parent Claude that needs to inspect what a
+child actually *did*, not just the assistant's text), use `session result`.
+It returns structured `tool_use` / `tool_result` / `thinking` blocks parsed
+directly from the Claude Code transcript JSONL — no tmux pane scraping, no
+truncation by scrollback buffer.
+
+```bash
+# Send a prompt, wait until the child stops (idle OR waiting on permission),
+# then fetch what it actually did.
+ccvalet session prompt my-session "run go test ./... and report failures"
+ccvalet session wait my-session --until idle,permission --timeout 600
+ccvalet session result my-session --json | jq '.entries[].blocks[] | select(.kind=="tool_result")'
+
+# Incremental fetch: only entries after a checkpoint.
+# --since is strictly exclusive: pass the last entry's timestamp to receive
+# only entries that came after it (no duplicates). Claude Code emits timestamps
+# with millisecond precision (e.g. "2026-04-09T13:23:10.456Z").
+T1=$(ccvalet session result my-session --json | jq -r '.entries[-1].timestamp')
+ccvalet session prompt my-session "now also run go vet"
+ccvalet session wait my-session --until idle,permission
+ccvalet session result my-session --since "$T1" --json
+
+# Filter to a specific tool, or to errors only
+ccvalet session result my-session --tool Bash --json
+ccvalet session result my-session --errors-only --json
+```
+
+`prompt` is an alias for `send`. All flags work with `--host` for remote/peer sessions.
+
 #### Exit codes
 
 | Code | Meaning |

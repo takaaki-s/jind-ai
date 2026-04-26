@@ -563,3 +563,443 @@ func TestExtractFullContent_PreservesNewlines(t *testing.T) {
 		t.Errorf("expected newlines preserved, got %q", got)
 	}
 }
+
+// --- Structured API: parseBlocks ---
+
+func TestParseBlocks_UserString(t *testing.T) {
+	entry := &transcriptEntry{
+		Type:    "user",
+		Message: msgObject{Role: "user", Content: "  hello  "},
+	}
+	blocks := parseBlocks(entry)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "text" || blocks[0].Text != "hello" {
+		t.Errorf("unexpected block: %+v", blocks[0])
+	}
+}
+
+func TestParseBlocks_UserStringEmpty(t *testing.T) {
+	entry := &transcriptEntry{
+		Type:    "user",
+		Message: msgObject{Role: "user", Content: "   "},
+	}
+	if blocks := parseBlocks(entry); blocks != nil {
+		t.Errorf("expected nil for whitespace-only string, got %+v", blocks)
+	}
+}
+
+func TestParseBlocks_AssistantMixed(t *testing.T) {
+	content := []any{
+		map[string]any{"type": "thinking", "thinking": "let me think"},
+		map[string]any{"type": "text", "text": "hello"},
+		map[string]any{"type": "tool_use", "name": "Bash", "id": "tu_1", "input": map[string]any{"command": "echo hi"}},
+	}
+	entry := &transcriptEntry{
+		Type:    "assistant",
+		Message: msgObject{Role: "assistant", Content: content},
+	}
+	blocks := parseBlocks(entry)
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "thinking" || blocks[0].Text != "let me think" {
+		t.Errorf("thinking block wrong: %+v", blocks[0])
+	}
+	if blocks[1].Kind != "text" || blocks[1].Text != "hello" {
+		t.Errorf("text block wrong: %+v", blocks[1])
+	}
+	if blocks[2].Kind != "tool_use" || blocks[2].ToolName != "Bash" || blocks[2].ToolUseID != "tu_1" {
+		t.Errorf("tool_use block wrong: %+v", blocks[2])
+	}
+	// Input must be preserved as JSON
+	if len(blocks[2].Input) == 0 {
+		t.Fatal("expected non-empty Input")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(blocks[2].Input, &parsed); err != nil {
+		t.Fatalf("Input not valid JSON: %v", err)
+	}
+	if parsed["command"] != "echo hi" {
+		t.Errorf("Input.command = %v, want %q", parsed["command"], "echo hi")
+	}
+}
+
+func TestParseBlocks_ToolUseEmptyInput(t *testing.T) {
+	content := []any{
+		map[string]any{"type": "tool_use", "name": "X", "id": "tu_e", "input": map[string]any{}},
+	}
+	entry := &transcriptEntry{
+		Type:    "assistant",
+		Message: msgObject{Role: "assistant", Content: content},
+	}
+	blocks := parseBlocks(entry)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if string(blocks[0].Input) != "{}" {
+		t.Errorf("expected empty-object Input, got %q", string(blocks[0].Input))
+	}
+}
+
+func TestParseBlocks_ToolResultStringContent(t *testing.T) {
+	content := []any{
+		map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": "tu_1",
+			"content":     "command output",
+			"is_error":    false,
+		},
+	}
+	entry := &transcriptEntry{
+		Type:    "user",
+		Message: msgObject{Role: "user", Content: content},
+	}
+	blocks := parseBlocks(entry)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != "tool_result" || blocks[0].Output != "command output" || blocks[0].ToolUseID != "tu_1" || blocks[0].IsError {
+		t.Errorf("unexpected block: %+v", blocks[0])
+	}
+}
+
+func TestParseBlocks_ToolResultArrayContent(t *testing.T) {
+	content := []any{
+		map[string]any{
+			"type":        "tool_result",
+			"tool_use_id": "tu_2",
+			"content": []any{
+				map[string]any{"type": "text", "text": "line1"},
+				map[string]any{"type": "text", "text": "line2"},
+			},
+			"is_error": true,
+		},
+	}
+	entry := &transcriptEntry{
+		Type:    "user",
+		Message: msgObject{Role: "user", Content: content},
+	}
+	blocks := parseBlocks(entry)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	want := "line1\nline2"
+	if blocks[0].Output != want || !blocks[0].IsError {
+		t.Errorf("unexpected block: %+v (want Output=%q IsError=true)", blocks[0], want)
+	}
+}
+
+// --- Structured API: ReadEntries ---
+
+func TestReader_ReadEntries_AllAndSince(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+
+	workDir := "/structured/test"
+	sessionID := "sess-rd"
+	transcriptPath := r.getTranscriptPath(workDir, sessionID)
+
+	entries := []transcriptEntry{
+		{
+			Type:      "user",
+			Message:   msgObject{Role: "user", Content: "first"},
+			Timestamp: "2024-01-01T00:00:00Z",
+		},
+		{
+			Type: "assistant",
+			Message: msgObject{
+				Role: "assistant",
+				Content: []any{
+					map[string]any{"type": "tool_use", "name": "Bash", "id": "tu_a", "input": map[string]any{"command": "echo a"}},
+				},
+				Usage: &Usage{InputTokens: 10, OutputTokens: 5},
+			},
+			Timestamp: "2024-01-01T00:00:01Z",
+		},
+		{
+			Type: "user",
+			Message: msgObject{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": "tool_result", "tool_use_id": "tu_a", "content": "a", "is_error": false},
+				},
+			},
+			Timestamp: "2024-01-01T00:00:02Z",
+		},
+	}
+	writeJSONL(t, transcriptPath, entries)
+
+	all, err := r.ReadEntries(workDir, sessionID, "")
+	if err != nil {
+		t.Fatalf("ReadEntries(all): %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(all))
+	}
+	if all[1].Usage == nil || all[1].Usage.InputTokens != 10 {
+		t.Errorf("usage not parsed: %+v", all[1].Usage)
+	}
+
+	since, err := r.ReadEntries(workDir, sessionID, "2024-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("ReadEntries(since): %v", err)
+	}
+	if len(since) != 2 {
+		t.Fatalf("expected 2 entries after since, got %d", len(since))
+	}
+
+	future, err := r.ReadEntries(workDir, sessionID, "2099-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("ReadEntries(future): %v", err)
+	}
+	if len(future) != 0 {
+		t.Errorf("expected 0 entries for future since, got %d", len(future))
+	}
+}
+
+func TestReader_ReadEntries_NoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	got, err := r.ReadEntries("/nope", "missing", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil entries, got %+v", got)
+	}
+}
+
+func TestReader_ReadEntries_GlobFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	// Place file under one workDir but query with a wrong workDir.
+	written := r.getTranscriptPath("/actual/dir", "sess-glob")
+	writeJSONL(t, written, []transcriptEntry{
+		{
+			Type:      "user",
+			Message:   msgObject{Role: "user", Content: "x"},
+			Timestamp: "2024-01-01T00:00:00Z",
+		},
+	})
+	got, err := r.ReadEntries("/wrong/dir", "sess-glob", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected 1 entry via glob fallback, got %d", len(got))
+	}
+
+	// Empty workDir should also work via glob.
+	got2, err := r.ReadEntries("", "sess-glob", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 1 {
+		t.Errorf("expected 1 entry via glob (empty workDir), got %d", len(got2))
+	}
+}
+
+func TestReader_ReadEntries_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	p := r.getTranscriptPath("/empty/dir", "sess-empty")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.ReadEntries("/empty/dir", "sess-empty", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil entries for empty file, got %+v", got)
+	}
+}
+
+func TestReader_ReadEntries_LargeLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	workDir := "/large/test"
+	sessionID := "sess-large"
+	p := r.getTranscriptPath(workDir, sessionID)
+	// Build a single-line JSONL with a tool_result of ~2 MiB.
+	huge := strings.Repeat("A", 2*1024*1024)
+	entry := transcriptEntry{
+		Type: "user",
+		Message: msgObject{
+			Role: "user",
+			Content: []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "tu_h", "content": huge},
+			},
+		},
+		Timestamp: "2024-01-01T00:00:00Z",
+	}
+	writeJSONL(t, p, []transcriptEntry{entry})
+	got, err := r.ReadEntries(workDir, sessionID, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if len(got[0].Blocks) != 1 || len(got[0].Blocks[0].Output) != len(huge) {
+		t.Errorf("large tool_result not preserved: blocks=%d outLen=%d", len(got[0].Blocks), len(got[0].Blocks[0].Output))
+	}
+}
+
+// --- Structured API: LastToolUse / LastToolResult ---
+
+func TestReader_LastToolUseAndResult(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	workDir := "/last/test"
+	sessionID := "sess-last"
+	p := r.getTranscriptPath(workDir, sessionID)
+
+	entries := []transcriptEntry{
+		{
+			Type: "assistant",
+			Message: msgObject{Role: "assistant", Content: []any{
+				map[string]any{"type": "tool_use", "name": "Bash", "id": "tu_1", "input": map[string]any{"command": "echo first"}},
+			}},
+			Timestamp: "2024-01-01T00:00:00Z",
+		},
+		{
+			Type: "user",
+			Message: msgObject{Role: "user", Content: []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "tu_1", "content": "first", "is_error": false},
+			}},
+			Timestamp: "2024-01-01T00:00:01Z",
+		},
+		{
+			Type: "assistant",
+			Message: msgObject{Role: "assistant", Content: []any{
+				map[string]any{"type": "tool_use", "name": "Read", "id": "tu_2", "input": map[string]any{"path": "/x"}},
+				map[string]any{"type": "tool_use", "name": "Bash", "id": "tu_3", "input": map[string]any{"command": "echo last"}},
+			}},
+			Timestamp: "2024-01-01T00:00:02Z",
+		},
+		{
+			Type: "user",
+			Message: msgObject{Role: "user", Content: []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"},
+				map[string]any{"type": "tool_result", "tool_use_id": "tu_3", "content": "boom", "is_error": true},
+			}},
+			Timestamp: "2024-01-01T00:00:03Z",
+		},
+	}
+	writeJSONL(t, p, entries)
+
+	t.Run("LastToolUse any", func(t *testing.T) {
+		b, err := r.LastToolUse(workDir, sessionID, "")
+		if err != nil || b == nil {
+			t.Fatalf("err=%v block=%+v", err, b)
+		}
+		if b.ToolUseID != "tu_3" || b.ToolName != "Bash" {
+			t.Errorf("unexpected: %+v", b)
+		}
+	})
+
+	t.Run("LastToolUse by name", func(t *testing.T) {
+		b, err := r.LastToolUse(workDir, sessionID, "Read")
+		if err != nil || b == nil {
+			t.Fatalf("err=%v block=%+v", err, b)
+		}
+		if b.ToolUseID != "tu_2" {
+			t.Errorf("unexpected: %+v", b)
+		}
+	})
+
+	t.Run("LastToolUse missing", func(t *testing.T) {
+		b, err := r.LastToolUse(workDir, sessionID, "NoSuch")
+		if err != nil || b != nil {
+			t.Errorf("expected nil/nil, got %+v %v", b, err)
+		}
+	})
+
+	t.Run("LastToolResult any", func(t *testing.T) {
+		b, err := r.LastToolResult(workDir, sessionID, "", false)
+		if err != nil || b == nil {
+			t.Fatalf("err=%v block=%+v", err, b)
+		}
+		if b.ToolUseID != "tu_3" || !b.IsError {
+			t.Errorf("unexpected: %+v", b)
+		}
+	})
+
+	t.Run("LastToolResult by tool name", func(t *testing.T) {
+		b, err := r.LastToolResult(workDir, sessionID, "Bash", false)
+		if err != nil || b == nil {
+			t.Fatalf("err=%v block=%+v", err, b)
+		}
+		if b.ToolUseID != "tu_3" {
+			t.Errorf("unexpected: %+v", b)
+		}
+	})
+
+	t.Run("LastToolResult errors only", func(t *testing.T) {
+		b, err := r.LastToolResult(workDir, sessionID, "", true)
+		if err != nil || b == nil {
+			t.Fatalf("err=%v block=%+v", err, b)
+		}
+		if !b.IsError || b.ToolUseID != "tu_3" {
+			t.Errorf("unexpected: %+v", b)
+		}
+	})
+
+	t.Run("LastToolResult by name + errors only", func(t *testing.T) {
+		b, err := r.LastToolResult(workDir, sessionID, "Read", true)
+		if err != nil || b != nil {
+			t.Errorf("expected nil (Read result was not error), got %+v %v", b, err)
+		}
+	})
+}
+
+// --- findTranscriptPath ---
+
+func TestReader_FindTranscriptPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+
+	// 1. Direct hit.
+	direct := r.getTranscriptPath("/direct", "sess-d")
+	if err := os.MkdirAll(filepath.Dir(direct), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(direct, []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.findTranscriptPath("/direct", "sess-d")
+	if err != nil || got != direct {
+		t.Errorf("direct hit failed: got=%q err=%v", got, err)
+	}
+
+	// 2. Glob fallback.
+	other := r.getTranscriptPath("/other/dir", "sess-g")
+	if err := os.MkdirAll(filepath.Dir(other), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = r.findTranscriptPath("/wrong", "sess-g")
+	if err != nil || got != other {
+		t.Errorf("glob fallback failed: got=%q err=%v", got, err)
+	}
+
+	// 3. Not found.
+	_, err = r.findTranscriptPath("/wrong", "no-such")
+	if !os.IsNotExist(err) {
+		t.Errorf("expected ErrNotExist, got %v", err)
+	}
+
+	// 4. Empty sessionID.
+	_, err = r.findTranscriptPath("/wrong", "")
+	if !os.IsNotExist(err) {
+		t.Errorf("expected ErrNotExist for empty sessionID, got %v", err)
+	}
+}

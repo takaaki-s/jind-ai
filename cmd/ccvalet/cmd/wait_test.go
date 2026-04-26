@@ -31,3 +31,51 @@ func TestRenderWaitResultJSON(t *testing.T) {
 		}
 	})
 }
+
+func TestParseWaitTargets(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  string
+		until   string
+		want    []session.Status
+		wantErr bool
+	}{
+		{name: "default status only", status: "idle", until: "", want: []session.Status{session.StatusIdle}},
+		{name: "until overrides status", status: "idle", until: "permission", want: []session.Status{session.StatusPermission}},
+		{name: "until multiple values", status: "idle", until: "idle,permission", want: []session.Status{session.StatusIdle, session.StatusPermission}},
+		{name: "until trims whitespace", status: "idle", until: " idle , permission ", want: []session.Status{session.StatusIdle, session.StatusPermission}},
+		{name: "until dedups", status: "", until: "idle,idle,permission", want: []session.Status{session.StatusIdle, session.StatusPermission}},
+		{name: "both empty errors", status: "", until: "", wantErr: true},
+		{name: "comma only errors", status: "", until: ",,", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseWaitTargets(tc.status, tc.until)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("len = %d, want %d (%v vs %v)", len(got), len(tc.want), got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFormatTargets(t *testing.T) {
+	got := formatTargets([]session.Status{session.StatusIdle, session.StatusPermission})
+	want := "idle|permission"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

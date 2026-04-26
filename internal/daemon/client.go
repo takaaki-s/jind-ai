@@ -141,6 +141,25 @@ func (c *Client) Send(id, prompt, hostID string) error {
 	return nil
 }
 
+// Result fetches structured transcript entries for a session, with optional
+// since/last/tool/errors-only filters. Used by orchestration tools to inspect
+// what a session actually did (tool_use / tool_result), not just the assistant text.
+func (c *Client) Result(req ResultRequest) (*ResultResponse, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "result", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var out ResultResponse
+	if err := json.Unmarshal(resp.Data, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // List lists all sessions
 func (c *Client) List() ([]session.Info, error) {
 	resp, err := c.send(Request{Action: "list"})

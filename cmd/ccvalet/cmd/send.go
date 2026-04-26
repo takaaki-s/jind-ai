@@ -16,8 +16,9 @@ type sendResult struct {
 }
 
 var sendCmd = &cobra.Command{
-	Use:   "send <session-name> <prompt>",
-	Short: "Send a prompt to a session",
+	Use:     "send <session-name> <prompt>",
+	Aliases: []string{"prompt"},
+	Short:   "Send a prompt to a session",
 	Long: `Send a prompt to a Claude Code session. The session must be in idle status.
 
 Multiple arguments after the session name are joined with spaces:
