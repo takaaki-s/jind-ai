@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takaaki-s/honjin/internal/config"
 	"github.com/takaaki-s/honjin/internal/debug"
+	"github.com/takaaki-s/honjin/internal/git"
 	"github.com/takaaki-s/honjin/internal/notify"
 	"github.com/takaaki-s/honjin/internal/tmux"
 	"github.com/takaaki-s/honjin/internal/transcript"
@@ -38,6 +39,7 @@ type Manager struct {
 	notifier   *notify.Notifier
 	configMgr  *config.Manager
 	tmuxClient tmux.Runner // tmux client for session management
+	gitClient  *git.Client
 	mu         sync.RWMutex
 	stateDir   string
 }
@@ -158,6 +160,7 @@ func NewManager(sessionsDir, stateDir string, configMgr *config.Manager) (*Manag
 		store:     store,
 		notifier:  notify.NewNotifier(),
 		configMgr: configMgr,
+		gitClient: git.NewClient(),
 		stateDir:  stateDir,
 	}
 
@@ -182,13 +185,24 @@ type CreateOptions struct {
 	WorkDir string // Working directory path
 	Name    string // Session name (defaults to directory basename)
 	Fleet   string // Fleet name for session grouping; defaults to DefaultFleet if empty
+	HostID  string // Target host ("local" or a configured remote host id)
+
+	Worktree       bool   // Create a git worktree for this session
+	WorktreeName   string // Override auto-generated worktree name
+	WorktreeBranch string // Override auto-generated branch name
+	WorktreeBase   string // Override auto-detected base branch (default: origin/HEAD)
 }
 
-// CreateWithOptions creates a new session with full options
-func (m *Manager) CreateWithOptions(opts CreateOptions) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// CreateWithOptions creates a new session with full options.
+//
+// Uses named returns so a deferred rollback (in the worktree path) can detect
+// whether a later step failed and clean up the created worktree/branch.
+//
+// Lock discipline (worktree path): git operations run outside m.mu; the
+// sessions map is re-checked under lock after worktree creation. Fetch is
+// slow (network) so holding m.mu through it would block reads (List, Get,
+// SetStatus) across the whole daemon.
+func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr error) {
 	if opts.Fleet == "" {
 		opts.Fleet = DefaultFleet
 	}
@@ -198,22 +212,143 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*Session, error) {
 		return nil, fmt.Errorf("work directory is required")
 	}
 
+	// Pre-generate the session ID so the auto-derived worktree name can key
+	// off it. Also becomes Session.ID below so we only ever mint one UUID.
+	sessionID := uuid.New().String()
+
+	// Captured BEFORE the worktree block overwrites opts.WorkDir, so the
+	// default session name reflects the ORIGINAL repository basename rather
+	// than the auto-generated worktree directory name (e.g. "jin-abcd1234").
+	defaultName := filepath.Base(opts.WorkDir)
+
+	var (
+		worktreeCreated bool
+		worktreePath    string
+		branch          string
+		originalRepoDir string
+	)
+
+	if opts.Worktree {
+		if opts.HostID != "" && opts.HostID != "local" {
+			return nil, fmt.Errorf("worktree option is not supported for remote hosts yet")
+		}
+		if !git.IsGitRoot(opts.WorkDir) {
+			return nil, fmt.Errorf("not a git repository: %s", opts.WorkDir)
+		}
+
+		cfg := m.configMgr.GetWorktreeConfig()
+
+		base := opts.WorktreeBase
+		if base == "" {
+			detected, err := m.gitClient.DetectDefaultBranch(opts.WorkDir)
+			if err != nil {
+				base = cfg.DefaultBranch
+				if base == "" {
+					return nil, fmt.Errorf("cannot detect default branch: %w", err)
+				}
+			} else {
+				base = detected
+			}
+		}
+
+		if err := m.gitClient.Fetch(opts.WorkDir, "origin", base); err != nil {
+			if cfg.FetchFailure == config.FetchFailureStrict {
+				return nil, err
+			}
+			debugLog("[WORKTREE] fetch failed, continuing with local origin/%s: %v", base, err)
+		}
+
+		originalRepoDir = opts.WorkDir
+		repoBasename := filepath.Base(originalRepoDir)
+		baseName := deriveWorktreeName(sessionID, opts.WorktreeName)
+
+		// Clear orphan worktree registrations (`.git/worktrees/<name>/` metadata
+		// left after a manual `rm -rf` of the worktree directory) so the
+		// collision check below reflects the true git state. Best-effort:
+		// prune failures shouldn't block session creation.
+		if err := m.gitClient.PruneWorktrees(originalRepoDir); err != nil {
+			debugLog("[WORKTREE] prune failed for %s: %v", originalRepoDir, err)
+		}
+
+		var finalName string
+		if opts.WorktreeName != "" {
+			// Explicit override: honour the user's choice verbatim. Pre-check
+			// the branch so we fail fast with a clear message instead of
+			// leaking git's raw "fatal: branch 'X' already exists" through
+			// AddWorktree.
+			finalName = opts.WorktreeName
+			branch = deriveBranchName(finalName, cfg.BranchPrefix, opts.WorktreeBranch)
+			if m.gitClient.BranchExists(originalRepoDir, branch) {
+				return nil, fmt.Errorf("branch %q already exists", branch)
+			}
+		} else {
+			collides := func(candidate string) bool {
+				candidatePath, err := expandBaseDir(cfg.BaseDir, candidate, repoBasename)
+				if err != nil {
+					return true
+				}
+				if _, err := os.Stat(candidatePath); err == nil {
+					return true
+				}
+				candidateBranch := deriveBranchName(candidate, cfg.BranchPrefix, opts.WorktreeBranch)
+				return m.gitClient.BranchExists(originalRepoDir, candidateBranch)
+			}
+			name, err := findAvailableWorktreeName(baseName, collides)
+			if err != nil {
+				return nil, err
+			}
+			finalName = name
+			branch = deriveBranchName(finalName, cfg.BranchPrefix, opts.WorktreeBranch)
+		}
+
+		var err error
+		worktreePath, err = expandBaseDir(cfg.BaseDir, finalName, repoBasename)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			return nil, fmt.Errorf("creating worktree parent dir: %w", err)
+		}
+
+		if err := m.gitClient.AddWorktree(originalRepoDir, branch, worktreePath, "origin/"+base); err != nil {
+			return nil, fmt.Errorf("git worktree add: %w", err)
+		}
+
+		worktreeCreated = true
+		defer func() {
+			if retErr != nil && worktreeCreated {
+				if err := m.gitClient.RemoveWorktree(worktreePath, true); err != nil {
+					debugLog("[WORKTREE] rollback: RemoveWorktree failed for %s: %v", worktreePath, err)
+				}
+				if err := m.gitClient.DeleteBranch(originalRepoDir, branch); err != nil {
+					debugLog("[WORKTREE] rollback: DeleteBranch failed for %s: %v", branch, err)
+				}
+			}
+		}()
+
+		opts.WorkDir = worktreePath
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Check for duplicate directories
 	// Skip sessions whose CurrentWorkDir is inside a worktree — they have
 	// "moved away" from their persisted WorkDir and should not block new
 	// sessions for that directory.
 	for _, s := range m.sessions {
-		if s.WorkDir == opts.WorkDir && !isWorktreePath(s.CurrentWorkDir) {
+		if s.WorkDir == opts.WorkDir && !git.IsClaudeWorktreePath(s.CurrentWorkDir) {
 			return nil, fmt.Errorf("session already exists for directory: %s (session: %s)", opts.WorkDir, s.Name)
 		}
 	}
 
-	id := uuid.New().String() // Full UUID for Claude Code --session-id compatibility
+	id := sessionID
 
-	// Determine session name (default: directory basename)
+	// Determine session name (default: original repository basename)
 	name := opts.Name
 	if name == "" {
-		name = filepath.Base(opts.WorkDir)
+		name = defaultName
 	}
 
 	// Check session name uniqueness
@@ -236,12 +371,10 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*Session, error) {
 		Fleet:           opts.Fleet,
 	}
 
-	m.sessions[id] = session
-
-	// Persist session
 	if err := m.store.Save(session); err != nil {
 		return nil, err
 	}
+	m.sessions[id] = session
 
 	return session, nil
 }
@@ -346,7 +479,7 @@ func (m *Manager) SetWorkDir(id string, workDir string) error {
 	// Duplicate check (prevents conflicts in async mode)
 	if workDir != "" {
 		for _, s := range m.sessions {
-			if s.ID != id && s.WorkDir == workDir && !isWorktreePath(s.CurrentWorkDir) {
+			if s.ID != id && s.WorkDir == workDir && !git.IsClaudeWorktreePath(s.CurrentWorkDir) {
 				return fmt.Errorf("WorkDir already in use by session %s", s.Name)
 			}
 		}
@@ -415,60 +548,6 @@ func (m *Manager) startSession(session *Session) error {
 	}
 
 	return m.startSessionTmux(session)
-}
-
-// isWorktreePath returns true if the path is inside Claude Code's worktree
-// directory (.claude/worktrees/). These paths should not overwrite the
-// persisted WorkDir because the worktree may be deleted after ExitWorktree,
-// making the session unable to restart.
-func isWorktreePath(path string) bool {
-	return strings.Contains(path, "/.claude/worktrees/")
-}
-
-// isGitRoot returns true if the path contains a .git file or directory,
-// indicating it is a git repository root or worktree root.
-// Used to guard WorkDir updates: only paths that are project/worktree roots
-// should update the persisted WorkDir. Subdirectory navigation (e.g., into
-// .claude/workdir/) must not drift WorkDir away from the project root.
-func isGitRoot(path string) bool {
-	_, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil
-}
-
-// isGitWorktreeDir returns true when the directory at path is a git worktree
-// (its .git entry is a regular file that points at the main repo). Returns
-// false for the main repo (.git is a directory) or non-git directories.
-func isGitWorktreeDir(path string) bool {
-	if path == "" {
-		return false
-	}
-	fi, err := os.Lstat(filepath.Join(path, ".git"))
-	if err != nil {
-		return false
-	}
-	return fi.Mode().IsRegular()
-}
-
-// resolveWorktreeDir picks the best path to use when removing the session's
-// git worktree. Prefers currentWorkDir (persisted, reflects most recent CWD)
-// when it is a worktree, then workDir. Falls back to either even when neither
-// is a worktree so removeGitWorktree can return ErrNotWorktree against the
-// caller's intent rather than silently doing nothing.
-//
-// Takes the two paths as strings (rather than *Session) so the caller can
-// snapshot them under the manager lock and run the os.Lstat probes outside
-// the critical section.
-func resolveWorktreeDir(currentWorkDir, workDir string) string {
-	if isGitWorktreeDir(currentWorkDir) {
-		return currentWorkDir
-	}
-	if isGitWorktreeDir(workDir) {
-		return workDir
-	}
-	if currentWorkDir != "" {
-		return currentWorkDir
-	}
-	return workDir
 }
 
 // expandTilde expands a leading ~ in a path to the current user's home directory.
@@ -745,7 +824,7 @@ func (m *Manager) captureOutputTmux(session *Session) {
 				// (project root or worktree root). This prevents WorkDir from
 				// drifting to subdirectories like .claude/workdir/.
 				workDirChanged := false
-				if session.WorkDir != currentPath && isGitRoot(currentPath) && !isWorktreePath(currentPath) {
+				if session.WorkDir != currentPath && git.IsGitRoot(currentPath) && !git.IsClaudeWorktreePath(currentPath) {
 					session.WorkDir = currentPath
 					workDirChanged = true
 				}
@@ -840,7 +919,7 @@ func (m *Manager) HandleHookEvent(ccSessionID, jinSessionID, eventName, notifica
 	cwdChanged := false
 	if cwd != "" {
 		session.CurrentWorkDir = cwd
-		if session.WorkDir != cwd && isGitRoot(cwd) && !isWorktreePath(cwd) {
+		if session.WorkDir != cwd && git.IsGitRoot(cwd) && !git.IsClaudeWorktreePath(cwd) {
 			session.WorkDir = cwd
 			cwdChanged = true
 		}
@@ -979,6 +1058,12 @@ func (m *Manager) Kill(id string) error {
 // the worktree will also be removed. If the worktree has uncommitted changes
 // and forceRemoveWorktree is false, ErrWorktreeDirty is returned.
 func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) error {
+	// Defense-in-depth: the CLI validates the same combination, but non-CLI
+	// callers (TUI, integration tests, future clients) reach Manager directly.
+	if forceRemoveWorktree && !removeWorktree {
+		return fmt.Errorf("forceRemoveWorktree requires removeWorktree")
+	}
+
 	m.mu.Lock()
 
 	session, ok := m.sessions[id]
@@ -991,9 +1076,9 @@ func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) er
 	persistedWorkDir := session.WorkDir
 	m.mu.Unlock()
 
-	// Resolve the actual worktree path outside the lock — resolveWorktreeDir
+	// Resolve the actual worktree path outside the lock — ResolveWorktreeDir
 	// performs os.Lstat probes which would otherwise block other goroutines.
-	workDir := resolveWorktreeDir(currentWorkDir, persistedWorkDir)
+	workDir := git.ResolveWorktreeDir(currentWorkDir, persistedWorkDir)
 
 	// Remove worktree if requested (outside lock to avoid blocking during exec).
 	// This runs before tmux kill so that ErrWorktreeDirty / ErrNotWorktree can
@@ -1026,57 +1111,17 @@ func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) er
 
 // removeGitWorktree removes a git worktree at the given path.
 // Returns ErrWorktreeDirty if the worktree has uncommitted changes and force
-// is false. Returns ErrNotWorktree if workDir is not a git worktree (e.g.,
-// the main repository or a non-git directory) so the caller can surface the
-// discrepancy. A non-existent directory is treated as already-removed and
-// returns nil to keep removal idempotent.
+// is false. Returns ErrNotWorktree if workDir is not a git worktree.
 func (m *Manager) removeGitWorktree(workDir string, force bool) error {
-	// Idempotent: directory already gone (e.g., removed manually).
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		return nil
-	}
-
-	// Verify it's actually a worktree (.git must be a regular file, not a
-	// directory). The main repo or non-git dirs are refused to protect them
-	// from accidental removal.
-	gitPath := filepath.Join(workDir, ".git")
-	fi, err := os.Lstat(gitPath)
-	if err != nil || !fi.Mode().IsRegular() {
+	err := m.gitClient.RemoveWorktree(workDir, force)
+	switch {
+	case errors.Is(err, git.ErrDirty):
+		return ErrWorktreeDirty
+	case errors.Is(err, git.ErrNotWorktree):
 		return ErrNotWorktree
+	default:
+		return err
 	}
-
-	// Read .git file to find the main repo
-	// Contents: "gitdir: /path/to/main/.git/worktrees/<name>"
-	content, err := os.ReadFile(gitPath)
-	if err != nil {
-		return fmt.Errorf("reading .git file: %w", err)
-	}
-	raw := strings.TrimSpace(string(content))
-	if !strings.HasPrefix(raw, "gitdir: ") {
-		return ErrNotWorktree
-	}
-	gitdir := strings.TrimPrefix(raw, "gitdir: ")
-
-	// Derive main repo: .git/worktrees/<name> → .git → repo root
-	mainGitDir := filepath.Dir(filepath.Dir(gitdir)) // .git
-	mainRepoDir := filepath.Dir(mainGitDir)          // repo root
-
-	args := []string{"-C", mainRepoDir, "worktree", "remove"}
-	if force {
-		args = append(args, "--force")
-	}
-	args = append(args, workDir)
-
-	cmd := exec.Command("git", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		outStr := string(output)
-		if !force && (strings.Contains(outStr, "modified or untracked") || strings.Contains(outStr, "is dirty")) {
-			return ErrWorktreeDirty
-		}
-		return fmt.Errorf("git worktree remove: %s", strings.TrimSpace(outStr))
-	}
-	return nil
 }
 
 // ClaudeSettings represents the structure of ~/.claude/settings.local.json

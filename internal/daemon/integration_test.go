@@ -380,6 +380,38 @@ func TestIntegration_HookPermission(t *testing.T) {
 	}
 }
 
+// TestNewRequest_WorktreeFieldsRoundTrip verifies that the worktree fields survive
+// a JSON marshal/unmarshal round trip. This is the path handleNew's forwarding
+// logic relies on (server.go re-marshals the whole NewRequest when forwarding to
+// a remote host), so a lossy field would silently drop worktree options for
+// forwarded requests.
+func TestNewRequest_WorktreeFieldsRoundTrip(t *testing.T) {
+	req := NewRequest{
+		Name:           "wt-session",
+		WorkDir:        "/tmp/wt-project",
+		Start:          true,
+		Fleet:          "backend",
+		Worktree:       true,
+		WorktreeName:   "my-wt",
+		WorktreeBranch: "feat/xyz",
+		WorktreeBase:   "develop",
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded NewRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if decoded != req {
+		t.Errorf("round trip mismatch: got %+v, want %+v", decoded, req)
+	}
+}
+
 // Verify Request/Response JSON serialization
 func TestRequestResponse_JSON(t *testing.T) {
 	req := Request{

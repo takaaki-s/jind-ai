@@ -52,6 +52,20 @@ type KeybindingsConfig struct {
 	Detach []string `mapstructure:"detach,omitempty"`
 }
 
+// WorktreeConfig represents settings for the git-worktree session option.
+type WorktreeConfig struct {
+	BaseDir       string `mapstructure:"base_dir,omitempty"`       // Placement template. Empty → paths.State()/worktrees/{name}
+	BranchPrefix  string `mapstructure:"branch_prefix,omitempty"`  // Auto-generated branch name prefix (default: "wip/")
+	DefaultBranch string `mapstructure:"default_branch,omitempty"` // Fallback when origin/HEAD detection fails
+	FetchFailure  string `mapstructure:"fetch_failure,omitempty"`  // "warn" (continue on fetch error) or "strict" (fail)
+}
+
+// FetchFailure modes for WorktreeConfig.FetchFailure.
+const (
+	FetchFailureWarn   = "warn"
+	FetchFailureStrict = "strict"
+)
+
 // HostConfig represents a remote host configuration
 type HostConfig struct {
 	ID         string   `mapstructure:"id"`                    // Host identifier (e.g., "ec2", "docker-dev")
@@ -68,6 +82,7 @@ type Config struct {
 	HostID      string            `mapstructure:"host_id,omitempty"`     // This daemon's host ID (default: "local")
 	Keybindings KeybindingsConfig `mapstructure:"keybindings,omitempty"` // Keybinding settings
 	Hosts       []HostConfig      `mapstructure:"hosts,omitempty"`       // Remote host settings
+	Worktree    WorktreeConfig    `mapstructure:"worktree,omitempty"`    // Git worktree session settings
 	Env         map[string]string `mapstructure:"-"`                     // Custom environment variables (loaded separately to preserve key case)
 }
 
@@ -110,7 +125,22 @@ func NewManager(dataDir string) (*Manager, error) {
 
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
-	return &Config{}
+	return &Config{
+		Worktree: DefaultWorktreeConfig(),
+	}
+}
+
+// DefaultWorktreeConfig returns the default worktree configuration.
+// BaseDir is left empty to signal "resolve at runtime from paths.State()" — this
+// avoids importing internal/paths here (which would create an import cycle when
+// paths eventually needs config).
+func DefaultWorktreeConfig() WorktreeConfig {
+	return WorktreeConfig{
+		BaseDir:       "",
+		BranchPrefix:  "wip/",
+		DefaultBranch: "",
+		FetchFailure:  FetchFailureWarn,
+	}
 }
 
 // load reads the configuration file
@@ -201,6 +231,25 @@ func (m *Manager) GetHosts() []HostConfig {
 	hosts := make([]HostConfig, len(m.config.Hosts))
 	copy(hosts, m.config.Hosts)
 	return hosts
+}
+
+// GetWorktreeConfig returns the worktree configuration, filling unset fields
+// from DefaultWorktreeConfig so callers can rely on non-empty defaults.
+// BaseDir is intentionally kept empty when unset — the caller resolves it via
+// paths.State() to avoid a config→paths import cycle.
+func (m *Manager) GetWorktreeConfig() WorktreeConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cfg := m.config.Worktree
+	defaults := DefaultWorktreeConfig()
+	if cfg.BranchPrefix == "" {
+		cfg.BranchPrefix = defaults.BranchPrefix
+	}
+	if cfg.FetchFailure == "" {
+		cfg.FetchFailure = defaults.FetchFailure
+	}
+	return cfg
 }
 
 // GetHost returns the host with the given ID

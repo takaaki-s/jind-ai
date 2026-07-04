@@ -2,10 +2,13 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/takaaki-s/honjin/internal/config"
 	"github.com/takaaki-s/honjin/internal/daemon"
 )
@@ -172,6 +175,150 @@ func TestCreateFormModel_SelectHost(t *testing.T) {
 			t.Error("hostDropdownOpen should remain true when index is out of bounds")
 		}
 	})
+}
+
+// --- stepWorktree ---
+
+// newWorktreeStepModel builds a minimal CreateFormModel already advanced to
+// stepFleet with a dirPicker whose Result() reports dir. Fleet input is
+// pre-populated so pressing Enter transitions to stepWorktree.
+func newWorktreeStepModel(t *testing.T, dir, hostID string) CreateFormModel {
+	t.Helper()
+
+	dp := NewDirPickerModel(dir)
+	dp.result = dir
+	dp.selected = true
+
+	fleet := textinput.New()
+	fleet.SetValue("default")
+	fleet.Focus()
+
+	name := textinput.New()
+	name.SetValue(filepath.Base(dir))
+
+	return CreateFormModel{
+		selectedHostID: hostID,
+		dirPicker:      dp,
+		nameInput:      name,
+		fleetInput:     fleet,
+		step:           stepFleet,
+	}
+}
+
+func TestCreateForm_StepWorktree_ReachedAfterFleet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	m := newWorktreeStepModel(t, dir, "")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(CreateFormModel)
+
+	if got.step != stepWorktree {
+		t.Fatalf("step = %v, want stepWorktree", got.step)
+	}
+	if got.worktreeDisabled {
+		t.Errorf("worktreeDisabled = true, want false for git repo")
+	}
+	if got.worktreeEnabled {
+		t.Errorf("worktreeEnabled = true, want false (default)")
+	}
+}
+
+func TestCreateForm_StepWorktree_DisabledWhenNotGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	m := newWorktreeStepModel(t, dir, "")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(CreateFormModel)
+
+	if got.step != stepWorktree {
+		t.Fatalf("step = %v, want stepWorktree", got.step)
+	}
+	if !got.worktreeDisabled {
+		t.Errorf("worktreeDisabled = false, want true for non-git dir")
+	}
+	if !strings.Contains(got.worktreeReason, "not a git repository") {
+		t.Errorf("worktreeReason = %q, want to contain %q", got.worktreeReason, "not a git repository")
+	}
+
+	yKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
+	updated2, _ := got.Update(yKey)
+	got2 := updated2.(CreateFormModel)
+	if got2.worktreeEnabled {
+		t.Errorf("pressing y on disabled step set worktreeEnabled = true; want false")
+	}
+}
+
+func TestCreateForm_StepWorktree_DisabledWhenRemoteHost(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	m := newWorktreeStepModel(t, dir, "ec2")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(CreateFormModel)
+
+	if got.step != stepWorktree {
+		t.Fatalf("step = %v, want stepWorktree", got.step)
+	}
+	if !got.worktreeDisabled {
+		t.Errorf("worktreeDisabled = false, want true for remote host")
+	}
+	if !strings.Contains(got.worktreeReason, "remote") {
+		t.Errorf("worktreeReason = %q, want to mention 'remote'", got.worktreeReason)
+	}
+}
+
+func TestCreateForm_StepWorktree_EnabledInGitRepo_YEnables(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	m := newWorktreeStepModel(t, dir, "")
+
+	advanced, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := advanced.(CreateFormModel)
+
+	if got.worktreeDisabled {
+		t.Fatalf("worktreeDisabled = true, want false for git repo")
+	}
+
+	yKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
+	afterY, _ := got.Update(yKey)
+	gotY := afterY.(CreateFormModel)
+	if !gotY.worktreeEnabled {
+		t.Errorf("after y: worktreeEnabled = false, want true")
+	}
+
+	nKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	afterN, _ := gotY.Update(nKey)
+	gotN := afterN.(CreateFormModel)
+	if gotN.worktreeEnabled {
+		t.Errorf("after n: worktreeEnabled = true, want false")
+	}
+}
+
+func TestCreateForm_StepWorktree_EscReturnsToFleet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	m := newWorktreeStepModel(t, dir, "")
+
+	advanced, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := advanced.(CreateFormModel)
+	if got.step != stepWorktree {
+		t.Fatalf("precondition: step = %v, want stepWorktree", got.step)
+	}
+
+	afterEsc, _ := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	gotEsc := afterEsc.(CreateFormModel)
+	if gotEsc.step != stepFleet {
+		t.Errorf("after Esc: step = %v, want stepFleet", gotEsc.step)
+	}
 }
 
 // --- convertDirHistoryEntries (additional cases) ---

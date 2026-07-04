@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/takaaki-s/honjin/internal/config"
 	"github.com/takaaki-s/honjin/internal/daemon"
+	"github.com/takaaki-s/honjin/internal/git"
 	"github.com/takaaki-s/honjin/internal/paths"
 	"github.com/takaaki-s/honjin/internal/session"
 	"github.com/takaaki-s/honjin/internal/tmux"
@@ -20,10 +21,11 @@ import (
 type formStep int
 
 const (
-	stepHost    formStep = iota // Host selection (only with multiple hosts)
-	stepWorkDir                 // Work directory selection
-	stepName                    // Session name
-	stepFleet                   // Fleet selection
+	stepHost     formStep = iota // Host selection (only with multiple hosts)
+	stepWorkDir                  // Work directory selection
+	stepName                     // Session name
+	stepFleet                    // Fleet selection
+	stepWorktree                 // Worktree yes/no
 )
 
 // CreateFormModel is a standalone Bubble Tea model for the session creation form.
@@ -61,6 +63,11 @@ type CreateFormModel struct {
 
 	// Step 4: Fleet selection
 	fleetInput textinput.Model
+
+	// Step 5: Worktree
+	worktreeEnabled  bool   // user selection
+	worktreeDisabled bool   // true when the current host/dir cannot support worktree
+	worktreeReason   string // shown when disabled
 }
 
 // createFormCompleteMsg is sent when session creation finishes.
@@ -183,6 +190,10 @@ func (m CreateFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fleetInput.Blur()
 				m.nameInput.Focus()
 				return m, nil
+			case stepWorktree:
+				m.step = stepFleet
+				m.fleetInput.Focus()
+				return m, nil
 			default:
 				return m, tea.Quit
 			}
@@ -192,9 +203,7 @@ func (m CreateFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.processingMsg = ""
 			m.err = msg.err
-			// Return to fleet step on error
-			m.step = stepFleet
-			m.fleetInput.Focus()
+			m.step = stepWorktree
 			return m, nil
 		}
 		// Success - set env var for parent TUI to detect
@@ -219,6 +228,8 @@ func (m CreateFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNameStep(msg)
 	case stepFleet:
 		return m.updateFleetStep(msg)
+	case stepWorktree:
+		return m.updateWorktreeStep(msg)
 	}
 
 	return m, nil
@@ -293,6 +304,32 @@ func (m CreateFormModel) View() string {
 		b.WriteString(stepStyle.Render("  Step 4: Fleet"))
 		b.WriteString("\n\n")
 		b.WriteString(m.viewFleetStep())
+	case stepWorktree:
+		if m.selectedHostID != "" && m.selectedHostID != "local" {
+			b.WriteString(stepStyle.Render(fmt.Sprintf("  Host: %s", m.selectedHostID)))
+			b.WriteString("\n")
+		}
+		displayDir := m.dirPicker.Result()
+		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(displayDir, home) {
+			displayDir = "~" + displayDir[len(home):]
+		}
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Dir: %s", displayDir)))
+		b.WriteString("\n")
+		name := m.nameInput.Value()
+		if name == "" {
+			name = filepath.Base(m.dirPicker.Result())
+		}
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Name: %s", name)))
+		b.WriteString("\n")
+		fleet := m.fleetInput.Value()
+		if fleet == "" {
+			fleet = "default"
+		}
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Fleet: %s", fleet)))
+		b.WriteString("\n")
+		b.WriteString(stepStyle.Render("  Step 5: Worktree"))
+		b.WriteString("\n\n")
+		b.WriteString(m.viewWorktreeStep())
 	}
 
 	return b.String()
@@ -453,7 +490,10 @@ func (m CreateFormModel) updateFleetStep(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "enter":
-			return m.handleSubmit()
+			m.step = stepWorktree
+			m.fleetInput.Blur()
+			m.computeWorktreeAvailability()
+			return m, nil
 		}
 	}
 
@@ -472,7 +512,102 @@ func (m CreateFormModel) viewFleetStep() string {
 	b.WriteString("\n\n")
 
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	b.WriteString("  " + helpStyle.Render("Enter:create  Esc:back"))
+	b.WriteString("  " + helpStyle.Render("Enter:next  Esc:back"))
+
+	return b.String()
+}
+
+// --- Step: Worktree ---
+
+// computeWorktreeAvailability decides whether the worktree option can be
+// enabled for the currently-selected host/dir and resets the user's choice.
+// Called on each entry to stepWorktree so a WorkDir/host change made via
+// Esc-back is picked up.
+func (m *CreateFormModel) computeWorktreeAvailability() {
+	m.worktreeEnabled = false
+	m.worktreeDisabled = false
+	m.worktreeReason = ""
+
+	if m.selectedHostID != "" && m.selectedHostID != "local" {
+		m.worktreeDisabled = true
+		m.worktreeReason = "remote hosts not supported yet"
+		return
+	}
+	if !git.IsGitRoot(m.dirPicker.Result()) {
+		m.worktreeDisabled = true
+		m.worktreeReason = "not a git repository"
+		return
+	}
+}
+
+func (m CreateFormModel) updateWorktreeStep(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "enter":
+		return m.handleSubmit()
+	case "y", "Y":
+		if !m.worktreeDisabled {
+			m.worktreeEnabled = true
+		}
+		return m, nil
+	case "n", "N":
+		m.worktreeEnabled = false
+		return m, nil
+	case " ", "space":
+		if !m.worktreeDisabled {
+			m.worktreeEnabled = !m.worktreeEnabled
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m CreateFormModel) viewWorktreeStep() string {
+	var b strings.Builder
+
+	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("255")).
+		Background(lipgloss.Color("#7aa2f7"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#414868"))
+
+	b.WriteString("  " + labelStyle.Render("▸ Create worktree?"))
+	b.WriteString("\n")
+
+	if m.worktreeDisabled {
+		b.WriteString("    " + mutedStyle.Render(m.worktreeReason))
+		b.WriteString("\n")
+		b.WriteString("    " + mutedStyle.Render("Selection: No"))
+		b.WriteString("\n\n")
+	} else {
+		yesLabel := "  [y] Yes  "
+		noLabel := "  [n] No  "
+		if m.worktreeEnabled {
+			b.WriteString("    " + selectedStyle.Render(yesLabel) + dimStyle.Render(noLabel))
+		} else {
+			b.WriteString("    " + dimStyle.Render(yesLabel) + selectedStyle.Render(noLabel))
+		}
+		b.WriteString("\n\n")
+
+		if m.worktreeEnabled {
+			b.WriteString("  " + mutedStyle.Render("Preview:"))
+			b.WriteString("\n")
+			b.WriteString("  " + mutedStyle.Render("  Worktree: (auto — jin-<8hex>)"))
+			b.WriteString("\n")
+			b.WriteString("  " + mutedStyle.Render("  Branch:   (auto — wip/jin-<8hex>)"))
+			b.WriteString("\n")
+			b.WriteString("  " + mutedStyle.Render("  Base:     (origin/HEAD)"))
+			b.WriteString("\n\n")
+		}
+	}
+
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	b.WriteString("  " + helpStyle.Render("Enter:create  y/n:toggle  Esc:back"))
 
 	return b.String()
 }
@@ -505,13 +640,15 @@ func (m CreateFormModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.err = nil
 
 	client := m.client
+	worktree := m.worktreeEnabled
 	return m, func() tea.Msg {
 		s, err := client.NewWithOptions(daemon.NewOptions{
-			Name:    name,
-			WorkDir: workDir,
-			Start:   true,
-			HostID:  hostID,
-			Fleet:   fleet,
+			Name:     name,
+			WorkDir:  workDir,
+			Start:    true,
+			HostID:   hostID,
+			Fleet:    fleet,
+			Worktree: worktree,
 		})
 		if err != nil {
 			return createFormCompleteMsg{err: err}

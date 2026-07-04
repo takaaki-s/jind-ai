@@ -30,6 +30,14 @@ For interactive session creation, use 'jin ui' (TUI).`,
 		hostID, _ := cmd.Flags().GetString("host")
 		fleet, _ := cmd.Flags().GetString("fleet")
 		noStart, _ := cmd.Flags().GetBool("no-start")
+		worktree, _ := cmd.Flags().GetBool("worktree")
+		worktreeName, _ := cmd.Flags().GetString("worktree-name")
+		worktreeBranch, _ := cmd.Flags().GetString("worktree-branch")
+		worktreeBase, _ := cmd.Flags().GetString("worktree-base")
+
+		if worktree && hostID != "" && hostID != "local" {
+			return fmt.Errorf("--worktree is not supported for remote hosts yet")
+		}
 
 		// Default WorkDir: current directory
 		if workDir == "" {
@@ -63,11 +71,15 @@ For interactive session creation, use 'jin ui' (TUI).`,
 
 		client := daemon.NewClient(getSocketPath())
 		s, err := client.NewWithOptions(daemon.NewOptions{
-			Name:    name,
-			WorkDir: workDir,
-			Start:   !noStart,
-			HostID:  hostID,
-			Fleet:   fleet,
+			Name:           name,
+			WorkDir:        workDir,
+			Start:          !noStart,
+			HostID:         hostID,
+			Fleet:          fleet,
+			Worktree:       worktree,
+			WorktreeName:   worktreeName,
+			WorktreeBranch: worktreeBranch,
+			WorktreeBase:   worktreeBase,
 		})
 		if err != nil {
 			return err
@@ -93,6 +105,10 @@ func init() {
 	newCmd.Flags().StringP("host", "H", "", "Target host (default: local)")
 	newCmd.Flags().StringP("fleet", "f", "", "Fleet name for session grouping (default: \"default\")")
 	newCmd.Flags().Bool("no-start", false, "Don't start the session immediately")
+	newCmd.Flags().Bool("worktree", false, "Create a git worktree for this session (from the repo's default branch)")
+	newCmd.Flags().String("worktree-name", "", "Override the auto-generated worktree name (default: jin-<8hex>)")
+	newCmd.Flags().String("worktree-branch", "", "Override the auto-generated branch name (default: <branch_prefix>jin-<8hex>)")
+	newCmd.Flags().String("worktree-base", "", "Override the base branch (default: origin/HEAD)")
 }
 
 func renderNewSessionJSON(w io.Writer, info *session.Info) error {

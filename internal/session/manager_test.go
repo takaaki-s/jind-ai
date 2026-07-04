@@ -3,14 +3,18 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/takaaki-s/honjin/internal/config"
+	"github.com/takaaki-s/honjin/internal/git"
 )
 
 // newTestManager creates a Manager backed by temporary directories and a mock tmux runner.
@@ -1671,27 +1675,6 @@ func TestManager_IdleFallback_DaemonRecovery(t *testing.T) {
 	}
 }
 
-func TestIsWorktreePath(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{"/home/user/project", false},
-		{"/home/user/project/.git", false},
-		{"/home/user/project/src", false},
-		{"/home/user/project/.claude/worktrees/feat-xyz", true},
-		{"/home/user/project/.claude/worktrees/COR-24444", true},
-		{"/tmp/.claude/worktrees/test", true},
-		{"/home/user/project/.claude/workdir", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		if got := isWorktreePath(tt.path); got != tt.want {
-			t.Errorf("isWorktreePath(%q) = %v, want %v", tt.path, got, tt.want)
-		}
-	}
-}
-
 func TestManager_HandleHookEvent_CWDUpdate_WorktreePathSkipped(t *testing.T) {
 	mgr, _ := newTestManager(t)
 
@@ -1884,5 +1867,375 @@ func TestRemoveGitWorktree_AlreadyDeletedIsIdempotent(t *testing.T) {
 
 	if err := mgr.removeGitWorktree(worktreeDir, false); err != nil {
 		t.Errorf("removeGitWorktree on missing dir should be nil, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateWithOptions worktree branch tests
+// ---------------------------------------------------------------------------
+
+// scriptedGitRunner is a git.Runner test double that dispatches on the args
+// via a user-supplied handler and records every call for later assertions.
+type scriptedGitRunner struct {
+	mu      sync.Mutex
+	calls   [][]string
+	handler func(dir string, args []string) ([]byte, error)
+}
+
+func (r *scriptedGitRunner) Run(dir string, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, append([]string(nil), args...))
+	r.mu.Unlock()
+	if r.handler != nil {
+		return r.handler(dir, args)
+	}
+	return nil, nil
+}
+
+// hadCall reports whether any recorded call starts with the given argv prefix.
+func (r *scriptedGitRunner) hadCall(prefix ...string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, call := range r.calls {
+		if len(call) < len(prefix) {
+			continue
+		}
+		match := true
+		for i, p := range prefix {
+			if call[i] != p {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// findCall returns the first recorded argv that starts with prefix, or nil.
+func (r *scriptedGitRunner) findCall(prefix ...string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, call := range r.calls {
+		if len(call) < len(prefix) {
+			continue
+		}
+		match := true
+		for i, p := range prefix {
+			if call[i] != p {
+				match = false
+				break
+			}
+		}
+		if match {
+			return call
+		}
+	}
+	return nil
+}
+
+func TestManager_CreateWithOptions_Worktree_RejectsRemoteHost(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	workDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	_, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir:  workDir,
+		Name:     "remote-wt",
+		Worktree: true,
+		HostID:   "ec2",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "remote") {
+		t.Errorf("error %q should mention remote", err.Error())
+	}
+}
+
+func TestManager_CreateWithOptions_Worktree_RejectsNonGitRepo(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	_, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir:  t.TempDir(), // no .git present
+		Name:     "nogit-wt",
+		Worktree: true,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("error %q should mention 'not a git repository'", err.Error())
+	}
+}
+
+func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	// Redirect worktree base dir to a scratch location so the test does not
+	// leak files into the user's real $XDG_STATE_HOME.
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	workDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	runner := &scriptedGitRunner{
+		handler: func(dir string, args []string) ([]byte, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case joined == "symbolic-ref refs/remotes/origin/HEAD":
+				return []byte("refs/remotes/origin/main\n"), nil
+			case len(args) >= 1 && args[0] == "fetch":
+				return nil, nil
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
+				return nil, nil
+			case len(args) >= 1 && args[0] == "rev-parse":
+				// Branch does not exist — no collision.
+				return nil, errors.New("exit status 1")
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":
+				return nil, nil
+			}
+			return nil, fmt.Errorf("unexpected git call: %s", joined)
+		},
+	}
+	mgr.gitClient = git.NewClientWithRunner(runner)
+
+	sess, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir:  workDir,
+		Name:     "wt-happy",
+		Worktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateWithOptions: %v", err)
+	}
+
+	wantPrefix := filepath.Join(stateDir, "honjin", "worktrees", "jin-")
+	if !strings.HasPrefix(sess.WorkDir, wantPrefix) {
+		t.Errorf("WorkDir = %q, want prefix %q", sess.WorkDir, wantPrefix)
+	}
+	suffix := strings.TrimPrefix(sess.WorkDir, wantPrefix)
+	if len(suffix) != 8 {
+		t.Errorf("worktree suffix = %q (len %d), want 8 hex chars", suffix, len(suffix))
+	}
+
+	// Assert that we resolved the default branch via symbolic-ref.
+	if !runner.hadCall("symbolic-ref", "refs/remotes/origin/HEAD") {
+		t.Error("expected `git symbolic-ref refs/remotes/origin/HEAD` to be called")
+	}
+
+	// Assert we fetched origin/main before creating the worktree.
+	fetchCall := runner.findCall("fetch")
+	if fetchCall == nil {
+		t.Fatal("expected `git fetch ...` to be called")
+	}
+	wantFetch := []string{"fetch", "origin", "main"}
+	if !reflect.DeepEqual(fetchCall, wantFetch) {
+		t.Errorf("fetch args = %v, want %v", fetchCall, wantFetch)
+	}
+
+	// Assert AddWorktree used the auto-generated branch (wip/jin-<8hex>),
+	// the resolved worktree path, and origin/main as the base ref.
+	addCall := runner.findCall("worktree", "add")
+	if addCall == nil {
+		t.Fatal("expected `git worktree add ...` to be called")
+	}
+	// Layout: worktree add -b <branch> <path> <baseRef>
+	if len(addCall) != 6 {
+		t.Fatalf("worktree add args len = %d, want 6: %v", len(addCall), addCall)
+	}
+	if addCall[2] != "-b" {
+		t.Errorf("worktree add[2] = %q, want -b", addCall[2])
+	}
+	gotBranch := addCall[3]
+	wantBranchPrefix := "wip/jin-"
+	if !strings.HasPrefix(gotBranch, wantBranchPrefix) {
+		t.Errorf("worktree add branch = %q, want prefix %q", gotBranch, wantBranchPrefix)
+	}
+	if len(strings.TrimPrefix(gotBranch, wantBranchPrefix)) != 8 {
+		t.Errorf("worktree add branch suffix = %q, want 8 hex chars", strings.TrimPrefix(gotBranch, wantBranchPrefix))
+	}
+	if addCall[4] != sess.WorkDir {
+		t.Errorf("worktree add path = %q, want %q", addCall[4], sess.WorkDir)
+	}
+	if addCall[5] != "origin/main" {
+		t.Errorf("worktree add baseRef = %q, want origin/main", addCall[5])
+	}
+}
+
+func TestManager_CreateWithOptions_Worktree_RollsBackOnFailure(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	workDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	// Pre-create a session with the name the worktree create will re-use,
+	// so the name-uniqueness check fails *after* the worktree/branch exist.
+	if _, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir: t.TempDir(),
+		Name:    "collide",
+	}); err != nil {
+		t.Fatalf("pre-create: %v", err)
+	}
+
+	runner := &scriptedGitRunner{
+		handler: func(dir string, args []string) ([]byte, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case joined == "symbolic-ref refs/remotes/origin/HEAD":
+				return []byte("refs/remotes/origin/main\n"), nil
+			case len(args) >= 1 && args[0] == "fetch":
+				return nil, nil
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
+				return nil, nil
+			case len(args) >= 1 && args[0] == "rev-parse":
+				return nil, errors.New("exit status 1")
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":
+				// Populate the worktree layout so RemoveWorktree can
+				// progress past its structural checks and actually call
+				// the runner during rollback.
+				worktreePath := args[4]
+				mainGitDir := filepath.Join(dir, ".git", "worktrees", filepath.Base(worktreePath))
+				if err := os.MkdirAll(mainGitDir, 0o755); err != nil {
+					return nil, err
+				}
+				if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+					return nil, err
+				}
+				if err := os.WriteFile(
+					filepath.Join(worktreePath, ".git"),
+					[]byte("gitdir: "+mainGitDir+"\n"),
+					0o644,
+				); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "remove":
+				_ = os.RemoveAll(args[len(args)-1])
+				return nil, nil
+			case len(args) >= 2 && args[0] == "branch" && args[1] == "-D":
+				return nil, nil
+			}
+			return nil, fmt.Errorf("unexpected git call: %s", joined)
+		},
+	}
+	mgr.gitClient = git.NewClientWithRunner(runner)
+
+	_, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir:  workDir,
+		Name:     "collide", // trips name-uniqueness after worktree exists
+		Worktree: true,
+	})
+	if err == nil {
+		t.Fatal("expected error from name collision, got nil")
+	}
+
+	if !runner.hadCall("worktree", "remove") {
+		t.Error("expected RemoveWorktree runner call during rollback")
+	}
+	if !runner.hadCall("branch", "-D") {
+		t.Error("expected DeleteBranch runner call during rollback")
+	}
+}
+
+// TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision covers a
+// different failure path from the name-uniqueness test above: the WorkDir
+// uniqueness check re-runs under the re-acquired lock after AddWorktree
+// succeeds. Using --worktree-name gives us a predictable worktree path so we
+// can pre-register a session at that exact location.
+func TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	workDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	// Default base_dir template resolves to $XDG_STATE_HOME/honjin/worktrees/{name}.
+	predictablePath := filepath.Join(stateDir, "honjin", "worktrees", "collide-wt")
+
+	// Pre-create a session whose WorkDir is exactly the worktree path we'll
+	// try to create below, so the re-lock WorkDir uniqueness check trips.
+	if _, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir: predictablePath,
+		Name:    "pre-existing",
+	}); err != nil {
+		t.Fatalf("pre-create: %v", err)
+	}
+
+	runner := &scriptedGitRunner{
+		handler: func(dir string, args []string) ([]byte, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case joined == "symbolic-ref refs/remotes/origin/HEAD":
+				return []byte("refs/remotes/origin/main\n"), nil
+			case len(args) >= 1 && args[0] == "fetch":
+				return nil, nil
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
+				return nil, nil
+			case len(args) >= 1 && args[0] == "rev-parse":
+				// Branch does not exist — override-path pre-check passes.
+				return nil, errors.New("exit status 1")
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":
+				worktreePath := args[4]
+				mainGitDir := filepath.Join(dir, ".git", "worktrees", filepath.Base(worktreePath))
+				if err := os.MkdirAll(mainGitDir, 0o755); err != nil {
+					return nil, err
+				}
+				if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+					return nil, err
+				}
+				if err := os.WriteFile(
+					filepath.Join(worktreePath, ".git"),
+					[]byte("gitdir: "+mainGitDir+"\n"),
+					0o644,
+				); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			case len(args) >= 2 && args[0] == "worktree" && args[1] == "remove":
+				_ = os.RemoveAll(args[len(args)-1])
+				return nil, nil
+			case len(args) >= 2 && args[0] == "branch" && args[1] == "-D":
+				return nil, nil
+			}
+			return nil, fmt.Errorf("unexpected git call: %s", joined)
+		},
+	}
+	mgr.gitClient = git.NewClientWithRunner(runner)
+
+	_, err := mgr.CreateWithOptions(CreateOptions{
+		WorkDir:      workDir,
+		Name:         "wt-collide",
+		Worktree:     true,
+		WorktreeName: "collide-wt",
+	})
+	if err == nil {
+		t.Fatal("expected error from WorkDir collision, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists for directory") {
+		t.Errorf("error %q should mention directory conflict", err.Error())
+	}
+
+	if !runner.hadCall("worktree", "remove") {
+		t.Error("expected RemoveWorktree runner call during rollback")
+	}
+	if !runner.hadCall("branch", "-D") {
+		t.Error("expected DeleteBranch runner call during rollback")
 	}
 }

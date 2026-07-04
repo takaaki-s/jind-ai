@@ -318,6 +318,11 @@ type NewRequest struct {
 	HostID      string `json:"host_id,omitempty"`       // Target host (empty = "local")
 	SSHAuthSock string `json:"ssh_auth_sock,omitempty"` // SSH_AUTH_SOCK (for git operations)
 	Fleet       string `json:"fleet"`                   // Fleet name for session grouping
+
+	Worktree       bool   `json:"worktree,omitempty"`        // Create a git worktree for this session
+	WorktreeName   string `json:"worktree_name,omitempty"`   // Override auto-generated worktree name
+	WorktreeBranch string `json:"worktree_branch,omitempty"` // Override auto-generated branch name
+	WorktreeBase   string `json:"worktree_base,omitempty"`   // Override auto-detected base branch
 }
 
 func (s *Server) handleNew(data json.RawMessage) Response {
@@ -343,9 +348,14 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 	s.createMu.Lock()
 
 	sess, err := s.manager.CreateWithOptions(session.CreateOptions{
-		Name:    req.Name,
-		WorkDir: req.WorkDir,
-		Fleet:   req.Fleet,
+		Name:           req.Name,
+		WorkDir:        req.WorkDir,
+		Fleet:          req.Fleet,
+		HostID:         req.HostID,
+		Worktree:       req.Worktree,
+		WorktreeName:   req.WorktreeName,
+		WorktreeBranch: req.WorktreeBranch,
+		WorktreeBase:   req.WorktreeBase,
 	})
 	if err != nil {
 		s.createMu.Unlock()

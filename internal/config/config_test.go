@@ -106,6 +106,58 @@ func TestFormatKeyHint(t *testing.T) {
 	}
 }
 
+// --- DefaultWorktreeConfig ---
+
+func TestDefaultWorktreeConfig(t *testing.T) {
+	cfg := DefaultWorktreeConfig()
+	if cfg.BaseDir != "" {
+		t.Errorf("BaseDir default = %q, want empty (resolved at runtime)", cfg.BaseDir)
+	}
+	if cfg.BranchPrefix != "wip/" {
+		t.Errorf("BranchPrefix default = %q, want %q", cfg.BranchPrefix, "wip/")
+	}
+	if cfg.FetchFailure != FetchFailureWarn {
+		t.Errorf("FetchFailure default = %q, want %q", cfg.FetchFailure, FetchFailureWarn)
+	}
+}
+
+// --- Manager.GetWorktreeConfig ---
+
+func TestManager_GetWorktreeConfig_FillsDefaults(t *testing.T) {
+	m := &Manager{config: &Config{}}
+	got := m.GetWorktreeConfig()
+	if got.BranchPrefix != "wip/" {
+		t.Errorf("BranchPrefix = %q, want %q", got.BranchPrefix, "wip/")
+	}
+	if got.FetchFailure != FetchFailureWarn {
+		t.Errorf("FetchFailure = %q, want %q", got.FetchFailure, FetchFailureWarn)
+	}
+}
+
+func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
+	m := &Manager{config: &Config{
+		Worktree: WorktreeConfig{
+			BaseDir:       "/tmp/custom/{name}",
+			BranchPrefix:  "topic/",
+			DefaultBranch: "develop",
+			FetchFailure:  FetchFailureStrict,
+		},
+	}}
+	got := m.GetWorktreeConfig()
+	if got.BaseDir != "/tmp/custom/{name}" {
+		t.Errorf("BaseDir = %q, want %q", got.BaseDir, "/tmp/custom/{name}")
+	}
+	if got.BranchPrefix != "topic/" {
+		t.Errorf("BranchPrefix = %q, want %q", got.BranchPrefix, "topic/")
+	}
+	if got.DefaultBranch != "develop" {
+		t.Errorf("DefaultBranch = %q, want %q", got.DefaultBranch, "develop")
+	}
+	if got.FetchFailure != FetchFailureStrict {
+		t.Errorf("FetchFailure = %q, want %q", got.FetchFailure, FetchFailureStrict)
+	}
+}
+
 // --- formatKeyForTmux ---
 
 func TestFormatKeyForTmux(t *testing.T) {

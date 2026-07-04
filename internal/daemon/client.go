@@ -72,6 +72,11 @@ type NewOptions struct {
 	Start   bool
 	HostID  string // Target host (empty = "local")
 	Fleet   string // Fleet name for session grouping
+
+	Worktree       bool   // Create a git worktree for this session
+	WorktreeName   string // Override auto-generated worktree name
+	WorktreeBranch string // Override auto-generated branch name
+	WorktreeBase   string // Override auto-detected base branch
 }
 
 // New creates a new session
@@ -86,12 +91,16 @@ func (c *Client) New(name, workDir string, start bool) (*session.Info, error) {
 // NewWithOptions creates a new session with full options
 func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, error) {
 	data, _ := json.Marshal(NewRequest{
-		Name:        opts.Name,
-		WorkDir:     opts.WorkDir,
-		Start:       opts.Start,
-		HostID:      opts.HostID,
-		SSHAuthSock: os.Getenv("SSH_AUTH_SOCK"),
-		Fleet:       opts.Fleet,
+		Name:           opts.Name,
+		WorkDir:        opts.WorkDir,
+		Start:          opts.Start,
+		HostID:         opts.HostID,
+		SSHAuthSock:    os.Getenv("SSH_AUTH_SOCK"),
+		Fleet:          opts.Fleet,
+		Worktree:       opts.Worktree,
+		WorktreeName:   opts.WorktreeName,
+		WorktreeBranch: opts.WorktreeBranch,
+		WorktreeBase:   opts.WorktreeBase,
 	})
 
 	resp, err := c.send(Request{Action: "new", Data: data})

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,13 @@ var deleteCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		removeWorktree, _ := cmd.Flags().GetBool("worktree")
+		forceWorktree, _ := cmd.Flags().GetBool("force-worktree")
+
+		if forceWorktree && !removeWorktree {
+			return exitcode.Errorf(exitcode.GeneralError, "--force-worktree requires --worktree")
+		}
+
 		nameOrID := args[0]
 		client := daemon.NewClient(getSocketPath())
 
@@ -59,7 +67,11 @@ var deleteCmd = &cobra.Command{
 			return err
 		}
 
-		if err := client.Delete(sessionID, hostID, false, false); err != nil {
+		if err := client.Delete(sessionID, hostID, removeWorktree, forceWorktree); err != nil {
+			if errors.Is(err, session.ErrWorktreeDirty) {
+				return exitcode.Wrap(err, exitcode.WorktreeDirty,
+					"worktree has uncommitted changes (use --force-worktree to override)")
+			}
 			return err
 		}
 		if jsonOutput {
@@ -98,4 +110,7 @@ func renderActionResultJSON(w io.Writer, result actionResult) error {
 func init() {
 	sessionCmd.AddCommand(killCmd)
 	sessionCmd.AddCommand(deleteCmd)
+
+	deleteCmd.Flags().Bool("worktree", false, "Also remove the git worktree associated with this session")
+	deleteCmd.Flags().Bool("force-worktree", false, "Force worktree removal even with uncommitted changes (requires --worktree)")
 }
