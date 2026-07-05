@@ -17,6 +17,7 @@ import (
 	"github.com/takaaki-s/honjin/internal/session"
 	"github.com/takaaki-s/honjin/internal/tmux"
 	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/honjin/internal/worktreehook"
 )
 
 var debugLog = debug.NewLogger("daemon-debug.log")
@@ -72,6 +73,12 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 			debugLog("tmux client initialized (session: %s)", tmux.SessionName)
 		}
 	}
+
+	hookRunner, err := worktreehook.NewRunner(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("initializing worktree hook runner: %w", err)
+	}
+	mgr.SetHookRunner(hookRunner)
 
 	return &Server{
 		socketPath: socketPath,
@@ -218,6 +225,16 @@ type NewRequest struct {
 	WorktreeName   string `json:"worktree_name,omitempty"`   // Override auto-generated worktree name
 	WorktreeBranch string `json:"worktree_branch,omitempty"` // Override auto-generated branch name
 	WorktreeBase   string `json:"worktree_base,omitempty"`   // Override auto-detected base branch
+	NoHook         bool   `json:"no_hook,omitempty"`         // Skip .jin/worktree-post-create.sh hook
+}
+
+// NewResponse is the payload for the "new" action. Warning is a non-fatal
+// message emitted at creation (e.g. hook skipped because the repo is not
+// allowlisted); it is scoped to this single response and is not attached to
+// the persisted Session, so subsequent Get/List do not repeat it.
+type NewResponse struct {
+	session.Info
+	Warning string `json:"warning,omitempty"`
 }
 
 func (s *Server) handleNew(data json.RawMessage) Response {
@@ -229,7 +246,7 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 	// Synchronous mode - mutual exclusion
 	s.createMu.Lock()
 
-	sess, err := s.manager.CreateWithOptions(session.CreateOptions{
+	sess, warning, err := s.manager.CreateWithOptions(session.CreateOptions{
 		Name:           req.Name,
 		WorkDir:        req.WorkDir,
 		Fleet:          req.Fleet,
@@ -237,6 +254,7 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 		WorktreeName:   req.WorktreeName,
 		WorktreeBranch: req.WorktreeBranch,
 		WorktreeBase:   req.WorktreeBase,
+		NoHook:         req.NoHook,
 	})
 	if err != nil {
 		s.createMu.Unlock()
@@ -256,7 +274,7 @@ func (s *Server) handleNew(data json.RawMessage) Response {
 		}
 	}
 
-	respData, _ := json.Marshal(sess.ToInfo())
+	respData, _ := json.Marshal(NewResponse{Info: sess.ToInfo(), Warning: warning})
 	return Response{Success: true, Data: respData}
 }
 
@@ -526,4 +544,3 @@ func (s *Server) handleRemoveDirHistory(data json.RawMessage) Response {
 	}
 	return Response{Success: true}
 }
-

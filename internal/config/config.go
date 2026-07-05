@@ -58,6 +58,8 @@ type WorktreeConfig struct {
 	BranchPrefix  string `mapstructure:"branch_prefix,omitempty"`  // Auto-generated branch name prefix (default: "jin/")
 	DefaultBranch string `mapstructure:"default_branch,omitempty"` // Fallback when origin/HEAD detection fails
 	FetchFailure  string `mapstructure:"fetch_failure,omitempty"`  // "warn" (continue on fetch error) or "strict" (fail)
+	HookEnabled   *bool  `mapstructure:"hook_enabled,omitempty"`   // nil = default(true)
+	HookTimeout   int    `mapstructure:"hook_timeout,omitempty"`   // seconds, 0 = default(300)
 }
 
 // FetchFailure modes for WorktreeConfig.FetchFailure.
@@ -122,11 +124,14 @@ func defaultConfig() *Config {
 // avoids importing internal/paths here (which would create an import cycle when
 // paths eventually needs config).
 func DefaultWorktreeConfig() WorktreeConfig {
+	tru := true
 	return WorktreeConfig{
 		BaseDir:       "",
 		BranchPrefix:  "jin/",
 		DefaultBranch: "",
 		FetchFailure:  FetchFailureWarn,
+		HookEnabled:   &tru,
+		HookTimeout:   300,
 	}
 }
 
@@ -225,6 +230,12 @@ func (m *Manager) GetWorktreeConfig() WorktreeConfig {
 	}
 	if cfg.FetchFailure == "" {
 		cfg.FetchFailure = defaults.FetchFailure
+	}
+	if cfg.HookEnabled == nil {
+		cfg.HookEnabled = defaults.HookEnabled
+	}
+	if cfg.HookTimeout == 0 {
+		cfg.HookTimeout = defaults.HookTimeout
 	}
 	return cfg
 }

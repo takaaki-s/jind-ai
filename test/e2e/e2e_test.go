@@ -82,7 +82,7 @@ func TestE2E_SessionLifecycle(t *testing.T) {
 	client := setupE2E(t)
 
 	// Create session
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "e2e-test",
 		WorkDir: t.TempDir(), // Use a real directory
 		Start:   false,       // Don't start (tmux jin session may not exist)
@@ -126,7 +126,7 @@ func TestE2E_SessionLifecycle(t *testing.T) {
 func TestE2E_HookEventFlow(t *testing.T) {
 	client := setupE2E(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "hook-e2e",
 		WorkDir: t.TempDir(),
 		Start:   false,
@@ -198,7 +198,7 @@ func TestE2E_NotificationHistory(t *testing.T) {
 	}
 
 	// Create session and trigger a Stop hook (generates task_complete notification)
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "notify-e2e",
 		WorkDir: t.TempDir(),
 		Start:   false,
@@ -234,7 +234,7 @@ func TestE2E_MultipleSessionsConcurrent(t *testing.T) {
 	// Create multiple sessions
 	ids := make([]string, 5)
 	for i := range 5 {
-		info, err := client.NewWithOptions(daemon.NewOptions{
+		info, _, err := client.NewWithOptions(daemon.NewOptions{
 			Name:    filepath.Base(t.TempDir()), // unique name
 			WorkDir: t.TempDir(),
 			Start:   false,

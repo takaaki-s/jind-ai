@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/takaaki-s/honjin/internal/notify"
 	"github.com/takaaki-s/honjin/internal/tmux"
 	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/honjin/internal/worktreehook"
 )
 
 var debugLog = debug.NewLogger("daemon-debug.log")
@@ -39,6 +41,7 @@ type Manager struct {
 	notifier   *notify.Notifier
 	configMgr  *config.Manager
 	tmuxClient tmux.Runner // tmux client for session management
+	hookRunner worktreehook.Runner
 	gitClient  *git.Client
 	mu         sync.RWMutex
 	stateDir   string
@@ -47,6 +50,14 @@ type Manager struct {
 // SetTmuxClient sets the tmux client for tmux-based session management.
 func (m *Manager) SetTmuxClient(tc tmux.Runner) {
 	m.tmuxClient = tc
+}
+
+// SetHookRunner installs the worktree post-create hook runner. A nil runner
+// disables hook execution (equivalent to worktree.hook_enabled: false).
+func (m *Manager) SetHookRunner(r worktreehook.Runner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hookRunner = r
 }
 
 // RecoverTmuxSessions checks for sessions with existing tmux windows after daemon restart
@@ -174,6 +185,10 @@ func NewManager(sessionsDir, stateDir string, configMgr *config.Manager) (*Manag
 		if s.Fleet == "" {
 			s.Fleet = DefaultFleet
 		}
+		// IsWorktree is json:"-" so it's lost on restart; recover it from
+		// disk so the TUI's delete modal shows the worktree option
+		// immediately, without waiting for the 10s captureOutputTmux poll.
+		s.IsWorktree = git.IsGitWorktreeDir(s.WorkDir)
 		m.sessions[s.ID] = s
 	}
 
@@ -187,12 +202,18 @@ type CreateOptions struct {
 	Fleet   string // Fleet name for session grouping; defaults to DefaultFleet if empty
 
 	Worktree       bool   // Create a git worktree for this session
+	NoHook         bool   // Skip the worktree post-create hook (worktree path only)
 	WorktreeName   string // Override auto-generated worktree name
 	WorktreeBranch string // Override auto-generated branch name
 	WorktreeBase   string // Override auto-detected base branch (default: origin/HEAD)
 }
 
 // CreateWithOptions creates a new session with full options.
+//
+// The second return value is a non-fatal warning message (e.g. hook skipped
+// because the repository is not allowlisted). Empty when there is nothing to
+// surface. It is intentionally NOT stored on Session, so subsequent Get/List
+// responses do not carry a stale warning.
 //
 // Uses named returns so a deferred rollback (in the worktree path) can detect
 // whether a later step failed and clean up the created worktree/branch.
@@ -201,14 +222,14 @@ type CreateOptions struct {
 // sessions map is re-checked under lock after worktree creation. Fetch is
 // slow (network) so holding m.mu through it would block reads (List, Get,
 // SetStatus) across the whole daemon.
-func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr error) {
+func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, warning string, retErr error) {
 	if opts.Fleet == "" {
 		opts.Fleet = DefaultFleet
 	}
 
 	// WorkDir is required
 	if opts.WorkDir == "" {
-		return nil, fmt.Errorf("work directory is required")
+		return nil, "", fmt.Errorf("work directory is required")
 	}
 
 	// Pre-generate the session ID so the auto-derived worktree name can key
@@ -225,11 +246,12 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 		worktreePath    string
 		branch          string
 		originalRepoDir string
+		hookWarning     string
 	)
 
 	if opts.Worktree {
 		if !git.IsGitRoot(opts.WorkDir) {
-			return nil, fmt.Errorf("not a git repository: %s", opts.WorkDir)
+			return nil, "", fmt.Errorf("not a git repository: %s", opts.WorkDir)
 		}
 
 		cfg := m.configMgr.GetWorktreeConfig()
@@ -240,7 +262,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 			if err != nil {
 				base = cfg.DefaultBranch
 				if base == "" {
-					return nil, fmt.Errorf("cannot detect default branch: %w", err)
+					return nil, "", fmt.Errorf("cannot detect default branch: %w", err)
 				}
 			} else {
 				base = detected
@@ -249,7 +271,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 
 		if err := m.gitClient.Fetch(opts.WorkDir, "origin", base); err != nil {
 			if cfg.FetchFailure == config.FetchFailureStrict {
-				return nil, err
+				return nil, "", err
 			}
 			debugLog("[WORKTREE] fetch failed, continuing with local origin/%s: %v", base, err)
 		}
@@ -275,7 +297,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 			finalName = opts.WorktreeName
 			branch = deriveBranchName(finalName, cfg.BranchPrefix, opts.WorktreeBranch)
 			if m.gitClient.BranchExists(originalRepoDir, branch) {
-				return nil, fmt.Errorf("branch %q already exists", branch)
+				return nil, "", fmt.Errorf("branch %q already exists", branch)
 			}
 		} else {
 			collides := func(candidate string) bool {
@@ -291,7 +313,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 			}
 			name, err := findAvailableWorktreeName(baseName, collides)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			finalName = name
 			branch = deriveBranchName(finalName, cfg.BranchPrefix, opts.WorktreeBranch)
@@ -300,15 +322,15 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 		var err error
 		worktreePath, err = expandBaseDir(cfg.BaseDir, finalName, repoBasename)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-			return nil, fmt.Errorf("creating worktree parent dir: %w", err)
+			return nil, "", fmt.Errorf("creating worktree parent dir: %w", err)
 		}
 
 		if err := m.gitClient.AddWorktree(originalRepoDir, branch, worktreePath, "origin/"+base); err != nil {
-			return nil, fmt.Errorf("git worktree add: %w", err)
+			return nil, "", fmt.Errorf("git worktree add: %w", err)
 		}
 
 		worktreeCreated = true
@@ -323,6 +345,52 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 			}
 		}()
 
+		// Post-create hook: runs synchronously inside the rollback window so a
+		// non-zero exit tears the worktree/branch back down. Skipped silently
+		// when the caller opts out, the runner is not wired up, or config
+		// disables the feature.
+		if !opts.NoHook && m.hookRunner != nil &&
+			(cfg.HookEnabled == nil || *cfg.HookEnabled) {
+
+			scriptPath, exists := m.hookRunner.Discover(originalRepoDir)
+			if exists {
+				verdict, verifyErr := m.hookRunner.Verify(scriptPath, originalRepoDir)
+				if verifyErr != nil {
+					// Verify may return a verdict alongside err (e.g. hash
+					// failure); treat err as authoritative and abort before
+					// switching on verdict to avoid running an unverified hook.
+					return nil, "", fmt.Errorf("verify worktree hook: %w", verifyErr)
+				}
+				switch verdict {
+				case worktreehook.VerdictOK:
+					timeout := time.Duration(cfg.HookTimeout) * time.Second
+					ctx, cancel := context.WithTimeout(context.Background(), timeout)
+					logPath := m.hookRunner.HookLogPath(m.stateDir, sessionID)
+					runErr := m.hookRunner.Run(ctx, worktreehook.RunOptions{
+						ScriptPath:   scriptPath,
+						WorktreePath: worktreePath,
+						RepoRoot:     originalRepoDir,
+						Branch:       branch,
+						Base:         base,
+						SessionID:    sessionID,
+						SessionName:  opts.Name,
+						LogPath:      logPath,
+						Timeout:      timeout,
+					})
+					cancel()
+					if runErr != nil {
+						return nil, "", fmt.Errorf("worktree post-create hook failed: %w (log: %s)", runErr, logPath)
+					}
+				case worktreehook.VerdictNotAllowed:
+					hookWarning = fmt.Sprintf("Post-create hook detected but not allowed: %s. Run `jin worktree allow` to trust this repository.", scriptPath)
+					debugLog("[WORKTREE] hook not allowed for %s (run: jin worktree allow)", originalRepoDir)
+				case worktreehook.VerdictChanged:
+					hookWarning = "Post-create hook script changed since last allow. Run `jin worktree allow` to re-trust."
+					debugLog("[WORKTREE] hook script changed for %s (run: jin worktree allow)", originalRepoDir)
+				}
+			}
+		}
+
 		opts.WorkDir = worktreePath
 	}
 
@@ -335,7 +403,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 	// sessions for that directory.
 	for _, s := range m.sessions {
 		if s.WorkDir == opts.WorkDir && !git.IsClaudeWorktreePath(s.CurrentWorkDir) {
-			return nil, fmt.Errorf("session already exists for directory: %s (session: %s)", opts.WorkDir, s.Name)
+			return nil, "", fmt.Errorf("session already exists for directory: %s (session: %s)", opts.WorkDir, s.Name)
 		}
 	}
 
@@ -350,7 +418,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 	// Check session name uniqueness
 	for _, s := range m.sessions {
 		if s.Name == name {
-			return nil, fmt.Errorf("session with name '%s' already exists. Use --name to specify a different name", name)
+			return nil, "", fmt.Errorf("session with name '%s' already exists. Use --name to specify a different name", name)
 		}
 	}
 
@@ -365,14 +433,20 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, retErr
 		Status:          StatusStopped,
 		ClaudeSessionID: claudeSessionID,
 		Fleet:           opts.Fleet,
+		// Set IsWorktree immediately so the TUI delete modal offers the
+		// worktree removal option without waiting for the 10s
+		// captureOutputTmux poll cycle. `opts.Worktree` reflects "did we
+		// just create a worktree"; also check the WorkDir for cases where
+		// the user pointed at an existing worktree directly.
+		IsWorktree: opts.Worktree || git.IsGitWorktreeDir(opts.WorkDir),
 	}
 
 	if err := m.store.Save(session); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	m.sessions[id] = session
 
-	return session, nil
+	return session, hookWarning, nil
 }
 
 // List returns all sessions sorted by creation time

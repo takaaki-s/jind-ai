@@ -205,6 +205,30 @@ func TestConfigManager_GetEnv_ReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestConfigManager_GetWorktreeConfig_FromYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := "worktree:\n  branch_prefix: topic/\n  hook_enabled: false\n  hook_timeout: 60\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	m, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	wt := m.GetWorktreeConfig()
+	if wt.BranchPrefix != "topic/" {
+		t.Errorf("BranchPrefix = %q, want %q", wt.BranchPrefix, "topic/")
+	}
+	if wt.HookEnabled == nil || *wt.HookEnabled {
+		t.Errorf("HookEnabled = %v, want false", wt.HookEnabled)
+	}
+	if wt.HookTimeout != 60 {
+		t.Errorf("HookTimeout = %d, want 60", wt.HookTimeout)
+	}
+}
+
 func TestConfigManager_Reload_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	m, err := NewManager(dir)

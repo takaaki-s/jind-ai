@@ -119,6 +119,38 @@ func TestDefaultWorktreeConfig(t *testing.T) {
 	if cfg.FetchFailure != FetchFailureWarn {
 		t.Errorf("FetchFailure default = %q, want %q", cfg.FetchFailure, FetchFailureWarn)
 	}
+	if cfg.HookEnabled == nil || !*cfg.HookEnabled {
+		t.Errorf("HookEnabled default = %v, want true", cfg.HookEnabled)
+	}
+	if cfg.HookTimeout != 300 {
+		t.Errorf("HookTimeout default = %d, want 300", cfg.HookTimeout)
+	}
+}
+
+// --- WorktreeConfig hook fields ---
+
+func TestWorktreeConfig_HookDefaults(t *testing.T) {
+	m := &Manager{config: &Config{}}
+	got := m.GetWorktreeConfig()
+	if got.HookEnabled == nil || !*got.HookEnabled {
+		t.Errorf("HookEnabled = %v, want true", got.HookEnabled)
+	}
+	if got.HookTimeout != 300 {
+		t.Errorf("HookTimeout = %d, want 300", got.HookTimeout)
+	}
+}
+
+func TestWorktreeConfig_HookExplicitFalse(t *testing.T) {
+	disabled := false
+	m := &Manager{config: &Config{
+		Worktree: WorktreeConfig{
+			HookEnabled: &disabled,
+		},
+	}}
+	got := m.GetWorktreeConfig()
+	if got.HookEnabled == nil || *got.HookEnabled {
+		t.Errorf("HookEnabled = %v, want false", got.HookEnabled)
+	}
 }
 
 // --- Manager.GetWorktreeConfig ---
@@ -141,6 +173,7 @@ func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
 			BranchPrefix:  "topic/",
 			DefaultBranch: "develop",
 			FetchFailure:  FetchFailureStrict,
+			HookTimeout:   600,
 		},
 	}}
 	got := m.GetWorktreeConfig()
@@ -155,6 +188,9 @@ func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
 	}
 	if got.FetchFailure != FetchFailureStrict {
 		t.Errorf("FetchFailure = %q, want %q", got.FetchFailure, FetchFailureStrict)
+	}
+	if got.HookTimeout != 600 {
+		t.Errorf("HookTimeout = %d, want %d", got.HookTimeout, 600)
 	}
 }
 

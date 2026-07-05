@@ -65,19 +65,25 @@ type NewOptions struct {
 	WorktreeName   string // Override auto-generated worktree name
 	WorktreeBranch string // Override auto-generated branch name
 	WorktreeBase   string // Override auto-detected base branch
+	NoHook         bool   // Skip .jin/worktree-post-create.sh hook
 }
 
-// New creates a new session
+// New creates a new session. Any non-fatal creation warning is discarded;
+// callers that want to surface it should use NewWithOptions instead.
 func (c *Client) New(name, workDir string, start bool) (*session.Info, error) {
-	return c.NewWithOptions(NewOptions{
+	info, _, err := c.NewWithOptions(NewOptions{
 		Name:    name,
 		WorkDir: workDir,
 		Start:   start,
 	})
+	return info, err
 }
 
-// NewWithOptions creates a new session with full options
-func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, error) {
+// NewWithOptions creates a new session with full options. The second return
+// value is a non-fatal warning message (empty when there is nothing to
+// surface) — see NewResponse. It is only attached to the create response,
+// never to subsequent Get/List calls.
+func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, string, error) {
 	data, _ := json.Marshal(NewRequest{
 		Name:           opts.Name,
 		WorkDir:        opts.WorkDir,
@@ -88,21 +94,23 @@ func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, error) {
 		WorktreeName:   opts.WorktreeName,
 		WorktreeBranch: opts.WorktreeBranch,
 		WorktreeBase:   opts.WorktreeBase,
+		NoHook:         opts.NoHook,
 	})
 
 	resp, err := c.send(Request{Action: "new", Data: data})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if !resp.Success {
-		return nil, errors.New(resp.Error)
+		return nil, "", errors.New(resp.Error)
 	}
 
-	var info session.Info
-	if err := json.Unmarshal(resp.Data, &info); err != nil {
-		return nil, err
+	var out NewResponse
+	if err := json.Unmarshal(resp.Data, &out); err != nil {
+		return nil, "", err
 	}
-	return &info, nil
+	info := out.Info
+	return &info, out.Warning, nil
 }
 
 // Get retrieves a single session by ID

@@ -62,6 +62,11 @@ jin (root)
 │   ├─ attach
 │   ├─ edit
 │   └─ workdir
+├─ worktree
+│   ├─ allow
+│   ├─ revoke
+│   ├─ status
+│   └─ list
 ├─ tui (alias: ui)
 ├─ hook
 ├─ cleanup stopped

@@ -32,6 +32,7 @@ For interactive session creation, use 'jin ui' (TUI).`,
 		worktreeName, _ := cmd.Flags().GetString("worktree-name")
 		worktreeBranch, _ := cmd.Flags().GetString("worktree-branch")
 		worktreeBase, _ := cmd.Flags().GetString("worktree-base")
+		noHook, _ := cmd.Flags().GetBool("no-hook")
 
 		// Default WorkDir: current directory
 		if workDir == "" {
@@ -49,7 +50,7 @@ For interactive session creation, use 'jin ui' (TUI).`,
 		}
 
 		client := daemon.NewClient(getSocketPath())
-		s, err := client.NewWithOptions(daemon.NewOptions{
+		s, warning, err := client.NewWithOptions(daemon.NewOptions{
 			Name:           name,
 			WorkDir:        workDir,
 			Start:          !noStart,
@@ -58,6 +59,7 @@ For interactive session creation, use 'jin ui' (TUI).`,
 			WorktreeName:   worktreeName,
 			WorktreeBranch: worktreeBranch,
 			WorktreeBase:   worktreeBase,
+			NoHook:         noHook,
 		})
 		if err != nil {
 			return err
@@ -65,6 +67,13 @@ For interactive session creation, use 'jin ui' (TUI).`,
 
 		if jsonOutput {
 			return renderNewSessionJSON(os.Stdout, s)
+		}
+
+		// Surface non-fatal warnings (e.g. hook skipped because the repo is
+		// not allowlisted) before the "Created session" line so users notice
+		// them in normal output rather than only in JIN_DEBUG=1 logs.
+		if warning != "" {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
 		}
 
 		fmt.Printf("Created session: %s (%s)\n", s.Name, s.ID)
@@ -86,6 +95,7 @@ func init() {
 	newCmd.Flags().String("worktree-name", "", "Override the auto-generated worktree name (default: jin-<8hex>)")
 	newCmd.Flags().String("worktree-branch", "", "Override the auto-generated branch name (default: <branch_prefix>jin-<8hex>)")
 	newCmd.Flags().String("worktree-base", "", "Override the base branch (default: origin/HEAD)")
+	newCmd.Flags().Bool("no-hook", false, "Skip the .jin/worktree-post-create.sh hook (worktree only)")
 }
 
 func renderNewSessionJSON(w io.Writer, info *session.Info) error {

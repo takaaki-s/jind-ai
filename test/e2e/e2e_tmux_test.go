@@ -103,7 +103,7 @@ func TestE2E_TmuxSessionCreation(t *testing.T) {
 
 	client := setupE2E(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "tmux-create",
 		WorkDir: t.TempDir(),
 		Start:   true,
@@ -133,7 +133,7 @@ func TestE2E_KillWithTmuxCleanup(t *testing.T) {
 
 	client := setupE2E(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "tmux-kill",
 		WorkDir: t.TempDir(),
 		Start:   true,
@@ -178,7 +178,7 @@ func TestE2E_DeleteWithTmuxCleanup(t *testing.T) {
 
 	client := setupE2E(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "tmux-delete",
 		WorkDir: t.TempDir(),
 		Start:   true,
@@ -224,7 +224,7 @@ func TestE2E_SessionDataPersistence(t *testing.T) {
 	client, _ := setupE2EWithDataDir(t, dataDir, configDir)
 
 	workDir := t.TempDir()
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "persist-test",
 		WorkDir: workDir,
 		Start:   true,
@@ -274,7 +274,7 @@ func TestE2E_SessionRecovery(t *testing.T) {
 	// Phase 1: Start server and create a session
 	client, server := setupE2EWithDataDir(t, dataDir, configDir)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "recovery-test",
 		WorkDir: t.TempDir(),
 		Start:   true,
@@ -342,7 +342,7 @@ func TestE2E_MultipleSessionsTmux(t *testing.T) {
 	}
 	sessions := make([]sess, 3)
 	for i := range 3 {
-		info, err := client.NewWithOptions(daemon.NewOptions{
+		info, _, err := client.NewWithOptions(daemon.NewOptions{
 			Name:    filepath.Base(t.TempDir()),
 			WorkDir: t.TempDir(),
 			Start:   true,
@@ -400,7 +400,7 @@ func TestE2E_HookCWDUpdateOnStartedSession(t *testing.T) {
 
 	client := setupE2E(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "cwd-update",
 		WorkDir: t.TempDir(),
 		Start:   true,
@@ -483,7 +483,7 @@ func TestE2E_DeleteWithWorktreeCleanup(t *testing.T) {
 	client := setupE2E(t)
 	_, worktreeDir := setupGitWorktree(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "wt-cleanup",
 		WorkDir: worktreeDir,
 	})
@@ -517,7 +517,7 @@ func TestE2E_DeleteWithoutWorktreeCleanup(t *testing.T) {
 	client := setupE2E(t)
 	_, worktreeDir := setupGitWorktree(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "wt-no-cleanup",
 		WorkDir: worktreeDir,
 	})
@@ -557,7 +557,7 @@ func TestE2E_DeleteWorktreeDirty(t *testing.T) {
 		t.Fatalf("write dirty file: %v", err)
 	}
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "wt-dirty",
 		WorkDir: worktreeDir,
 	})
@@ -614,7 +614,7 @@ func TestE2E_DeleteWorktreeAlreadyRemoved(t *testing.T) {
 	client := setupE2E(t)
 	_, worktreeDir := setupGitWorktree(t)
 
-	info, err := client.NewWithOptions(daemon.NewOptions{
+	info, _, err := client.NewWithOptions(daemon.NewOptions{
 		Name:    "wt-removed",
 		WorkDir: worktreeDir,
 	})

@@ -341,6 +341,59 @@ When a session starts, honjin generates `$XDG_STATE_HOME/honjin/hooks-settings.j
 | `Stop` | Claude's turn ends → set session to `idle` (send task completion notification) |
 | `Notification` | Permission request, etc. → set session to `permission` (send permission request notification) |
 
+## Worktree Post-Create Hook
+
+When you create a session with `jin session new --worktree`, honjin can run a setup script right after the worktree is created and before Claude Code starts — installing dependencies, copying `.env`, etc. — so Claude never sees a half-set-up checkout.
+
+### Script location
+
+Place a shell script at `.jin/worktree-post-create.sh` in the **original repository** (not the worktree). It always runs via `bash`, so `chmod +x` is not required. If the file doesn't exist, the hook is silently skipped.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Copy .env from parent repository (git-ignored)
+cp "$JIN_REPO_ROOT/.env" "$JIN_WORKTREE_PATH/.env" 2>/dev/null || true
+
+# Install dependencies
+pnpm install
+```
+
+### Environment variables
+
+| Variable | Description |
+|----------|--------------|
+| `JIN_WORKTREE_PATH` | Absolute path of the newly created worktree |
+| `JIN_WORKTREE_BRANCH` | Branch checked out in the worktree |
+| `JIN_WORKTREE_BASE` | Base branch the worktree was created from |
+| `JIN_SESSION_ID` | UUID of the session being created |
+| `JIN_SESSION_NAME` | Session name, if one was given via `--name` (empty otherwise — the auto-derived name isn't assigned until after the hook runs) |
+| `JIN_REPO_ROOT` | Absolute path of the original repository |
+
+### Security: allowlist
+
+Since the script is checked into a repository, honjin never runs it unless the repository has been explicitly trusted (a direnv-style allow model). Trust is tracked by the script's SHA256 — editing the script requires trusting it again.
+
+```bash
+jin worktree allow    # Trust the current repository (shows the script, asks for confirmation)
+jin worktree revoke   # Revoke trust
+jin worktree status   # Show the allow status of the current repository
+jin worktree list     # List all trusted repositories
+```
+
+If the script exists but isn't trusted (or changed since it was trusted), the hook is skipped with a warning — the worktree is still created and Claude still starts normally.
+
+### Skipping the hook
+
+- `jin session new --worktree --no-hook` — skip the hook for this session only
+- `worktree.hook_enabled: false` in `~/.config/honjin/config.yaml` — disable the hook for all repositories
+- `worktree.hook_timeout: <seconds>` — change the timeout (default: `300`). On expiry the hook's process group is sent `SIGTERM`, given a 5-second grace period, then `SIGKILL` if still alive.
+
+### On failure
+
+If the hook exits non-zero or times out, the worktree and its branch are rolled back and `jin session new` fails with a non-zero exit code. The hook's stdout/stderr are kept at `~/.local/state/honjin/hook-logs/<session-id>.log` for troubleshooting, even after a rollback.
+
 ## Debugging
 
 ```bash

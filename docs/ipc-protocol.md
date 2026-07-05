@@ -43,9 +43,17 @@ type Response struct {
 
 ```go
 type NewRequest struct {
-    Name    string `json:"name"`
-    WorkDir string `json:"work_dir"`
-    Start   bool   `json:"start"`
+    Name        string `json:"name"`
+    WorkDir     string `json:"work_dir"`
+    Start       bool   `json:"start"`
+    SSHAuthSock string `json:"ssh_auth_sock,omitempty"` // SSH_AUTH_SOCK (for git operations)
+    Fleet       string `json:"fleet"`                   // Fleet name for session grouping
+
+    Worktree       bool   `json:"worktree,omitempty"`        // Create a git worktree for this session
+    WorktreeName   string `json:"worktree_name,omitempty"`   // Override auto-generated worktree name
+    WorktreeBranch string `json:"worktree_branch,omitempty"` // Override auto-generated branch name
+    WorktreeBase   string `json:"worktree_base,omitempty"`   // Override auto-detected base branch
+    NoHook         bool   `json:"no_hook,omitempty"`         // Skip .jin/worktree-post-create.sh hook
 }
 
 type IDRequest struct {
