@@ -219,9 +219,9 @@ type CreateOptions struct {
 // whether a later step failed and clean up the created worktree/branch.
 //
 // Lock discipline (worktree path): git operations run outside m.mu; the
-// sessions map is re-checked under lock after worktree creation. Fetch is
-// slow (network) so holding m.mu through it would block reads (List, Get,
-// SetStatus) across the whole daemon.
+// sessions map is re-checked under lock after worktree creation. Holding
+// m.mu across git subprocesses would block reads (List, Get, SetStatus)
+// on the whole daemon for the duration of the worktree add.
 func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, warning string, retErr error) {
 	if opts.Fleet == "" {
 		opts.Fleet = DefaultFleet
@@ -267,13 +267,6 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, warnin
 			} else {
 				base = detected
 			}
-		}
-
-		if err := m.gitClient.Fetch(opts.WorkDir, "origin", base); err != nil {
-			if cfg.FetchFailure == config.FetchFailureStrict {
-				return nil, "", err
-			}
-			debugLog("[WORKTREE] fetch failed, continuing with local origin/%s: %v", base, err)
 		}
 
 		originalRepoDir = opts.WorkDir

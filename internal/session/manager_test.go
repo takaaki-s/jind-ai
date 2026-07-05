@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1960,8 +1959,6 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 			switch {
 			case joined == "symbolic-ref refs/remotes/origin/HEAD":
 				return []byte("refs/remotes/origin/main\n"), nil
-			case len(args) >= 1 && args[0] == "fetch":
-				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
 			case len(args) >= 1 && args[0] == "rev-parse":
@@ -1998,14 +1995,11 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 		t.Error("expected `git symbolic-ref refs/remotes/origin/HEAD` to be called")
 	}
 
-	// Assert we fetched origin/main before creating the worktree.
-	fetchCall := runner.findCall("fetch")
-	if fetchCall == nil {
-		t.Fatal("expected `git fetch ...` to be called")
-	}
-	wantFetch := []string{"fetch", "origin", "main"}
-	if !reflect.DeepEqual(fetchCall, wantFetch) {
-		t.Errorf("fetch args = %v, want %v", fetchCall, wantFetch)
+	// Assert that we did NOT reach out to origin — worktree creation must
+	// run offline so heavy repos aren't taxed on every session. Users who
+	// want a fresh base should fetch via the post-create hook.
+	if fetchCall := runner.findCall("fetch"); fetchCall != nil {
+		t.Errorf("expected no `git fetch` during worktree creation, got %v", fetchCall)
 	}
 
 	// Assert AddWorktree used the auto-generated branch (jin/<8hex>),
@@ -2070,8 +2064,6 @@ func TestManager_CreateWithOptions_Worktree_RollsBackOnFailure(t *testing.T) {
 			switch {
 			case joined == "symbolic-ref refs/remotes/origin/HEAD":
 				return []byte("refs/remotes/origin/main\n"), nil
-			case len(args) >= 1 && args[0] == "fetch":
-				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
 			case len(args) >= 1 && args[0] == "rev-parse":
@@ -2158,8 +2150,6 @@ func TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision(t *testi
 			switch {
 			case joined == "symbolic-ref refs/remotes/origin/HEAD":
 				return []byte("refs/remotes/origin/main\n"), nil
-			case len(args) >= 1 && args[0] == "fetch":
-				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
 			case len(args) >= 1 && args[0] == "rev-parse":

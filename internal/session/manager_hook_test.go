@@ -22,8 +22,6 @@ func hookHappyPathGitRunner() *scriptedGitRunner {
 			switch {
 			case joined == "symbolic-ref refs/remotes/origin/HEAD":
 				return []byte("refs/remotes/origin/main\n"), nil
-			case len(args) >= 1 && args[0] == "fetch":
-				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
 			case len(args) >= 1 && args[0] == "rev-parse":
@@ -169,8 +167,6 @@ func TestCreateWithOptions_HookFail(t *testing.T) {
 			switch {
 			case joined == "symbolic-ref refs/remotes/origin/HEAD":
 				return []byte("refs/remotes/origin/main\n"), nil
-			case len(args) >= 1 && args[0] == "fetch":
-				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
 			case len(args) >= 1 && args[0] == "rev-parse":

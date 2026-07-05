@@ -116,9 +116,6 @@ func TestDefaultWorktreeConfig(t *testing.T) {
 	if cfg.BranchPrefix != "jin/" {
 		t.Errorf("BranchPrefix default = %q, want %q", cfg.BranchPrefix, "jin/")
 	}
-	if cfg.FetchFailure != FetchFailureWarn {
-		t.Errorf("FetchFailure default = %q, want %q", cfg.FetchFailure, FetchFailureWarn)
-	}
 	if cfg.HookEnabled == nil || !*cfg.HookEnabled {
 		t.Errorf("HookEnabled default = %v, want true", cfg.HookEnabled)
 	}
@@ -161,9 +158,6 @@ func TestManager_GetWorktreeConfig_FillsDefaults(t *testing.T) {
 	if got.BranchPrefix != "jin/" {
 		t.Errorf("BranchPrefix = %q, want %q", got.BranchPrefix, "jin/")
 	}
-	if got.FetchFailure != FetchFailureWarn {
-		t.Errorf("FetchFailure = %q, want %q", got.FetchFailure, FetchFailureWarn)
-	}
 }
 
 func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
@@ -172,7 +166,6 @@ func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
 			BaseDir:       "/tmp/custom/{name}",
 			BranchPrefix:  "topic/",
 			DefaultBranch: "develop",
-			FetchFailure:  FetchFailureStrict,
 			HookTimeout:   600,
 		},
 	}}
@@ -185,9 +178,6 @@ func TestManager_GetWorktreeConfig_PreservesUserValues(t *testing.T) {
 	}
 	if got.DefaultBranch != "develop" {
 		t.Errorf("DefaultBranch = %q, want %q", got.DefaultBranch, "develop")
-	}
-	if got.FetchFailure != FetchFailureStrict {
-		t.Errorf("FetchFailure = %q, want %q", got.FetchFailure, FetchFailureStrict)
 	}
 	if got.HookTimeout != 600 {
 		t.Errorf("HookTimeout = %d, want %d", got.HookTimeout, 600)

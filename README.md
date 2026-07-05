@@ -286,6 +286,53 @@ keybindings:
                        # Supported keys: ctrl+^, ctrl+], ctrl+\, ctrl+g
 ```
 
+### Worktree placement
+
+By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/honjin/worktrees/{name}` (typically `~/.local/state/honjin/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:
+
+```yaml
+worktree:
+  # Group worktrees per repository under a stable location
+  base_dir: "${HOME}/ghq/worktrees/{repo}/{name}"
+```
+
+Other common layouts:
+
+```yaml
+# Sibling directory next to each repo checkout
+worktree:
+  base_dir: "${HOME}/dev/worktrees/{name}"
+
+# Under a fixed root, ignoring repo name
+worktree:
+  base_dir: "/mnt/fast/worktrees/{name}"
+```
+
+Template variables:
+
+| Placeholder | Expands to |
+|-------------|------------|
+| `{name}` | Worktree name (e.g. `jin-abcd1234`, or the `--name` you passed) |
+| `{repo}` | Basename of the original repository |
+| `${VAR}` | Environment variable (`os.ExpandEnv` semantics) |
+
+The expanded path must be absolute. Unknown `{xxx}` placeholders are rejected at session creation.
+
+### Worktree branch naming
+
+Every worktree gets a companion branch. Two `worktree:` settings control how it is named:
+
+```yaml
+worktree:
+  branch_prefix: "topic/"   # Default: "jin/". Use "" to drop the prefix.
+  default_branch: "main"    # Fallback base branch. Default: "" (no fallback).
+```
+
+- **`branch_prefix`** — prepended to the auto-derived worktree name to form the branch name. The leading `jin-` on the worktree name is stripped first, so under the default `jin-abcd1234` becomes `jin/abcd1234` (not `jin/jin-abcd1234`). Ignored when you pass `--worktree-branch <name>` to `jin session new`, since that overrides the branch outright.
+- **`default_branch`** — used **only** when honjin cannot auto-detect the repository's default branch. Detection reads `refs/remotes/origin/HEAD`; local clones that never had it set (some tarballs, `git clone --no-checkout`, older clones) will hit the fallback. If detection fails and `default_branch` is empty, session creation errors with `cannot detect default branch`.
+
+Worktree creation itself is **offline** — the new branch is cut from your local `origin/<base>` with no network round-trip, so heavy repos aren't taxed on every session. If you want the worktree to start from the freshest remote tip, `git fetch origin <base>` in the source repo before running `jin session new --worktree`, or wire the fetch into the [post-create hook](#worktree-post-create-hook) below.
+
 ## TUI Keybindings
 
 ### Session list view

@@ -255,6 +255,53 @@ keybindings:
                        # サポートキー: ctrl+^, ctrl+], ctrl+\, ctrl+g
 ```
 
+### Worktree の作成先
+
+`jin session new --worktree` はデフォルトで `$XDG_STATE_HOME/honjin/worktrees/{name}`（通常 `~/.local/state/honjin/worktrees/` 配下）に worktree を作成します。`config.yaml` の `worktree.base_dir` で任意の場所に変更できます:
+
+```yaml
+worktree:
+  # リポジトリ単位でまとめて配置
+  base_dir: "${HOME}/ghq/worktrees/{repo}/{name}"
+```
+
+その他の配置例:
+
+```yaml
+# 開発ディレクトリ配下にフラットに置く
+worktree:
+  base_dir: "${HOME}/dev/worktrees/{name}"
+
+# 固定ルート配下（{repo} を使わない）
+worktree:
+  base_dir: "/mnt/fast/worktrees/{name}"
+```
+
+テンプレート変数:
+
+| 変数 | 展開結果 |
+|------|----------|
+| `{name}` | worktree 名（例: `jin-abcd1234` / `--name` で指定した名前） |
+| `{repo}` | 元リポジトリのベース名 |
+| `${VAR}` | 環境変数（`os.ExpandEnv` に準拠） |
+
+展開結果は絶対パスである必要があります。未知の `{xxx}` はセッション作成時にエラーになります。
+
+### Worktree のブランチ命名
+
+worktree 作成時には対応するブランチも自動生成されます。命名を制御する 2 つの設定:
+
+```yaml
+worktree:
+  branch_prefix: "topic/"   # デフォルト: "jin/"。"" にするとプレフィックス無し。
+  default_branch: "main"    # 起点ブランチのフォールバック。デフォルト: ""（フォールバック無し）
+```
+
+- **`branch_prefix`** — 自動生成された worktree 名の前に付与されてブランチ名になります。worktree 名先頭の `jin-` は事前に除去されるため、デフォルト設定では `jin-abcd1234` は `jin/jin-abcd1234` ではなく `jin/abcd1234` になります。`jin session new --worktree-branch <name>` でブランチを明示指定した場合は無視されます。
+- **`default_branch`** — リポジトリの起点ブランチを自動検出**できなかった場合のみ**使用されます。検出は `refs/remotes/origin/HEAD` を参照するため、origin/HEAD が未設定のクローン（一部の tarball、`git clone --no-checkout`、古いクローン等）ではフォールバックが発動します。検出も失敗し `default_branch` も空だと、`cannot detect default branch` エラーでセッション作成が失敗します。
+
+worktree 作成自体は**完全オフライン**で動作します — ローカルの `origin/<base>` からブランチを切るだけでネットワークアクセスは行いません。重いリポジトリでもセッション作成のたびに fetch のコストを払わずに済みます。最新のリモート tip から worktree を切り出したい場合は、`jin session new --worktree` の前に元リポジトリで `git fetch origin <base>` を実行するか、下記の [Worktree Post-Create Hook](#worktree-post-create-hook) 内で fetch を仕込んでください。
+
 ## TUI キーバインド
 
 ### セッション一覧画面

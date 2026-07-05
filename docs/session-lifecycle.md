@@ -75,22 +75,21 @@ Session (runtime only, json:"-")
 When `CreateWithOptions` is called with `Worktree: true`, an additional block runs before the common session-creation path (duplicate-directory check, name assignment, `Session` construction):
 
 1. Validate `opts.WorkDir` is a git root (`git.IsGitRoot`); resolve the base branch (`opts.WorktreeBase` → detected default branch → `WorktreeConfig.DefaultBranch`)
-2. `git fetch origin <base>` (best-effort unless `worktree.fetch_failure: strict`)
-3. Derive the worktree name/branch and resolve the worktree path from `WorktreeConfig.BaseDir`
-4. `git worktree add` — on success, sets `worktreeCreated = true` and registers a `defer` that rolls the worktree/branch back (`RemoveWorktree` + `DeleteBranch`) if the function later returns an error
-5. **Post-create hook** (see below) — runs synchronously, still inside the rollback window opened in step 4
-6. `opts.WorkDir` is rewritten to the new worktree path, and the common session-creation path resumes
+2. Derive the worktree name/branch and resolve the worktree path from `WorktreeConfig.BaseDir`
+3. `git worktree add <path> origin/<base>` — cuts the branch from the locally cached `origin/<base>` (no fetch is performed; users who need a fresher tip run `git fetch` in the source repo beforehand or via the post-create hook). On success, sets `worktreeCreated = true` and registers a `defer` that rolls the worktree/branch back (`RemoveWorktree` + `DeleteBranch`) if the function later returns an error
+4. **Post-create hook** (see below) — runs synchronously, still inside the rollback window opened in step 3
+5. `opts.WorkDir` is rewritten to the new worktree path, and the common session-creation path resumes
 
 ### Post-create hook (`.jin/worktree-post-create.sh`)
 
-Runs after the worktree is created (step 4) and before Claude Code starts. `StartBackground` is a separate call the caller makes after `CreateWithOptions` returns, so the hook always finishes first:
+Runs after the worktree is created (step 3) and before Claude Code starts. `StartBackground` is a separate call the caller makes after `CreateWithOptions` returns, so the hook always finishes first:
 
 1. **Discover**: look for `.jin/worktree-post-create.sh` at the original repository root. Missing → skip silently, worktree creation proceeds unchanged.
 2. **Verify** against the allowlist (`internal/worktreehook`, SHA256-tracked like direnv):
    - Not yet allowed, or the script's content changed since it was allowed → skip with a warning (session creation still succeeds); the user must run `jin worktree allow`
    - Allowed and unchanged → run
 3. **Run**: `bash <script>` executes with `cwd` set to the new worktree; default timeout 300s (`worktree.hook_timeout`). Exceeding the timeout kills the process (`exec.CommandContext`'s default cancel behavior).
-4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 4 `defer` — the worktree and its branch are rolled back, leaving no partial state
+4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 3 `defer` — the worktree and its branch are rolled back, leaving no partial state
 5. Skipped without running when: no script is present, `opts.NoHook` (`--no-hook`), or `worktree.hook_enabled: false`
 
 stdout/stderr are saved to `~/.local/state/honjin/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.
