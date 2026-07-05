@@ -48,38 +48,6 @@ func TestClient_DetectDefaultBranch_ErrorsOnUnexpectedFormat(t *testing.T) {
 	}
 }
 
-func TestClient_Fetch_SendsExpectedArgs(t *testing.T) {
-	mock := &mockRunner{}
-	c := NewClientWithRunner(mock)
-
-	if err := c.Fetch("/repo", "origin", "main"); err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	if mock.lastDir != "/repo" {
-		t.Errorf("Runner dir = %q, want %q", mock.lastDir, "/repo")
-	}
-	wantArgs := []string{"fetch", "origin", "main"}
-	if !reflect.DeepEqual(mock.lastArgs, wantArgs) {
-		t.Errorf("Runner args = %v, want %v", mock.lastArgs, wantArgs)
-	}
-}
-
-func TestClient_Fetch_WrapsError(t *testing.T) {
-	mock := &mockRunner{
-		out: []byte("fatal: could not read from remote repository"),
-		err: errors.New("exit status 128"),
-	}
-	c := NewClientWithRunner(mock)
-
-	err := c.Fetch("/repo", "origin", "main")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "could not read from remote repository") {
-		t.Errorf("error %q should contain the git output", err.Error())
-	}
-}
-
 func TestClient_BranchExists_TrueWhenGitOK(t *testing.T) {
 	mock := &mockRunner{}
 	c := NewClientWithRunner(mock)

@@ -300,18 +300,7 @@ worktree:
 - **`branch_prefix`** — 自動生成された worktree 名の前に付与されてブランチ名になります。worktree 名先頭の `jin-` は事前に除去されるため、デフォルト設定では `jin-abcd1234` は `jin/jin-abcd1234` ではなく `jin/abcd1234` になります。`jin session new --worktree-branch <name>` でブランチを明示指定した場合は無視されます。
 - **`default_branch`** — リポジトリの起点ブランチを自動検出**できなかった場合のみ**使用されます。検出は `refs/remotes/origin/HEAD` を参照するため、origin/HEAD が未設定のクローン（一部の tarball、`git clone --no-checkout`、古いクローン等）ではフォールバックが発動します。検出も失敗し `default_branch` も空だと、`cannot detect default branch` エラーでセッション作成が失敗します。
 
-### Worktree の fetch 挙動
-
-honjin は worktree 作成前に `git fetch origin <ベースブランチ>` を実行し、最新のリモートを起点に worktree を切り出します。`worktree.fetch_failure` はこの fetch が失敗したとき（オフライン / 認証エラー / 一時的なネットワーク障害など）の挙動を決めます:
-
-```yaml
-worktree:
-  fetch_failure: warn     # デフォルト。ローカルキャッシュの origin/<base> で続行
-  # fetch_failure: strict # fetch エラー時はセッション作成を中止
-```
-
-- **`warn`** — 失敗をログ出力（`JIN_DEBUG=1` で可視化）し、ローカルにキャッシュされている `origin/<base>` から worktree を作成します。オフライン作業向け。トレードオフとして、ベースが古い状態から分岐する可能性があります。
-- **`strict`** — fetch エラーをそのまま返し、`git worktree add` が走る前にセッション作成を中止します。古いベースブランチが致命的になる用途（release cut、deploy ブランチ、CI タグ付き作業など）で使用。
+worktree 作成自体は**完全オフライン**で動作します — ローカルの `origin/<base>` からブランチを切るだけでネットワークアクセスは行いません。重いリポジトリでもセッション作成のたびに fetch のコストを払わずに済みます。最新のリモート tip から worktree を切り出したい場合は、`jin session new --worktree` の前に元リポジトリで `git fetch origin <base>` を実行するか、下記の [Worktree Post-Create Hook](#worktree-post-create-hook) 内で fetch を仕込んでください。
 
 ## TUI キーバインド
 

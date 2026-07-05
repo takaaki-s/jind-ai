@@ -27,16 +27,6 @@ func (c *Client) DetectDefaultBranch(repoDir string) (string, error) {
 	return branch, nil
 }
 
-// Fetch runs `git fetch <remote> <ref>` in repoDir. Failures surface with the
-// combined output so callers can log or decide based on remote-side messages.
-func (c *Client) Fetch(repoDir, remote, ref string) error {
-	output, err := c.r.Run(repoDir, "fetch", remote, ref)
-	if err != nil {
-		return fmt.Errorf("git fetch %s %s: %s", remote, ref, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
 // BranchExists returns true iff a local branch with the given name exists.
 // Any git error (including "no such branch") is treated as non-existence — the
 // caller only needs a yes/no signal for collision detection.
