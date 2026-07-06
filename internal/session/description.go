@@ -48,9 +48,9 @@ func GenerateBaselineDescription(workDir, currentBranch string, isWorktree bool,
 	parts := make([]string, 0, 4)
 
 	// A worktree's ".git" is a regular file pointing at the main repo. Resolve
-	// it so the baseline uses the original repo name (e.g. "honjin") rather
-	// than the worktree directory basename (e.g. "jin-da43e8da"), which is
-	// meaningless to a human reader.
+	// it so the baseline uses the original repo dir name rather than the
+	// worktree directory basename (e.g. "jin-da43e8da"), which is meaningless
+	// to a human reader.
 	if mainRoot, isWt := resolveMainRepoIfWorktree(localRoot); isWt {
 		parts = append(parts, filepath.Base(mainRoot))
 		parts = append(parts, filepath.Base(localRoot))

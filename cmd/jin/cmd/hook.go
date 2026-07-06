@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/debug"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/debug"
 )
 
 // hookInput represents the JSON input from Claude Code hooks (stdin)

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/honjin/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
 )
 
 type sendResult struct {

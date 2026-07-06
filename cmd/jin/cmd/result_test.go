@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
 )
 
 func TestRenderResultText_Empty(t *testing.T) {

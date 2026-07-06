@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/exitcode"
+	"github.com/takaaki-s/jindaiko/internal/exitcode"
 )
 
 func TestRenderActionResultJSON(t *testing.T) {

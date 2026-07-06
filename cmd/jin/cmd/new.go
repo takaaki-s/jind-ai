@@ -6,9 +6,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/paths"
-	"github.com/takaaki-s/honjin/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jindaiko/internal/session"
 )
 
 var newCmd = &cobra.Command{

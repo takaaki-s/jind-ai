@@ -20,7 +20,7 @@ const (
 	StatusPermission Status = "permission" // Waiting for permission (Notification hook)
 )
 
-// Session represents an agent session managed by honjin. The concrete agent
+// Session represents an agent session managed by jindaiko. The concrete agent
 // (Claude Code, Codex CLI, ...) is identified by AgentKind and driven through
 // the interfaces in agent_types.go.
 type Session struct {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/takaaki-s/honjin/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/config"
 )
 
 func TestNewHelpModel(t *testing.T) {

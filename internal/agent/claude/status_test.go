@@ -3,8 +3,8 @@ package claude
 import (
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/agent"
-	"github.com/takaaki-s/honjin/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/agent"
+	"github.com/takaaki-s/jindaiko/internal/session"
 )
 
 func TestInterpret_HookEventMap(t *testing.T) {

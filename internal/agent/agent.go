@@ -15,7 +15,7 @@
 // of any import into this package.
 package agent
 
-import "github.com/takaaki-s/honjin/internal/session"
+import "github.com/takaaki-s/jindaiko/internal/session"
 
 // The type aliases below re-export the interface + supporting types the
 // session package owns. Adapter implementations use these local names so

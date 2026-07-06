@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
 )
 
 func TestRenderOutputJSON(t *testing.T) {

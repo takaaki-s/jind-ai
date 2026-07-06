@@ -1,19 +1,19 @@
 package session
 
 // Package session owns the interface + supporting types that describe how
-// honjin talks to an interactive agent (Claude Code, Codex CLI, ...). The
+// jindaiko talks to an interactive agent (Claude Code, Codex CLI, ...). The
 // concrete implementations live under internal/agent/<kind>/; the session
 // domain only knows this narrow surface so it can spawn / observe an agent
 // without importing the adapter packages (import direction stays session ←
 // agent, never the reverse).
 
-// SpawnOptions is the input an Agent adapter receives when honjin needs to
+// SpawnOptions is the input an Agent adapter receives when jindaiko needs to
 // build the shell command that starts (or resumes) the agent inside a tmux
 // pane.
 type SpawnOptions struct {
-	// JinSessionID is honjin's own session UUID. Adapters typically expose
+	// JinSessionID is jindaiko's own session UUID. Adapters typically expose
 	// it to the agent via the JIN_SESSION_ID env var so hook callbacks can
-	// correlate back to a honjin session.
+	// correlate back to a jindaiko session.
 	JinSessionID string
 	// AgentSessionID is the adapter-side persistent identifier (Claude
 	// Code's --session-id / --resume UUID, for example). Empty on the very
@@ -134,7 +134,7 @@ type StatusSource interface {
 // before the shell command is built. Adapters use it to write agent-side
 // config files (Claude Code's hooks-settings.json, trust dialog state, ...).
 type SetupContext struct {
-	StateDir string // honjin's persistent state directory (~/.local/state/honjin)
+	StateDir string // jindaiko's persistent state directory (~/.local/state/jindaiko)
 	ExecPath string // absolute path to the running jin binary (os.Executable())
 	WorkDir  string // absolute working directory the session will start in
 }

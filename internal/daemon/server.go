@@ -12,13 +12,13 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/takaaki-s/honjin/internal/agent"
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/debug"
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/tmux"
-	"github.com/takaaki-s/honjin/internal/transcript"
-	"github.com/takaaki-s/honjin/internal/worktreehook"
+	"github.com/takaaki-s/jindaiko/internal/agent"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/debug"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/worktreehook"
 )
 
 // agentResolverAdapter wraps agent.Lookup so it satisfies session.AgentResolver

@@ -7,9 +7,9 @@ import (
 	"net"
 	"strings"
 
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/notify"
-	"github.com/takaaki-s/honjin/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/notify"
+	"github.com/takaaki-s/jindaiko/internal/session"
 )
 
 // Client is the daemon client

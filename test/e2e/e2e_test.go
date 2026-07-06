@@ -15,10 +15,10 @@ import (
 	// resolves inside these e2e tests. Production wires this via
 	// cmd/jin/cmd/root.go; e2e spins up daemon.NewServer directly and
 	// therefore has to opt in here.
-	_ "github.com/takaaki-s/honjin/internal/agent/register"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/tmux"
+	_ "github.com/takaaki-s/jindaiko/internal/agent/register"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
 )
 
 func TestMain(m *testing.M) {

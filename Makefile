@@ -19,9 +19,9 @@ GOLANGCI_LINT := $(GOLANGCI_LINT_BIN_DIR)/golangci-lint
 # ldflags for version injection
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -X github.com/takaaki-s/honjin/internal/version.Version=$(VERSION) \
-           -X github.com/takaaki-s/honjin/internal/version.Commit=$(COMMIT) \
-           -X github.com/takaaki-s/honjin/internal/version.Date=$(DATE)
+LDFLAGS := -X github.com/takaaki-s/jindaiko/internal/version.Version=$(VERSION) \
+           -X github.com/takaaki-s/jindaiko/internal/version.Commit=$(COMMIT) \
+           -X github.com/takaaki-s/jindaiko/internal/version.Date=$(DATE)
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/jin

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/paths"
-	"github.com/takaaki-s/honjin/internal/worktreehook"
+	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jindaiko/internal/worktreehook"
 )
 
 // setupWorktreeTest isolates state for one test: a private XDG_STATE_HOME

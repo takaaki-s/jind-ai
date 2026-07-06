@@ -7,10 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/tmux"
-	"github.com/takaaki-s/honjin/internal/tui"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jindaiko/internal/tui"
 	"golang.org/x/term"
 )
 

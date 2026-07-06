@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/takaaki-s/honjin/cmd/jin/cmd"
+	"github.com/takaaki-s/jindaiko/cmd/jin/cmd"
 )
 
 func main() {

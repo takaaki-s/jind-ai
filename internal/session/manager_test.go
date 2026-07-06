@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/git"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/git"
 )
 
 // newTestManager creates a Manager backed by temporary directories, a mock
@@ -2056,7 +2056,7 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 		t.Fatalf("CreateWithOptions: %v", err)
 	}
 
-	wantPrefix := filepath.Join(stateDir, "honjin", "worktrees", "jin-")
+	wantPrefix := filepath.Join(stateDir, "jindaiko", "worktrees", "jin-")
 	if !strings.HasPrefix(sess.WorkDir, wantPrefix) {
 		t.Errorf("WorkDir = %q, want prefix %q", sess.WorkDir, wantPrefix)
 	}
@@ -2122,8 +2122,8 @@ func TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision(t *testi
 		t.Fatalf("mkdir .git: %v", err)
 	}
 
-	// Default base_dir template resolves to $XDG_STATE_HOME/honjin/worktrees/{name}.
-	predictablePath := filepath.Join(stateDir, "honjin", "worktrees", "collide-wt")
+	// Default base_dir template resolves to $XDG_STATE_HOME/jindaiko/worktrees/{name}.
+	predictablePath := filepath.Join(stateDir, "jindaiko", "worktrees", "collide-wt")
 
 	// Pre-create a session whose WorkDir is exactly the worktree path we'll
 	// try to create below, so the re-lock WorkDir uniqueness check trips.

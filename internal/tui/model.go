@@ -14,11 +14,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/paths"
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/tmux"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
 )
 
 // maxTUIWidth is the maximum width (columns) for the TUI pane.
@@ -1252,7 +1252,7 @@ func (m Model) renderListContent(contentWidth int) string {
 	if !m.focused {
 		ts = ts.Foreground(secondaryColor)
 	}
-	title := ts.Render("honjin")
+	title := ts.Render("jindaiko")
 	currentTime := time.Now().Format("15:04:05")
 	timeDisplay := fmt.Sprintf("[ %s ]", currentTime)
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/exitcode"
-	"github.com/takaaki-s/honjin/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/exitcode"
+	"github.com/takaaki-s/jindaiko/internal/session"
 )
 
 // fixture used by most cases; a small pool spanning distinct IDs and descriptions.

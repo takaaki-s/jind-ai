@@ -34,17 +34,17 @@ func TestCCSessionNameReader_LookupName(t *testing.T) {
 		{
 			name: "normal: sessionId matches, name and nameSource returned",
 			files: map[string]string{
-				"1234.json": `{"sessionId":"uuid-a","name":"honjin-1","nameSource":"derived"}`,
+				"1234.json": `{"sessionId":"uuid-a","name":"jindaiko-1","nameSource":"derived"}`,
 			},
 			lookupID:   "uuid-a",
-			wantName:   "honjin-1",
+			wantName:   "jindaiko-1",
 			wantSource: "derived",
 			wantOK:     true,
 		},
 		{
 			name: "miss: sessionId does not match any file",
 			files: map[string]string{
-				"1234.json": `{"sessionId":"uuid-a","name":"honjin-1"}`,
+				"1234.json": `{"sessionId":"uuid-a","name":"jindaiko-1"}`,
 			},
 			lookupID: "uuid-b",
 			wantOK:   false,
@@ -61,10 +61,10 @@ func TestCCSessionNameReader_LookupName(t *testing.T) {
 			name: "broken JSON mixed in: valid file is still found",
 			files: map[string]string{
 				"1234.json": `{`,
-				"5678.json": `{"sessionId":"uuid-a","name":"honjin-1"}`,
+				"5678.json": `{"sessionId":"uuid-a","name":"jindaiko-1"}`,
 			},
 			lookupID: "uuid-a",
-			wantName: "honjin-1",
+			wantName: "jindaiko-1",
 			wantOK:   true,
 		},
 		{
@@ -78,10 +78,10 @@ func TestCCSessionNameReader_LookupName(t *testing.T) {
 		{
 			name: "nameSource missing but name non-empty is still a hit",
 			files: map[string]string{
-				"1234.json": `{"sessionId":"uuid-a","name":"honjin-1"}`,
+				"1234.json": `{"sessionId":"uuid-a","name":"jindaiko-1"}`,
 			},
 			lookupID:   "uuid-a",
-			wantName:   "honjin-1",
+			wantName:   "jindaiko-1",
 			wantSource: "",
 			wantOK:     true,
 		},

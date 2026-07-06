@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/honjin/internal/notify"
+	"github.com/takaaki-s/jindaiko/internal/notify"
 )
 
 // --- entryTypeLabel ---

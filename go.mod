@@ -1,4 +1,4 @@
-module github.com/takaaki-s/honjin
+module github.com/takaaki-s/jindaiko
 
 go 1.24.5
 

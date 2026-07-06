@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
-project_name: honjin
+project_name: jindaiko
 
 builds:
   - main: ./cmd/jin
@@ -16,9 +16,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/takaaki-s/honjin/internal/version.Version={{.Version}}
-      - -X github.com/takaaki-s/honjin/internal/version.Commit={{.ShortCommit}}
-      - -X github.com/takaaki-s/honjin/internal/version.Date={{.Date}}
+      - -X github.com/takaaki-s/jindaiko/internal/version.Version={{.Version}}
+      - -X github.com/takaaki-s/jindaiko/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/takaaki-s/jindaiko/internal/version.Date={{.Date}}
 
 archives:
   - formats: [tar.gz]
@@ -50,6 +50,6 @@ changelog:
 release:
   github:
     owner: takaaki-s
-    name: honjin
+    name: jindaiko
   draft: false
   prerelease: auto

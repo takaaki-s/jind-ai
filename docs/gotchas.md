@@ -11,7 +11,7 @@ Common pitfalls and caveats that agents tend to fall into.
 
 - **tmux session name** is the `tmux.SessionName` constant ("jin"). Do not change it.
 
-- **inner tmux**: honjin uses its own tmux socket (`-L jin`).
+- **inner tmux**: jindaiko uses its own tmux socket (`-L jin`).
   It runs as a separate server process from the user's main tmux.
 
 - **base-index issue**: If `base-index=1` is set in the user's `~/.tmux.conf`,

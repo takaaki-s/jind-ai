@@ -5,9 +5,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/honjin/internal/daemon"
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/tmux"
+	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
 )
 
 var attachCmd = &cobra.Command{

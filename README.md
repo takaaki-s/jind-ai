@@ -1,6 +1,6 @@
 **English** | [日本語](README.ja.md)
 
-# honjin
+# jindaiko
 
 A CLI tool for running and managing multiple agent sessions simultaneously
 (Claude Code is the first-class citizen; other agents plug in via
@@ -23,26 +23,26 @@ https://github.com/user-attachments/assets/62e9d64a-aa7d-42f8-8edf-03f724fe0ee4
 
 ### Download from GitHub Releases
 
-Download the binary for your OS/architecture from the [Releases page](https://github.com/takaaki-s/honjin/releases).
+Download the binary for your OS/architecture from the [Releases page](https://github.com/takaaki-s/jindaiko/releases).
 
 ```bash
 # Example: Linux amd64
-curl -Lo honjin.tar.gz https://github.com/takaaki-s/honjin/releases/latest/download/honjin_0.1.0_linux_amd64.tar.gz
-tar xzf honjin.tar.gz
+curl -Lo jindaiko.tar.gz https://github.com/takaaki-s/jindaiko/releases/latest/download/jindaiko_0.1.0_linux_amd64.tar.gz
+tar xzf jindaiko.tar.gz
 sudo mv jin /usr/local/bin/
 ```
 
 ### Go install
 
 ```bash
-go install github.com/takaaki-s/honjin/cmd/jin@latest
+go install github.com/takaaki-s/jindaiko/cmd/jin@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/takaaki-s/honjin.git
-cd honjin
+git clone https://github.com/takaaki-s/jindaiko.git
+cd jindaiko
 make build    # Build to bin/jin
 make install  # Install to $GOPATH/bin
 ```
@@ -243,24 +243,24 @@ jin completion fish | source
 
 ## Configuration
 
-honjin follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/). Files are split across config / state / runtime directories:
+jindaiko follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/). Files are split across config / state / runtime directories:
 
 ```
-$XDG_CONFIG_HOME/honjin/      (default: ~/.config/honjin)
+$XDG_CONFIG_HOME/jindaiko/      (default: ~/.config/jindaiko)
 └── config.yaml                # Configuration file
 
-$XDG_STATE_HOME/honjin/       (default: ~/.local/state/honjin)
+$XDG_STATE_HOME/jindaiko/       (default: ~/.local/state/jindaiko)
 ├── state.yaml                 # State file (last used repository, etc.)
 ├── sessions/                  # Session data
 ├── hooks-settings.json        # Generated hooks settings (auto-managed)
 ├── daemon-debug.log           # Daemon debug log (when JIN_DEBUG=1)
 └── hook-debug.log             # Hook debug log (when JIN_DEBUG=1)
 
-$XDG_RUNTIME_DIR/honjin/      (fallback: $TMPDIR/honjin-<uid>)
+$XDG_RUNTIME_DIR/jindaiko/      (fallback: $TMPDIR/jindaiko-<uid>)
 └── daemon.sock                # Daemon socket
 ```
 
-### Example configuration (`~/.config/honjin/config.yaml`)
+### Example configuration (`~/.config/jindaiko/config.yaml`)
 
 ```yaml
 # Customize keybindings (defaults are used when omitted)
@@ -290,7 +290,7 @@ keybindings:
 
 ### Worktree placement
 
-By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/honjin/worktrees/{name}` (typically `~/.local/state/honjin/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:
+By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/jindaiko/worktrees/{name}` (typically `~/.local/state/jindaiko/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:
 
 ```yaml
 worktree:
@@ -331,7 +331,7 @@ worktree:
 ```
 
 - **`branch_prefix`** — prepended to the auto-derived worktree name to form the branch name. The leading `jin-` on the worktree name is stripped first, so under the default `jin-abcd1234` becomes `jin/abcd1234` (not `jin/jin-abcd1234`). Ignored when you pass `--worktree-branch <name>` to `jin session new`, since that overrides the branch outright.
-- **`default_branch`** — used **only** when honjin cannot auto-detect the repository's default branch. Detection reads `refs/remotes/origin/HEAD`; local clones that never had it set (some tarballs, `git clone --no-checkout`, older clones) will hit the fallback. If detection fails and `default_branch` is empty, session creation errors with `cannot detect default branch`.
+- **`default_branch`** — used **only** when jindaiko cannot auto-detect the repository's default branch. Detection reads `refs/remotes/origin/HEAD`; local clones that never had it set (some tarballs, `git clone --no-checkout`, older clones) will hit the fallback. If detection fails and `default_branch` is empty, session creation errors with `cannot detect default branch`.
 
 Worktree creation itself is **offline** — the new branch is cut from your local `origin/<base>` with no network round-trip, so heavy repos aren't taxed on every session. If you want the worktree to start from the freshest remote tip, `git fetch origin <base>` in the source repo before running `jin session new --worktree`, or wire the fetch into the [post-create hook](#worktree-post-create-hook) below.
 
@@ -379,9 +379,9 @@ Supported detach keys:
 
 ## Claude Code Hooks
 
-honjin uses Claude Code hooks to detect session state changes. **Hooks are configured automatically** — no manual setup required.
+jindaiko uses Claude Code hooks to detect session state changes. **Hooks are configured automatically** — no manual setup required.
 
-When a session starts, honjin generates `$XDG_STATE_HOME/honjin/hooks-settings.json` (default `~/.local/state/honjin/hooks-settings.json`) and passes it to Claude Code via `claude --settings`. This file wires up the following hooks:
+When a session starts, jindaiko generates `$XDG_STATE_HOME/jindaiko/hooks-settings.json` (default `~/.local/state/jindaiko/hooks-settings.json`) and passes it to Claude Code via `claude --settings`. This file wires up the following hooks:
 
 | Hook Event | Role |
 |-----------|------|
@@ -392,7 +392,7 @@ When a session starts, honjin generates `$XDG_STATE_HOME/honjin/hooks-settings.j
 
 ## Worktree Post-Create Hook
 
-When you create a session with `jin session new --worktree`, honjin can run a setup script right after the worktree is created — installing dependencies, copying `.env`, initializing submodules — so every new worktree lands ready to use without any manual steps.
+When you create a session with `jin session new --worktree`, jindaiko can run a setup script right after the worktree is created — installing dependencies, copying `.env`, initializing submodules — so every new worktree lands ready to use without any manual steps.
 
 ### Script location
 
@@ -422,7 +422,7 @@ pnpm install
 
 ### Security: allowlist
 
-Since the script is checked into a repository, honjin never runs it unless the repository has been explicitly trusted (a direnv-style allow model). Trust is tracked by the script's SHA256 — editing the script requires trusting it again.
+Since the script is checked into a repository, jindaiko never runs it unless the repository has been explicitly trusted (a direnv-style allow model). Trust is tracked by the script's SHA256 — editing the script requires trusting it again.
 
 ```bash
 jin worktree allow    # Trust the current repository (shows the script, asks for confirmation)
@@ -436,12 +436,12 @@ If the script exists but isn't trusted (or changed since it was trusted), the ho
 ### Skipping the hook
 
 - `jin session new --worktree --no-hook` — skip the hook for this session only
-- `worktree.hook_enabled: false` in `~/.config/honjin/config.yaml` — disable the hook for all repositories
+- `worktree.hook_enabled: false` in `~/.config/jindaiko/config.yaml` — disable the hook for all repositories
 - `worktree.hook_timeout: <seconds>` — change the timeout (default: `300`). On expiry the hook's process group is sent `SIGTERM`, given a 5-second grace period, then `SIGKILL` if still alive.
 
 ### On failure
 
-If the hook exits non-zero or times out, the worktree and its branch are rolled back and `jin session new` fails with a non-zero exit code. The hook's stdout/stderr are kept at `~/.local/state/honjin/hook-logs/<session-id>.log` for troubleshooting, even after a rollback.
+If the hook exits non-zero or times out, the worktree and its branch are rolled back and `jin session new` fails with a non-zero exit code. The hook's stdout/stderr are kept at `~/.local/state/jindaiko/hook-logs/<session-id>.log` for troubleshooting, even after a rollback.
 
 ## Debugging
 
@@ -453,7 +453,7 @@ export JIN_DEBUG=1
 jin daemon start
 
 # View logs
-tail -f ~/.local/state/honjin/daemon-debug.log
+tail -f ~/.local/state/jindaiko/daemon-debug.log
 ```
 
 ## Requirements

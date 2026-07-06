@@ -1,4 +1,4 @@
-# honjin
+# jindaiko
 
 CLI tool for managing multiple agent sessions (Claude Code as first-class) via tmux TUI.
 
@@ -22,7 +22,7 @@ internal/
   agent/             Agent adapter interface + kind registry
     claude/          Claude Code adapter (spawn cmd, hooks-settings, trust, transcript enhancer)
     register/        Blank-import package that Register()s every known kind at init()
-  config/            Viper config management (~/.config/honjin/config.yaml)
+  config/            Viper config management (~/.config/jindaiko/config.yaml)
   daemon/            Unix socket IPC server/client
   session/           Session lifecycle (agent-agnostic; owns Agent interface)
   tui/               BubbleTea TUI (largest codebase)
@@ -49,7 +49,7 @@ See each file for details:
 JIN_DEBUG=1 jin daemon start
 ```
 
-Logs: `~/.local/state/honjin/daemon-debug.log`, `~/.local/state/honjin/hook-debug.log`
+Logs: `~/.local/state/jindaiko/daemon-debug.log`, `~/.local/state/jindaiko/hook-debug.log`
 
 ## Key Dependencies
 
@@ -60,13 +60,13 @@ Go 1.24.5 / cobra (CLI) / bubbletea (TUI) / viper (config) / lipgloss (styling)
 XDG Base Directory compliant. Defaults shown; override with `XDG_CONFIG_HOME`/`XDG_STATE_HOME`/`XDG_RUNTIME_DIR`.
 
 ```
-~/.config/honjin/
+~/.config/jindaiko/
   config.yaml                  User settings
-~/.local/state/honjin/
+~/.local/state/jindaiko/
   state.yaml                   Persistent state
   sessions/{uuid}.json         Session data
   hooks-settings.json          Generated Claude Code hooks settings
-$XDG_RUNTIME_DIR/honjin/      (fallback $TMPDIR/honjin-<uid>/)
+$XDG_RUNTIME_DIR/jindaiko/      (fallback $TMPDIR/jindaiko-<uid>/)
   daemon.sock                  IPC Unix socket
 ```
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/honjin/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/session"
 )
 
 func TestTruncatePath(t *testing.T) {

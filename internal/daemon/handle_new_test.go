@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/agent"
-	"github.com/takaaki-s/honjin/internal/agent/agenttest"
+	"github.com/takaaki-s/jindaiko/internal/agent"
+	"github.com/takaaki-s/jindaiko/internal/agent/agenttest"
 )
 
 // TestHandleNew_UnknownAgentKind exercises the validation branch of

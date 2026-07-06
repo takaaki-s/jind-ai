@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
 )
 
 // descriptionMaxBytes caps the derived description length. 60 bytes keeps the

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/honjin/internal/agent"
+	"github.com/takaaki-s/jindaiko/internal/agent"
 )
 
 func TestSpawnCommand_FreshSessionUsesSessionIDFlag(t *testing.T) {

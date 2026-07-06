@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/takaaki-s/honjin/internal/config"
-	"github.com/takaaki-s/honjin/internal/debug"
-	"github.com/takaaki-s/honjin/internal/git"
-	"github.com/takaaki-s/honjin/internal/notify"
-	"github.com/takaaki-s/honjin/internal/tmux"
-	"github.com/takaaki-s/honjin/internal/transcript"
-	"github.com/takaaki-s/honjin/internal/worktreehook"
+	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jindaiko/internal/debug"
+	"github.com/takaaki-s/jindaiko/internal/git"
+	"github.com/takaaki-s/jindaiko/internal/notify"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/worktreehook"
 )
 
 var debugLog = debug.NewLogger("daemon-debug.log")
@@ -33,7 +33,7 @@ var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
 // caller can surface the discrepancy to the user.
 var ErrNotWorktree = errors.New("path is not a git worktree")
 
-// Manager owns the honjin-side session lifecycle. Every agent-specific
+// Manager owns the jindaiko-side session lifecycle. Every agent-specific
 // concern is fetched via agentResolver so no CC-specific literal survives
 // in this file after the abstraction refactor.
 type Manager struct {
@@ -447,7 +447,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (result *Session, warnin
 		locked = false
 	}
 
-	// Mint the adapter-side session ID up front. Every adapter honjin knows
+	// Mint the adapter-side session ID up front. Every adapter jindaiko knows
 	// about needs some kind of persistent handle (Claude Code's --session-id,
 	// Codex's conversation id, ...) and a fresh UUID is a safe universal
 	// default. Adapters that don't need one can ignore the value.

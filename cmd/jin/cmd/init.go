@@ -10,7 +10,7 @@ import (
 
 // configTemplate is the default config.yaml written by `jin init`
 const configTemplate = `# jin configuration
-# See https://github.com/takaaki-s/honjin for details
+# See https://github.com/takaaki-s/jindaiko for details
 
 # Customize keybindings (defaults are used when omitted)
 keybindings:

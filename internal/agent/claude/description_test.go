@@ -8,8 +8,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/takaaki-s/honjin/internal/session"
-	"github.com/takaaki-s/honjin/internal/transcript"
+	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jindaiko/internal/transcript"
 )
 
 func TestInterpretUserPrompt(t *testing.T) {
@@ -419,7 +419,7 @@ func writeSessionName(t *testing.T, home, sessionID, name string) {
 func TestCCDescriptionEnhancer_FallbackToName(t *testing.T) {
 	e, home := newEnhancer(t)
 	sessionID := "cc-name-fallback"
-	writeSessionName(t, home, sessionID, "honjin-d1")
+	writeSessionName(t, home, sessionID, "jindaiko-d1")
 
 	sess := &session.Session{WorkDir: "/tmp/name-fallback", AgentSessionID: sessionID}
 	got, layer, ok := e.TryGenerate(sess)
@@ -429,7 +429,7 @@ func TestCCDescriptionEnhancer_FallbackToName(t *testing.T) {
 	if layer != session.DescriptionLayerAgentName {
 		t.Errorf("layer = %d, want %d (DescriptionLayerAgentName)", layer, session.DescriptionLayerAgentName)
 	}
-	want := "honjin-d1"
+	want := "jindaiko-d1"
 	if got != want {
 		t.Errorf("got = %q, want %q", got, want)
 	}
@@ -451,7 +451,7 @@ func TestCCDescriptionEnhancer_TranscriptPreferred(t *testing.T) {
 	})
 	// A name is also on disk, but the transcript hit must win since it's the
 	// higher layer.
-	writeSessionName(t, home, sessionID, "honjin-different-name")
+	writeSessionName(t, home, sessionID, "jindaiko-different-name")
 
 	sess := &session.Session{WorkDir: workDir, AgentSessionID: sessionID}
 	got, layer, ok := e.TryGenerate(sess)

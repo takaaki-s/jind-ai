@@ -67,10 +67,10 @@ Session (runtime only, json:"-")
 
 Sessions carry a `Description` (human-readable label) that is separate from the technical `ID`. It is generated in three layers:
 
-- **Layer A (baseline)** — `GenerateBaselineDescription(workDir, branch, isWorktree, tmuxHint)` produces `<repo>[:<branch>][:<subpath>]` (e.g. `honjin:main`). Always populated at session creation, never empty. Agent-independent.
+- **Layer A (baseline)** — `GenerateBaselineDescription(workDir, branch, isWorktree, tmuxHint)` produces `<repo>[:<branch>][:<subpath>]` (e.g. `jindaiko:main`). Always populated at session creation, never empty. Agent-independent.
 - **Layer B (manual override)** — Set via `--description` on `session new`, the `set-description` subcommand, or the TUI description step. Sets `DescriptionLocked = true`, blocking Layer C.
 - **Layer C (agent-specific enhancer)** — On `SessionStart` / `UserPromptSubmit` / `Stop` hooks, if `DescriptionLocked = false`, the registered `DescriptionEnhancer` (currently `internal/agent/claude/CCDescriptionEnhancer`) returns a `(candidate, DescriptionLayer, ok)` tuple. `TryUpgradeDescription` applies the candidate only when its `DescriptionLayer` is strictly higher than the session's current layer, giving a 3-stage promotion path:
-  - **Layer C-name** (`DescriptionLayerAgentName`) — reads `~/.claude/sessions/<PID>.json` for the name Claude Code assigned (`honjin-42`). Fires at `SessionStart`, so the description leaves the Layer A baseline the moment the process boots.
+  - **Layer C-name** (`DescriptionLayerAgentName`) — reads `~/.claude/sessions/<PID>.json` for the name Claude Code assigned (`jindaiko-42`). Fires at `SessionStart`, so the description leaves the Layer A baseline the moment the process boots.
   - **Layer C-transcript** (`DescriptionLayerTranscript`) — mines the first meaningful user prompt from the transcript. Slash commands (`/init …`) without substantial args are treated as pending and skipped. Overwrites Layer C-name.
 
   `Session.DescriptionLayer` is a runtime-only field (`json:"-"`), so daemon restart resets it to zero. A separate guard (`Description != baseline && layer == 0 → skip`) prevents a lower layer from clobbering a higher-layer value that survived the restart in the persisted `Description`.
@@ -120,7 +120,7 @@ Runs after the worktree is created (step 3) and before Claude Code starts. `Star
 4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 3 `defer` — the worktree and its branch are rolled back, leaving no partial state
 5. Skipped without running when: no script is present, `opts.NoHook` (`--no-hook`), or `worktree.hook_enabled: false`
 
-stdout/stderr are saved to `~/.local/state/honjin/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.
+stdout/stderr are saved to `~/.local/state/jindaiko/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.
 
 ## Recovery (On Daemon Restart)
 

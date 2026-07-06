@@ -1,13 +1,13 @@
-// Package paths resolves honjin's data directories according to the
+// Package paths resolves jindaiko's data directories according to the
 // XDG Base Directory Specification.
 //
 // Defaults (when the corresponding XDG_* env var is not set):
 //
-//	config:  $HOME/.config/honjin
-//	state:   $HOME/.local/state/honjin
-//	runtime: os.TempDir()/honjin-<uid>
+//	config:  $HOME/.config/jindaiko
+//	state:   $HOME/.local/state/jindaiko
+//	runtime: os.TempDir()/jindaiko-<uid>
 //
-// The remote-host default socket path is fixed at ~/.local/state/honjin/daemon.sock
+// The remote-host default socket path is fixed at ~/.local/state/jindaiko/daemon.sock
 // because $XDG_RUNTIME_DIR cannot be reliably resolved across SSH.
 //
 // If the user's home directory cannot be resolved (and no relevant XDG_* env var
@@ -27,10 +27,10 @@ import (
 	"path/filepath"
 )
 
-const appName = "honjin"
+const appName = "jindaiko"
 
 // Config returns the directory for user configuration files
-// ($XDG_CONFIG_HOME/honjin, default ~/.config/honjin).
+// ($XDG_CONFIG_HOME/jindaiko, default ~/.config/jindaiko).
 func Config() string {
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
 		return filepath.Join(d, appName)
@@ -39,11 +39,11 @@ func Config() string {
 }
 
 // State returns the directory for persistent state files
-// ($XDG_STATE_HOME/honjin, default ~/.local/state/honjin).
+// ($XDG_STATE_HOME/jindaiko, default ~/.local/state/jindaiko).
 func State() string {
 	dir, ok := stateOrEmpty()
 	if !ok {
-		panic("honjin/paths: cannot resolve state dir: $XDG_STATE_HOME unset and $HOME unresolvable")
+		panic("jindaiko/paths: cannot resolve state dir: $XDG_STATE_HOME unset and $HOME unresolvable")
 	}
 	return dir
 }
@@ -73,7 +73,7 @@ func Sessions() string {
 }
 
 // runtime returns the directory for ephemeral runtime files
-// ($XDG_RUNTIME_DIR/honjin, fallback os.TempDir()/honjin-<uid>).
+// ($XDG_RUNTIME_DIR/jindaiko, fallback os.TempDir()/jindaiko-<uid>).
 //
 // Not exported: callers should obtain Socket() instead. XDG_RUNTIME_DIR
 // requires 0700 access — sealing this behind Socket avoids accidental
@@ -116,7 +116,7 @@ func RemoteDefaultSocketRel() string {
 func mustHome() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		panic(fmt.Sprintf("honjin/paths: cannot resolve home directory: %v", err))
+		panic(fmt.Sprintf("jindaiko/paths: cannot resolve home directory: %v", err))
 	}
 	return home
 }

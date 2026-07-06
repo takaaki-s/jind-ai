@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/takaaki-s/honjin/internal/paths"
+	"github.com/takaaki-s/jindaiko/internal/paths"
 )
 
 // enabled is true when JIN_DEBUG=1 is set.
 var enabled = os.Getenv("JIN_DEBUG") == "1"
 
 // NewLogger returns a debug logging function that writes to
-// $XDG_STATE_HOME/honjin/<filename> (default ~/.local/state/honjin/<filename>)
+// $XDG_STATE_HOME/jindaiko/<filename> (default ~/.local/state/jindaiko/<filename>)
 // when JIN_DEBUG=1 is set.
 // When debugging is disabled or the state directory cannot be resolved,
 // the returned function is a no-op.

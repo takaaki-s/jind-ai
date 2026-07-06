@@ -2,7 +2,7 @@
 
 ## Transport
 
-- Unix domain socket: `$XDG_RUNTIME_DIR/honjin/daemon.sock` (fallback `$TMPDIR/honjin-<uid>/daemon.sock`)
+- Unix domain socket: `$XDG_RUNTIME_DIR/jindaiko/daemon.sock` (fallback `$TMPDIR/jindaiko-<uid>/daemon.sock`)
 - One request / one response per connection (no connection pooling)
 - JSON encoding/decoding
 

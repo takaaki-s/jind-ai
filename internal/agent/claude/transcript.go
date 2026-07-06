@@ -1,6 +1,6 @@
 package claude
 
-import "github.com/takaaki-s/honjin/internal/transcript"
+import "github.com/takaaki-s/jindaiko/internal/transcript"
 
 // NewTranscriptReader is a wafer-thin wrapper over transcript.NewReader.
 // It exists so callers can route every Claude Code transcript access through
