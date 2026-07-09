@@ -373,13 +373,12 @@ func (c *Client) PaneSendKeys(id, keys string, literal bool) error {
 	return nil
 }
 
-// PluginRun runs a plugin on demand against a session's current snapshot,
-// bypassing matcher and debounce. depth is the caller's JIN_PLUGIN_DEPTH,
-// forwarded so the dispatcher can reject a plugin that tries to chain another
-// plugin run. It returns once the run is accepted; the plugin executes
+// PluginRun runs a plugin on demand, bypassing matcher and debounce: against a
+// session's current snapshot when req.SessionID is set, or as a global action
+// when it is empty. It returns once the run is accepted; the plugin executes
 // asynchronously on the daemon.
-func (c *Client) PluginRun(pluginName, sessionID string, depth int) error {
-	data, _ := json.Marshal(PluginRunRequest{Plugin: pluginName, SessionID: sessionID, Depth: depth})
+func (c *Client) PluginRun(req PluginRunRequest) error {
+	data, _ := json.Marshal(req)
 	resp, err := c.send(Request{Action: "plugin-run", Data: data})
 	if err != nil {
 		return err

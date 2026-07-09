@@ -33,10 +33,19 @@ const (
 	PaneKeepTag = "@jin-keep"
 )
 
+// SocketPathFromEnv extracts the server socket path from a $TMUX value, whose
+// format is "<socket-path>,<pid>,<session-index>". It returns "" for an empty
+// value, so callers can treat "not inside tmux" and "no socket" uniformly.
+func SocketPathFromEnv(v string) string {
+	sock, _, _ := strings.Cut(v, ",")
+	return sock
+}
+
 // Client wraps tmux CLI commands, always using the dedicated socket.
 type Client struct {
 	tmuxPath   string
 	socketName string
+	socketPath string // optional: "-S <path>" passed to tmux; takes precedence over socketName when set
 	configFile string // optional: "-f <path>" passed to tmux (empty = use default ~/.tmux.conf)
 }
 
@@ -48,6 +57,18 @@ func NewClientWithSocket(socketName string) (*Client, error) {
 		return nil, fmt.Errorf("tmux not found: %w", err)
 	}
 	return &Client{tmuxPath: path, socketName: socketName}, nil
+}
+
+// NewClientWithSocketPath creates a tmux client that targets an arbitrary server
+// by socket path ("-S <path>"), such as the caller's outer tmux discovered via
+// $TMUX. Unlike NewClientWithSocket, it addresses the server by filesystem path
+// rather than by the jin-managed socket name.
+func NewClientWithSocketPath(socketPath string) (*Client, error) {
+	path, err := exec.LookPath("tmux")
+	if err != nil {
+		return nil, fmt.Errorf("tmux not found: %w", err)
+	}
+	return &Client{tmuxPath: path, socketPath: socketPath}, nil
 }
 
 // NewClient creates a new tmux client using the default SocketName.
@@ -75,7 +96,12 @@ func HasTmux() bool {
 
 // baseArgs returns the common tmux arguments (socket, config file).
 func (c *Client) baseArgs() []string {
-	args := []string{"-L", c.socketName}
+	var args []string
+	if c.socketPath != "" {
+		args = []string{"-S", c.socketPath}
+	} else {
+		args = []string{"-L", c.socketName}
+	}
 	if c.configFile != "" {
 		args = append(args, "-f", c.configFile)
 	}

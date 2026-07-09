@@ -172,16 +172,55 @@ func TestRunActionBypassesMatcherAndDebounce(t *testing.T) {
 	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
 
 	ev := Event{Name: "action", SessionID: "sess-1", Status: "idle"}
-	if err := d.RunAction("dumper", ev, 0); err != nil {
+	if err := d.RunAction("dumper", ev, 0, ActionContext{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RunAction("dumper", ev, 0); err != nil {
+	if err := d.RunAction("dumper", ev, 0, ActionContext{}); err != nil {
 		t.Fatal(err)
 	}
 
 	out := filepath.Join(pluginsDir, "dumper", "out.txt")
 	if got := waitForLines(t, out, 2); got != 2 {
 		t.Errorf("RunAction ran %d times, want 2 (no debounce)", got)
+	}
+}
+
+const callerDumpManifest = `name: callerdump
+api_version: 1
+on: []
+run: echo "sock=${JIN_CALLER_TMUX_SOCKET-unset} pane=${JIN_CALLER_TMUX_PANE-unset} sid=$JIN_SESSION_ID" >> out.txt
+`
+
+// A global action (empty session fields) must still run, carrying the caller's
+// tmux context as env vars; an event-driven-style run without caller context
+// must leave those vars entirely unset (not empty) so plugins can ${VAR:-...}.
+func TestRunActionGlobalWithCallerContext(t *testing.T) {
+	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
+	installTestPlugin(t, pluginsDir, stateDir, "callerdump", callerDumpManifest)
+
+	global := Event{Name: "action"}
+	actx := ActionContext{TmuxSocket: "/tmp/tmux-1000/default", TmuxPane: "%3"}
+	if err := d.RunAction("callerdump", global, 0, actx); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RunAction("callerdump", global, 0, ActionContext{}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(pluginsDir, "callerdump", "out.txt")
+	if got := waitForLines(t, out, 2); got != 2 {
+		t.Fatalf("RunAction ran %d times, want 2", got)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "sock=/tmp/tmux-1000/default pane=%3 sid=") {
+		t.Errorf("caller-context run output = %q, want caller vars set and empty session id", got)
+	}
+	if !strings.Contains(got, "sock=unset pane=unset sid=") {
+		t.Errorf("no-context run output = %q, want JIN_CALLER_TMUX_* unset", got)
 	}
 }
 
@@ -211,7 +250,7 @@ func TestRunActionRejectsDepthLimit(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
 	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
 
-	err := d.RunAction("dumper", idleEvent(), 1)
+	err := d.RunAction("dumper", idleEvent(), 1, ActionContext{})
 	if err == nil || !strings.Contains(err.Error(), "depth limit") {
 		t.Errorf("RunAction(depth=1) = %v, want depth limit error", err)
 	}
@@ -222,13 +261,13 @@ func TestRunActionErrors(t *testing.T) {
 	installTestPlugin(t, pluginsDir, stateDir, "off", strings.Replace(dumpManifest, "name: dumper", "name: off", 1))
 	installTestPlugin(t, pluginsDir, stateDir, "old", strings.Replace(strings.Replace(dumpManifest, "name: dumper", "name: old", 1), "api_version: 1", "api_version: 999", 1))
 
-	if err := d.RunAction("missing", idleEvent(), 0); err == nil || !strings.Contains(err.Error(), "not installed") {
+	if err := d.RunAction("missing", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Errorf("missing plugin: %v, want not installed", err)
 	}
-	if err := d.RunAction("off", idleEvent(), 0); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if err := d.RunAction("off", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Errorf("disabled plugin: %v, want disabled", err)
 	}
-	if err := d.RunAction("old", idleEvent(), 0); err == nil || !strings.Contains(err.Error(), "jin plugin update") {
+	if err := d.RunAction("old", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "jin plugin update") {
 		t.Errorf("incompatible plugin: %v, want update hint", err)
 	}
 }

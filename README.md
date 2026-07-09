@@ -462,10 +462,16 @@ it runs and what environment it gets.
 
 - **Event listener** — subscribes to `status_changed` via the manifest's
   `on:` matcher. Good for notifications, logging, CI triggers — anything
-  non-interactive.
-- **Action** — launched explicitly with `jin plugin run <name> --session
-  <selector>`. Good for interactive workflows (e.g. a popup-based diff review
-  UI). Set `on: []` to make a plugin action-only.
+  non-interactive. Note: an event fires only when the status actually
+  changes; a notification without a status transition (e.g. a repeated stop
+  while already idle) does not dispatch.
+- **Action** — launched explicitly with `jin plugin run <name> [--session
+  <selector>]`. Good for interactive workflows (e.g. a popup-based diff review
+  UI). Set `on: []` to make a plugin action-only. Without `--session` the run
+  is a **global action**: all session-derived env vars are empty. On every
+  action run — global or session-scoped — `JIN_CALLER_TMUX_SOCKET` /
+  `JIN_CALLER_TMUX_PANE` identify where the invoking CLI was launched from,
+  when it sat inside a tmux client.
 
 Both entry points run the same `run:` command with the same environment;
 only the trigger differs.
@@ -507,12 +513,16 @@ Environment variables:
 | `JIN_AGENT_KIND` | Adapter kind (`claude`, ...) |
 | `JIN_WORKDIR` | Session's working directory |
 | `JIN_TMUX_PANE_ID` | tmux pane ID, if known |
+| `JIN_NOTIFY_KIND` | Notification kind for this transition: `task-complete`, `error`, `permission`, or empty when the transition triggers no notification |
 | `JIN_PLUGIN_API_VERSION` | The `api_version` this plugin declared |
 | `JIN_PLUGIN_DEPTH` | Chain depth — see [Constraints](#constraints) |
 | `JIN_SOCKET` | Daemon socket path; the `jin` CLI a plugin invokes picks this up automatically |
 | `JIN_BIN` | Absolute path of the daemon's own `jin` binary. Prefer `"${JIN_BIN:-jin}"` over a bare `jin` — a `jin` found on PATH may be an older install that lacks newer subcommands |
+| `JIN_CALLER_TMUX_SOCKET` | Action runs only: socket path of the tmux server the invoking CLI ran inside (from its `$TMUX`). Unset — not empty — when the caller was outside tmux |
+| `JIN_CALLER_TMUX_PANE` | Action runs only: the invoking CLI's pane ID (from its `$TMUX_PANE`). Unset when unknown |
 
-The same data is also written to **stdin as JSON** (same fields, snake_case).
+The same data is also written to **stdin as JSON** (same fields, snake_case;
+caller tmux context is env-only).
 
 For anything beyond this thin payload, call back into jindaiko:
 
@@ -520,7 +530,9 @@ For anything beyond this thin payload, call back into jindaiko:
 jin session info "$JIN_SESSION_ID" --json    # full session details
 jin session send "$JIN_SESSION_ID" "..."     # send a prompt
 jin session result "$JIN_SESSION_ID" --json  # structured transcript entries
+jin session focus "$JIN_SESSION_ID"          # make the running TUI display this session
 jin pane popup "$JIN_SESSION_ID" -- <cmd>    # tmux popup over the session's pane
+jin pane popup --here -- <cmd>               # tmux popup over the caller's own pane (uses $TMUX, falling back to JIN_CALLER_TMUX_SOCKET)
 jin pane split "$JIN_SESSION_ID" -- <cmd>
 jin pane capture "$JIN_SESSION_ID"
 jin pane send-keys "$JIN_SESSION_ID" <keys>

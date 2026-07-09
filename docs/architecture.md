@@ -59,14 +59,20 @@ the status pipeline):
 
 ```
 session.Manager.HandleHookEvent()  (status actually changed)
-  → plugin.Dispatcher.Publish(Event{status_changed, ...})   (returns immediately)
+  → plugin.Dispatcher.Publish(Event{status_changed, notify_kind, ...})   (returns immediately)
     → for each matching, enabled plugin: exec.ExecPlugin()  (background goroutine,
                                                                debounced, JIN_* env + stdin JSON)
 ```
 
-`jin plugin run <name> --session <id>` takes a separate, synchronous-trigger
+The Event carries the adapter-determined notification kind (`notify_kind` /
+`JIN_NOTIFY_KIND`: task-complete / error / permission, empty when none) so
+plugins never re-derive notification semantics from status pairs.
+
+`jin plugin run <name> [--session <id>]` takes a separate, synchronous-trigger
 path (`Dispatcher.RunAction`) that skips matcher/debounce but shares the same
-`ExecPlugin` runner. See `internal/plugin/` (`manifest.go`, `dispatcher.go`,
+`ExecPlugin` runner; without `--session` it dispatches a global action with
+empty session fields, carrying the invoking CLI's tmux context
+(`JIN_CALLER_TMUX_SOCKET`/`JIN_CALLER_TMUX_PANE`) when available. See `internal/plugin/` (`manifest.go`, `dispatcher.go`,
 `exec.go`) and [ipc-protocol.md](ipc-protocol.md) for the `plugin-run` /
 `pane-*` actions plugins use as their CLI-facing API.
 

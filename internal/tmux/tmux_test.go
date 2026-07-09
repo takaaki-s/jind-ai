@@ -120,6 +120,41 @@ func TestBaseArgs(t *testing.T) {
 			t.Errorf("baseArgs() = %v, want [-L %s]", got, SocketName)
 		}
 	})
+
+	t.Run("with socket path", func(t *testing.T) {
+		c := &Client{
+			tmuxPath:   "/usr/bin/tmux",
+			socketPath: "/tmp/tmux-1000/default",
+		}
+		got := c.baseArgs()
+		want := []string{"-S", "/tmp/tmux-1000/default"}
+		if len(got) != len(want) {
+			t.Fatalf("baseArgs() returned %d elements, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("baseArgs()[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("socket path takes precedence over socket name", func(t *testing.T) {
+		c := &Client{
+			tmuxPath:   "/usr/bin/tmux",
+			socketName: "should-be-ignored",
+			socketPath: "/tmp/tmux-1000/default",
+		}
+		got := c.baseArgs()
+		want := []string{"-S", "/tmp/tmux-1000/default"}
+		if len(got) != len(want) {
+			t.Fatalf("baseArgs() returned %d elements, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("baseArgs()[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
 }
 
 func TestNewClientWithSocket_NoTmux(t *testing.T) {
@@ -152,5 +187,21 @@ func TestHasTmux(t *testing.T) {
 	os.Setenv("PATH", t.TempDir())
 	if HasTmux() {
 		t.Error("HasTmux() = true with empty PATH, want false")
+	}
+}
+
+func TestSocketPathFromEnv(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"/tmp/tmux-1000/default,12345,0", "/tmp/tmux-1000/default"},
+		{"/tmp/tmux-1000/default", "/tmp/tmux-1000/default"},
+	}
+	for _, tt := range tests {
+		if got := SocketPathFromEnv(tt.in); got != tt.want {
+			t.Errorf("SocketPathFromEnv(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

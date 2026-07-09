@@ -757,16 +757,22 @@ func (s *Server) handlePaneSendKeys(data json.RawMessage) Response {
 }
 
 // PluginRunRequest is the request payload for the "plugin-run" action. It runs
-// one plugin on demand against a session's current snapshot, bypassing matcher
-// and debounce. Depth carries the caller CLI's JIN_PLUGIN_DEPTH so the
-// dispatcher can reject a plugin that tries to chain another plugin run.
+// one plugin on demand, bypassing matcher and debounce: against a session's
+// current snapshot when SessionID is set, or as a global action (all session
+// fields empty) when it is not. Depth carries the caller CLI's
+// JIN_PLUGIN_DEPTH so the dispatcher can reject a plugin that tries to chain
+// another plugin run. CallerTmuxSocket/CallerTmuxPane carry the invoking
+// CLI's tmux context (from $TMUX/$TMUX_PANE) so the plugin can address the
+// pane it was launched from.
 type PluginRunRequest struct {
-	Plugin    string `json:"plugin"`
-	SessionID string `json:"session_id"`
-	Depth     int    `json:"depth,omitempty"`
+	Plugin           string `json:"plugin"`
+	SessionID        string `json:"session_id,omitempty"`
+	Depth            int    `json:"depth,omitempty"`
+	CallerTmuxSocket string `json:"caller_tmux_socket,omitempty"`
+	CallerTmuxPane   string `json:"caller_tmux_pane,omitempty"`
 }
 
-// handlePluginRun checks Plugin/SessionID and the dispatcher before touching the
+// handlePluginRun checks Plugin and the dispatcher before touching the
 // session store, so validation errors never depend on manager state. A success
 // Response only means the run was accepted — the plugin executes asynchronously
 // and its outcome is followed through the plugin log.
@@ -778,27 +784,27 @@ func (s *Server) handlePluginRun(data json.RawMessage) Response {
 	if req.Plugin == "" {
 		return Response{Success: false, Error: "plugin is required"}
 	}
-	if req.SessionID == "" {
-		return Response{Success: false, Error: "session_id is required"}
-	}
 	if s.pluginDisp == nil {
 		return Response{Success: false, Error: "plugins are not enabled"}
 	}
 
-	sess, ok := s.manager.Get(req.SessionID)
-	if !ok {
-		return Response{Success: false, Error: fmt.Sprintf("session not found: %s", req.SessionID)}
+	ev := plugin.Event{Name: "action"}
+	if req.SessionID != "" {
+		sess, ok := s.manager.Get(req.SessionID)
+		if !ok {
+			return Response{Success: false, Error: fmt.Sprintf("session not found: %s", req.SessionID)}
+		}
+		ev.SessionID = sess.ID
+		ev.Status = string(sess.Status)
+		ev.AgentKind = sess.AgentKind
+		ev.WorkDir = sess.WorkDir
+		ev.TmuxPaneID = sess.TmuxPaneID
 	}
-
-	ev := plugin.Event{
-		Name:       "action",
-		SessionID:  sess.ID,
-		Status:     string(sess.Status),
-		AgentKind:  sess.AgentKind,
-		WorkDir:    sess.WorkDir,
-		TmuxPaneID: sess.TmuxPaneID,
+	actx := plugin.ActionContext{
+		TmuxSocket: req.CallerTmuxSocket,
+		TmuxPane:   req.CallerTmuxPane,
 	}
-	if err := s.pluginDisp.RunAction(req.Plugin, ev, req.Depth); err != nil {
+	if err := s.pluginDisp.RunAction(req.Plugin, ev, req.Depth, actx); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
 	return Response{Success: true}

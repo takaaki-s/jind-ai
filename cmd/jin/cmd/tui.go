@@ -196,11 +196,28 @@ func reattachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 
 // attachToSession attaches to the tmux session and blocks until detach.
 func attachToSession(tc *tmux.Client) error {
+	recordOuterLocation(tc)
+
 	attachCmd := tc.AttachCmd(tmux.SessionName)
 	attachCmd.Stdin = os.Stdin
 	attachCmd.Stdout = os.Stdout
 	attachCmd.Stderr = os.Stderr
 	return attachCmd.Run()
+}
+
+// recordOuterLocation stores where `jin ui` was launched from onto the jin-mgr
+// session env, so `jin session focus` can jump the outer tmux back to the TUI
+// window. When launched outside tmux, any stale records from a prior run are
+// cleared. Best-effort: failures never block TUI startup.
+func recordOuterLocation(tc *tmux.Client) {
+	outerTmux := os.Getenv("TMUX")
+	if outerTmux == "" {
+		_ = tc.UnsetEnvironment(tmux.SessionName, "JIN_UI_OUTER_SOCKET")
+		_ = tc.UnsetEnvironment(tmux.SessionName, "JIN_UI_OUTER_PANE")
+		return
+	}
+	_ = tc.SetEnvironment(tmux.SessionName, "JIN_UI_OUTER_SOCKET", tmux.SocketPathFromEnv(outerTmux))
+	_ = tc.SetEnvironment(tmux.SessionName, "JIN_UI_OUTER_PANE", os.Getenv("TMUX_PANE"))
 }
 
 // runTUIInner runs the Bubble Tea TUI inside the outer tmux pane.

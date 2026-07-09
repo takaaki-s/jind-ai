@@ -66,6 +66,20 @@ type Event struct {
 	AgentKind  string `json:"agent_kind"`
 	WorkDir    string `json:"work_dir"`
 	TmuxPaneID string `json:"tmux_pane_id,omitempty"`
+	// NotifyKind carries the adapter-determined notification kind for this
+	// transition: "task-complete", "error", or "permission". Empty when the
+	// transition triggers no notification.
+	NotifyKind string `json:"notify_kind,omitempty"`
+}
+
+// ActionContext carries caller-side context for on-demand action runs
+// (`jin plugin run`). When the invoking CLI sits inside a tmux client, the
+// caller's server socket and pane travel with the run so the plugin can
+// address the pane it was launched from (e.g. `jin pane popup --here`).
+// All fields are empty for event-driven runs and for callers outside tmux.
+type ActionContext struct {
+	TmuxSocket string
+	TmuxPane   string
 }
 
 // ExecOptions configures a single plugin run. Timeout is display-only: the real
@@ -76,6 +90,7 @@ type ExecOptions struct {
 	PluginDir  string
 	Run        string
 	Env        Event
+	Caller     ActionContext
 	APIVersion int
 	Depth      int
 	SocketPath string
@@ -187,10 +202,20 @@ func buildEnv(opts ExecOptions) []string {
 		"JIN_AGENT_KIND="+opts.Env.AgentKind,
 		"JIN_WORKDIR="+opts.Env.WorkDir,
 		"JIN_TMUX_PANE_ID="+opts.Env.TmuxPaneID,
+		"JIN_NOTIFY_KIND="+opts.Env.NotifyKind,
 		"JIN_PLUGIN_API_VERSION="+strconv.Itoa(opts.APIVersion),
 		"JIN_PLUGIN_DEPTH="+strconv.Itoa(opts.Depth),
 		"JIN_SOCKET="+opts.SocketPath,
 	)
+	// Caller tmux context exists only for action runs launched from inside a
+	// tmux client; unlike the JIN_* event vars above these are omitted (not set
+	// empty) so plugins can fall back to their own $TMUX with ${VAR:-...}.
+	if opts.Caller.TmuxSocket != "" {
+		env = append(env, "JIN_CALLER_TMUX_SOCKET="+opts.Caller.TmuxSocket)
+	}
+	if opts.Caller.TmuxPane != "" {
+		env = append(env, "JIN_CALLER_TMUX_PANE="+opts.Caller.TmuxPane)
+	}
 	// JIN_BIN points at the daemon's own binary so plugins can call back into
 	// the exact version that dispatched them. A `jin` found on PATH may be an
 	// older install that lacks newer subcommands (daemon/CLI version skew).

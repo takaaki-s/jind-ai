@@ -8,8 +8,8 @@ import (
 
 // These tests exercise the validation branches of handlePluginRun without
 // spinning a full Server, in the style of handle_pane_test.go. The handler
-// checks Plugin, SessionID, and the nil dispatcher before touching s.manager,
-// so a zero-value Server{} covers every case here.
+// checks Plugin and the nil dispatcher before touching s.manager, so a
+// zero-value Server{} covers every case here.
 
 func TestHandlePluginRun_MissingPlugin(t *testing.T) {
 	s := &Server{}
@@ -24,7 +24,12 @@ func TestHandlePluginRun_MissingPlugin(t *testing.T) {
 	}
 }
 
-func TestHandlePluginRun_MissingSessionID(t *testing.T) {
+// An empty SessionID is a valid global action, not a validation error: the
+// request must sail past the field checks and reach the dispatcher gate. On a
+// zero-value Server that gate reports "plugins are not enabled", which proves
+// the old "session_id is required" rejection is gone without needing a live
+// dispatcher.
+func TestHandlePluginRun_GlobalActionPassesValidation(t *testing.T) {
 	s := &Server{}
 	data, _ := json.Marshal(PluginRunRequest{Plugin: "notifier"})
 	resp := s.handlePluginRun(data)
@@ -32,8 +37,8 @@ func TestHandlePluginRun_MissingSessionID(t *testing.T) {
 	if resp.Success {
 		t.Fatal("expected Success=false")
 	}
-	if !strings.Contains(resp.Error, "session_id is required") {
-		t.Errorf("Error = %q, want to contain 'session_id is required'", resp.Error)
+	if !strings.Contains(resp.Error, "plugins are not enabled") {
+		t.Errorf("Error = %q, want to contain 'plugins are not enabled' (not a session_id validation error)", resp.Error)
 	}
 }
 

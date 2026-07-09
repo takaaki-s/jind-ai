@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
 )
 
 var paneCmd = &cobra.Command{
@@ -26,20 +27,29 @@ in the session's working directory. The command runs standalone inside the
 popup: it does not inherit JIN_* environment variables, so pass any data it
 needs directly in the command line.
 
+With --here the popup opens over the caller's own tmux pane instead of a
+session's pane, and no selector is given:
+  jin pane popup --here -- less /tmp/diff.txt
+
 Example:
   jin pane popup my-session -- less /tmp/diff.txt`,
 	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		here, _ := cmd.Flags().GetBool("here")
+		title, _ := cmd.Flags().GetString("title")
+		width, _ := cmd.Flags().GetString("width")
+		height, _ := cmd.Flags().GetString("height")
+
+		if here {
+			return runPopupHere(strings.Join(args, " "), title, width, height)
+		}
+
 		selector := args[0]
 		if len(args) < 2 {
 			return errors.New("cmd is required (use -- <cmd...>)")
 		}
 		cmdStr := strings.Join(args[1:], " ")
-
-		title, _ := cmd.Flags().GetString("title")
-		width, _ := cmd.Flags().GetString("width")
-		height, _ := cmd.Flags().GetString("height")
 
 		client := daemon.NewClient(getSocketPath())
 		sessionID, sessionDesc, err := resolveSession(client, selector)
@@ -56,6 +66,37 @@ Example:
 		fmt.Printf("Opened popup for session: %s\n", sessionDesc)
 		return nil
 	},
+}
+
+// runPopupHere opens a popup over the caller's own tmux pane, bypassing the
+// daemon. The target server is discovered from $TMUX (human invocation) or
+// JIN_CALLER_TMUX_SOCKET (plugin action invocation); the anchor pane likewise
+// from $TMUX_PANE or JIN_CALLER_TMUX_PANE.
+func runPopupHere(cmdStr, title, width, height string) error {
+	socketPath := tmux.SocketPathFromEnv(os.Getenv("TMUX"))
+	if socketPath == "" {
+		socketPath = os.Getenv("JIN_CALLER_TMUX_SOCKET")
+	}
+	if socketPath == "" {
+		return errors.New("--here requires a tmux client: not inside tmux and no JIN_CALLER_TMUX_SOCKET")
+	}
+
+	anchorPane := os.Getenv("TMUX_PANE")
+	if anchorPane == "" {
+		anchorPane = os.Getenv("JIN_CALLER_TMUX_PANE")
+	}
+
+	tc, err := tmux.NewClientWithSocketPath(socketPath)
+	if err != nil {
+		return err
+	}
+	return tc.DisplayPopup(tmux.DisplayPopupOptions{
+		Target: anchorPane,
+		Width:  width,
+		Height: height,
+		Title:  title,
+		Cmd:    cmdStr,
+	})
 }
 
 var paneSplitCmd = &cobra.Command{
@@ -152,6 +193,7 @@ func init() {
 	rootCmd.AddCommand(paneCmd)
 	paneCmd.AddCommand(panePopupCmd, paneSplitCmd, paneCaptureCmd, paneSendKeysCmd)
 
+	panePopupCmd.Flags().Bool("here", false, "Open the popup over the caller's own tmux pane instead of a session's pane (no selector)")
 	panePopupCmd.Flags().String("title", "", "Popup title (tmux 3.3+)")
 	panePopupCmd.Flags().String("width", "", `Popup width (e.g. "80%")`)
 	panePopupCmd.Flags().String("height", "", `Popup height (e.g. "80%")`)

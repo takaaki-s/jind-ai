@@ -22,6 +22,7 @@ func sampleEvent() Event {
 		AgentKind:  "claude",
 		WorkDir:    "/tmp/fake-work",
 		TmuxPaneID: "%3",
+		NotifyKind: "task-complete",
 	}
 }
 
@@ -65,6 +66,7 @@ func TestExecPlugin_Success(t *testing.T) {
 		"JIN_AGENT_KIND=claude",
 		"JIN_WORKDIR=/tmp/fake-work",
 		"JIN_TMUX_PANE_ID=%3",
+		"JIN_NOTIFY_KIND=task-complete",
 		"JIN_PLUGIN_API_VERSION=1",
 		"JIN_PLUGIN_DEPTH=0",
 		"JIN_SOCKET=/run/jin.sock",
@@ -96,6 +98,7 @@ func TestExecPlugin_Success(t *testing.T) {
 		`"agent_kind":"claude"`,
 		`"work_dir":"/tmp/fake-work"`,
 		`"tmux_pane_id":"%3"`,
+		`"notify_kind":"task-complete"`,
 	}
 	for _, want := range wantJSON {
 		if !strings.Contains(stdin, want) {

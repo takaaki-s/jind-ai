@@ -61,6 +61,21 @@ func TestManager_HandleHookEvent_PublishesStatusChanged(t *testing.T) {
 	if ev.WorkDir != sess.WorkDir {
 		t.Errorf("WorkDir = %q, want %q", ev.WorkDir, sess.WorkDir)
 	}
+	if ev.NotifyKind != "" {
+		t.Errorf("NotifyKind = %q, want empty (UserPromptSubmit carries no notification)", ev.NotifyKind)
+	}
+
+	// Stop transitions Thinking -> Idle with Notify: NotifyTaskComplete
+	// (fakeStatusSource in manager_test.go), so the published event should
+	// carry NotifyKind through from upd.Notify.
+	mgr.HandleHookEvent(sess.AgentSessionID, sess.ID, "Stop", "", "", "")
+	events = disp.all()
+	if len(events) != 2 {
+		t.Fatalf("published %d events after Stop, want 2", len(events))
+	}
+	if got := events[1].NotifyKind; got != "task-complete" {
+		t.Errorf("NotifyKind = %q, want %q", got, "task-complete")
+	}
 }
 
 func TestManager_HandleHookEvent_NoPublishWithoutTransition(t *testing.T) {

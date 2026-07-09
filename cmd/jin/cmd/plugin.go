@@ -16,6 +16,7 @@ import (
 	"github.com/takaaki-s/jindaiko/internal/daemon"
 	"github.com/takaaki-s/jindaiko/internal/paths"
 	"github.com/takaaki-s/jindaiko/internal/plugin"
+	"github.com/takaaki-s/jindaiko/internal/tmux"
 )
 
 var pluginCmd = &cobra.Command{
@@ -68,11 +69,14 @@ var pluginListCmd = &cobra.Command{
 }
 
 var pluginRunCmd = &cobra.Command{
-	Use:   "run <name> --session <selector>",
-	Short: "Run a plugin on demand for a session",
-	Long: `Run a plugin immediately for a session, bypassing event matching and
-debounce. The plugin receives JIN_EVENT=action and the session's current
-snapshot. The run is asynchronous; follow its output in the plugin log.`,
+	Use:   "run <name> [--session <selector>]",
+	Short: "Run a plugin on demand",
+	Long: `Run a plugin immediately, bypassing event matching and debounce. The
+plugin receives JIN_EVENT=action, plus the session's current snapshot when
+--session is given; without it the run is a global action and all session
+fields are empty. When invoked from inside tmux, the caller's server socket
+and pane travel with the run as JIN_CALLER_TMUX_SOCKET/JIN_CALLER_TMUX_PANE.
+The run is asynchronous; follow its output in the plugin log.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completePluginNames,
 	RunE:              runPluginRun,
@@ -84,16 +88,16 @@ func init() {
 	pluginInstallCmd.Flags().String("link", "", "Install a local plugin directory as a symlink")
 	pluginInstallCmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
 	pluginUpdateCmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
-	pluginRunCmd.Flags().StringP("session", "s", "", "Session selector (ID prefix or description substring)")
-	_ = pluginRunCmd.MarkFlagRequired("session")
+	pluginRunCmd.Flags().StringP("session", "s", "", "Session selector (ID prefix or description substring); omit for a global action")
 }
 
 func runPluginRun(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	selector, _ := cmd.Flags().GetString("session")
 
 	client := daemon.NewClient(getSocketPath())
-	sessionID, sessionDesc, err := resolveSession(client, selector)
+
+	selector, _ := cmd.Flags().GetString("session")
+	sessionID, sessionDesc, err := resolvePluginRunSession(client, cmd.Flags().Changed("session"), selector)
 	if err != nil {
 		return err
 	}
@@ -103,11 +107,34 @@ func runPluginRun(cmd *cobra.Command, args []string) error {
 	// An unset or malformed value is treated as depth 0 (a top-level invocation).
 	depth, _ := strconv.Atoi(os.Getenv("JIN_PLUGIN_DEPTH"))
 
-	if err := client.PluginRun(name, sessionID, depth); err != nil {
+	err = client.PluginRun(daemon.PluginRunRequest{
+		Plugin:           name,
+		SessionID:        sessionID,
+		Depth:            depth,
+		CallerTmuxSocket: tmux.SocketPathFromEnv(os.Getenv("TMUX")),
+		CallerTmuxPane:   os.Getenv("TMUX_PANE"),
+	})
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Started plugin %s for session %s\n", name, sessionDesc)
+	if sessionID == "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Started plugin %s (global)\n", name)
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "Started plugin %s for session %s\n", name, sessionDesc)
+	}
 	return nil
+}
+
+// resolvePluginRunSession maps the --session flag state to a run target: a
+// never-passed flag means a global action (empty ID, no resolution), while an
+// explicitly passed value — even an empty one — always goes through selector
+// resolution so a mistyped `--session ""` fails loudly instead of silently
+// becoming a global run.
+func resolvePluginRunSession(client *daemon.Client, flagChanged bool, selector string) (sessionID, sessionDesc string, err error) {
+	if !flagChanged {
+		return "", "", nil
+	}
+	return resolveSession(client, selector)
 }
 
 func runPluginInstall(cmd *cobra.Command, args []string) error {

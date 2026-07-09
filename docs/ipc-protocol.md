@@ -167,14 +167,20 @@ type PaneSendKeysRequest struct {
     Literal bool   `json:"literal,omitempty"`
 }
 
-// PluginRunRequest runs one plugin on demand against a session's current
-// snapshot, bypassing matcher and debounce. Depth carries the caller CLI's
-// JIN_PLUGIN_DEPTH so the dispatcher can reject a plugin that tries to chain
-// another plugin run. Success means the run was accepted; it executes async.
+// PluginRunRequest runs one plugin on demand, bypassing matcher and debounce:
+// against a session's current snapshot when SessionID is set, or as a global
+// action (all session fields empty) when it is not. Depth carries the caller
+// CLI's JIN_PLUGIN_DEPTH so the dispatcher can reject a plugin that tries to
+// chain another plugin run. CallerTmuxSocket/CallerTmuxPane carry the invoking
+// CLI's tmux context ($TMUX socket path / $TMUX_PANE), surfaced to the plugin
+// as JIN_CALLER_TMUX_SOCKET/JIN_CALLER_TMUX_PANE. Success means the run was
+// accepted; it executes async.
 type PluginRunRequest struct {
-    Plugin    string `json:"plugin"`
-    SessionID string `json:"session_id"`
-    Depth     int    `json:"depth,omitempty"`
+    Plugin           string `json:"plugin"`
+    SessionID        string `json:"session_id,omitempty"`
+    Depth            int    `json:"depth,omitempty"`
+    CallerTmuxSocket string `json:"caller_tmux_socket,omitempty"`
+    CallerTmuxPane   string `json:"caller_tmux_pane,omitempty"`
 }
 ```
 

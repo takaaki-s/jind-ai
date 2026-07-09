@@ -100,3 +100,17 @@ func TestPluginInstallListUpdate(t *testing.T) {
 		t.Errorf("expected 'already up to date', got %q", upOut)
 	}
 }
+
+// A --session flag that was never passed is a global action (no resolution, no
+// daemon contact — hence the nil client); an explicitly empty --session must
+// instead fail through the usual selector validation, never silently global.
+func TestResolvePluginRunSession(t *testing.T) {
+	id, desc, err := resolvePluginRunSession(nil, false, "")
+	if id != "" || desc != "" || err != nil {
+		t.Errorf("unchanged flag = (%q, %q, %v), want empty target and nil error", id, desc, err)
+	}
+
+	if _, _, err := resolvePluginRunSession(nil, true, ""); err == nil || !strings.Contains(err.Error(), "selector is required") {
+		t.Errorf("explicit empty selector error = %v, want 'selector is required'", err)
+	}
+}

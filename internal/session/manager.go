@@ -1441,6 +1441,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 			AgentKind:  kind,
 			WorkDir:    workDir,
 			TmuxPaneID: tmuxPaneID,
+			NotifyKind: string(upd.Notify),
 		})
 	}
 

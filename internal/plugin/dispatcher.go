@@ -91,14 +91,15 @@ func (d *EventDispatcher) publish(ev Event) {
 			pluginLog("plugin %s debounced for %s %s:%s", e.Name, ev.SessionID, ev.Name, ev.Status)
 			continue
 		}
-		go d.run(e, ev, 1)
+		go d.run(e, ev, 1, ActionContext{})
 	}
 }
 
 // RunAction executes one plugin on demand (the `jin plugin run` path). It
 // bypasses matcher and debounce but still enforces state and depth checks.
 // Validation errors are returned synchronously; the run itself is async.
-func (d *EventDispatcher) RunAction(name string, ev Event, callerDepth int) error {
+// actx carries the invoking CLI's tmux context (empty when not applicable).
+func (d *EventDispatcher) RunAction(name string, ev Event, callerDepth int, actx ActionContext) error {
 	if callerDepth+1 >= maxDepth {
 		return fmt.Errorf("plugin %s not run: depth limit reached (JIN_PLUGIN_DEPTH=%d) — plugins cannot chain plugin runs", name, callerDepth)
 	}
@@ -112,7 +113,7 @@ func (d *EventDispatcher) RunAction(name string, ev Event, callerDepth int) erro
 		}
 		switch e.State {
 		case StateEnabled:
-			go d.run(e, ev, callerDepth+1)
+			go d.run(e, ev, callerDepth+1, actx)
 			return nil
 		case StateIncompatible:
 			return fmt.Errorf("plugin %s is incompatible: %v (try: jin plugin update %s)", name, e.Err, name)
@@ -125,7 +126,7 @@ func (d *EventDispatcher) RunAction(name string, ev Event, callerDepth int) erro
 	return fmt.Errorf("plugin %s is not installed", name)
 }
 
-func (d *EventDispatcher) run(e Entry, ev Event, depth int) {
+func (d *EventDispatcher) run(e Entry, ev Event, depth int, actx ActionContext) {
 	timeout := e.Manifest.EffectiveTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -134,6 +135,7 @@ func (d *EventDispatcher) run(e Entry, ev Event, depth int) {
 		PluginDir:  filepath.Join(d.pluginsDir, e.Name),
 		Run:        e.Manifest.Run,
 		Env:        ev,
+		Caller:     actx,
 		APIVersion: e.Manifest.APIVersion,
 		Depth:      depth,
 		SocketPath: d.socketPath,
