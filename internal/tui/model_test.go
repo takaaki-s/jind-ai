@@ -1217,11 +1217,11 @@ func TestRenderSession_Indicators(t *testing.T) {
 	const bgSGR = "\x1b[48"
 
 	tests := []struct {
-		name        string
-		selected    bool
-		viewed      bool
-		wantBar     bool
-		wantViewBg  bool
+		name       string
+		selected   bool
+		viewed     bool
+		wantBar    bool
+		wantViewBg bool
 	}{
 		{name: "neither", selected: false, viewed: false, wantBar: false, wantViewBg: false},
 		{name: "selected only", selected: true, viewed: false, wantBar: true, wantViewBg: false},

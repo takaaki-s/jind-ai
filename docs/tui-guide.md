@@ -88,3 +88,27 @@ After popup completion, results are returned to the parent TUI via environment v
 Keybindings are retrieved from `config.GetKeybindings()`.
 Default values are defined in `config.DefaultKeybindings()`.
 Users can customize them in the `keybindings` section of `~/.config/jind-ai/config.yaml` (or wherever `$XDG_CONFIG_HOME/jind-ai/config.yaml` resolves to).
+
+### Outer tmux — sidebar toggle
+
+The outer tmux session (`jin-mgr`) binds `toggle_pane` keys at the root key
+table to zoom/unzoom the display (right) pane. Zooming hides the session list
+so you get the full width for focus mode; on narrow terminals the same key
+reveals the session list from a collapsed state.
+
+Defaults to `M-\` (Alt+Backslash). Override in `config.yaml`:
+
+```yaml
+keybindings:
+  toggle_pane: ["M-b"]              # use Alt+b instead
+  # toggle_pane: []                  # disable entirely (no bind-key issued)
+  # toggle_pane: ["M-\\", "M-b"]     # bind multiple keys
+```
+
+Keys use tmux `bind-key` notation (`M-` = Alt, `C-` = Ctrl). The binding is
+applied on `jin ui` startup and re-applied on reattach, so it survives outer
+tmux server restarts.
+
+Note: an omitted `toggle_pane` field uses the default, while an explicit empty
+list (`toggle_pane: []`) disables the feature — the nil/empty distinction is
+intentional.

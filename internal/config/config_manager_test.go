@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -301,5 +302,61 @@ func TestConfigManager_Reload_InvalidYAML(t *testing.T) {
 	// Reload should return an error
 	if err := m.Reload(); err == nil {
 		t.Fatal("Reload with invalid YAML: expected error, got nil")
+	}
+}
+
+// --- GetTogglePaneKeys via YAML round-trip ---
+// These tests pin viper/mapstructure's actual decode behaviour for the
+// nil ↔ empty-slice distinction that GetTogglePaneKeys relies on. If viper
+// ever starts collapsing YAML `[]` to nil, the "user-disabled" story silently
+// breaks (default M-\ would come back), so we lock the behaviour here.
+
+func TestConfigManager_GetTogglePaneKeys_NoSectionUsesDefault(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	got := m.GetTogglePaneKeys()
+	want := []string{"M-\\"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetTogglePaneKeys() = %v, want %v (default when field absent)", got, want)
+	}
+}
+
+func TestConfigManager_GetTogglePaneKeys_ExplicitEmptyDisablesFeature(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := "keybindings:\n  toggle_pane: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	got := m.GetTogglePaneKeys()
+	// Non-nil empty slice: viper decoded YAML `[]` distinctly from the
+	// field being absent. Must NOT fall back to the default.
+	if got == nil {
+		t.Fatalf("GetTogglePaneKeys() = nil; want non-nil empty slice (viper should preserve YAML `[]`)")
+	}
+	if len(got) != 0 {
+		t.Errorf("GetTogglePaneKeys() = %v, want empty slice", got)
+	}
+}
+
+func TestConfigManager_GetTogglePaneKeys_ExplicitOverride(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := "keybindings:\n  toggle_pane: [\"M-b\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	got := m.GetTogglePaneKeys()
+	want := []string{"M-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetTogglePaneKeys() = %v, want %v", got, want)
 	}
 }

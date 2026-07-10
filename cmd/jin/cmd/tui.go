@@ -38,6 +38,28 @@ func applyPaneBorderStyle(tc *tmux.Client) {
 	_ = tc.SetOption("pane-border-format", paneBorderFormat, true)
 }
 
+// togglePaneBinder is the minimal tmux surface applyTogglePaneBinding needs.
+// *tmux.Client satisfies it directly; tests inject a fake.
+type togglePaneBinder interface {
+	BindKey(key string, cmdArgs ...string) error
+}
+
+// applyTogglePaneBinding wires the outer tmux root bindings that zoom/unzoom
+// the display pane (sidebar toggle). Idempotent: re-issuing bind-key overwrites
+// the prior mapping. No-op when configMgr is nil, displayPaneID is empty, or
+// the user set TogglePane to an explicit empty slice.
+func applyTogglePaneBinding(tc togglePaneBinder, configMgr *config.Manager, displayPaneID string) {
+	if configMgr == nil || displayPaneID == "" {
+		return
+	}
+	for _, key := range configMgr.GetTogglePaneKeys() {
+		if key == "" {
+			continue
+		}
+		_ = tc.BindKey(key, "resize-pane", "-Z", "-t", displayPaneID)
+	}
+}
+
 var tuiCmd = &cobra.Command{
 	Use:     "ui",
 	Aliases: []string{"tui"},
@@ -164,6 +186,7 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 	if displayPaneID != "" {
 		_ = tc.SetEnvironment(tmux.SessionName, "JIN_DISPLAY_PANE", displayPaneID)
 	}
+	applyTogglePaneBinding(tc, configMgr, displayPaneID)
 	// Propagate SSH_AUTH_SOCK to tmux session so popups can access it
 	if sshAuthSock := os.Getenv("SSH_AUTH_SOCK"); sshAuthSock != "" {
 		_ = tc.SetEnvironment(tmux.SessionName, "SSH_AUTH_SOCK", sshAuthSock)
@@ -182,6 +205,8 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 
 // reattachTmux reattaches to an existing outer tmux session, respawning dead panes.
 func reattachTmux(tc *tmux.Client, tuiInnerCmd string) error {
+	// Load config so we can re-apply outer-tmux bindings (toggle_pane etc.) on reattach
+	configMgr, _ := config.NewManager(getConfigDir())
 	// Ensure pane-died hook is active (handles upgrade from older version)
 	_ = tc.SetupAutoCleanDeadPanes()
 	// Update SSH_AUTH_SOCK in tmux session (may have changed on reconnect)
@@ -218,6 +243,7 @@ func reattachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 	if displayPaneID != "" && tc.IsPaneDead(displayPaneID) {
 		_ = tc.RespawnPane(displayPaneID, tmux.PlaceholderCmd)
 	}
+	applyTogglePaneBinding(tc, configMgr, displayPaneID)
 
 	return attachToSession(tc)
 }

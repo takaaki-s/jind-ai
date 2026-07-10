@@ -50,6 +50,12 @@ type KeybindingsConfig struct {
 
 	// Keys while attached
 	Detach []string `mapstructure:"detach,omitempty"`
+
+	// Outer tmux (jin-mgr) — sidebar toggle keys.
+	// Format: tmux bind-key notation (e.g., "M-\\" for Alt+Backslash, "M-b" for Alt+b).
+	// nil ⇒ use default from DefaultKeybindings. Explicit empty slice ⇒ disabled
+	// (no bind-key is issued).
+	TogglePane []string `mapstructure:"toggle_pane,omitempty"`
 }
 
 // WorktreeConfig represents settings for the git-worktree session option.
@@ -335,6 +341,9 @@ func DefaultKeybindings() KeybindingsConfig {
 
 		// Keys while attached
 		Detach: []string{"ctrl+]"},
+
+		// Outer tmux — sidebar toggle
+		TogglePane: []string{"M-\\"},
 	}
 }
 
@@ -536,4 +545,22 @@ func (m *Manager) GetDetachKeyTmux() string {
 	}
 
 	return formatKeyForTmux(detachKeys[0])
+}
+
+// GetTogglePaneKeys returns the tmux bind-key strings for the outer-tmux
+// sidebar toggle. The nil ↔ empty-slice distinction is significant:
+//   - nil (field unset in config) ⇒ default from DefaultKeybindings
+//   - explicit empty slice ⇒ feature disabled by the user (no bind-key issued)
+//
+// The returned strings are passed straight to tmux bind-key, so they use tmux
+// notation (e.g. "M-\\" for Alt+Backslash) rather than the "ctrl+]" style used
+// by Detach.
+func (m *Manager) GetTogglePaneKeys() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.config.Keybindings.TogglePane == nil {
+		return DefaultKeybindings().TogglePane
+	}
+	return m.config.Keybindings.TogglePane
 }

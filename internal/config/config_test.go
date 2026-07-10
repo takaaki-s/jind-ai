@@ -287,3 +287,48 @@ func TestFormatKeyForTmux(t *testing.T) {
 		}
 	}
 }
+
+// --- GetTogglePaneKeys ---
+// The nil ↔ empty-slice distinction is load-bearing: nil means "user did not
+// set it, use default", explicit empty means "user disabled the feature".
+
+func TestGetTogglePaneKeys_DefaultWhenNil(t *testing.T) {
+	m := &Manager{config: &Config{}}
+	got := m.GetTogglePaneKeys()
+	want := []string{"M-\\"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetTogglePaneKeys() = %v, want %v", got, want)
+	}
+}
+
+func TestGetTogglePaneKeys_UserSet(t *testing.T) {
+	m := &Manager{config: &Config{
+		Keybindings: KeybindingsConfig{TogglePane: []string{"M-b"}},
+	}}
+	got := m.GetTogglePaneKeys()
+	want := []string{"M-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetTogglePaneKeys() = %v, want %v", got, want)
+	}
+}
+
+func TestGetTogglePaneKeys_ExplicitEmptyDisables(t *testing.T) {
+	m := &Manager{config: &Config{
+		Keybindings: KeybindingsConfig{TogglePane: []string{}},
+	}}
+	got := m.GetTogglePaneKeys()
+	if len(got) != 0 {
+		t.Errorf("GetTogglePaneKeys() = %v, want empty slice", got)
+	}
+}
+
+func TestGetTogglePaneKeys_MultipleKeys(t *testing.T) {
+	m := &Manager{config: &Config{
+		Keybindings: KeybindingsConfig{TogglePane: []string{"M-\\", "M-b"}},
+	}}
+	got := m.GetTogglePaneKeys()
+	want := []string{"M-\\", "M-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetTogglePaneKeys() = %v, want %v", got, want)
+	}
+}
