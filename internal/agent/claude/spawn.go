@@ -3,7 +3,7 @@ package claude
 import (
 	"fmt"
 
-	"github.com/takaaki-s/jindaiko/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/agent"
 )
 
 // SpawnCommand builds the `claude ...` command line the daemon splices into
@@ -44,7 +44,7 @@ func (a *Agent) SpawnCommand(opts agent.SpawnOptions) agent.SpawnPlan {
 		// which silently breaks the Layer C description enhancer (it
 		// looks for that file). CLAUDECODE guards against nested tmux
 		// self-detection; the CLAUDE_CODE_* group guards against session
-		// inheritance from whatever process launched jindaiko's daemon or
+		// inheritance from whatever process launched jind-ai's daemon or
 		// tmux server.
 		UnsetEnv: []string{
 			"CLAUDECODE",

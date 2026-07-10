@@ -67,11 +67,11 @@ Session (runtime only, json:"-")
 
 Sessions carry a `Description` (human-readable label) that is separate from the technical `ID`. It is generated in three layers:
 
-- **Layer A (baseline)** — `GenerateBaselineDescription(workDir, branch, isWorktree, tmuxHint)` produces `<repo>[:<branch>][:<subpath>]` (e.g. `jindaiko:main`). Always populated at session creation, never empty. Agent-independent.
+- **Layer A (baseline)** — `GenerateBaselineDescription(workDir, branch, isWorktree, tmuxHint)` produces `<repo>[:<branch>][:<subpath>]` (e.g. `jind-ai:main`). Always populated at session creation, never empty. Agent-independent.
 - **Layer B (manual override)** — Set via `--description` on `session new`, the `set-description` subcommand, or the TUI description step. Sets `DescriptionLocked = true`, blocking Layer C.
 - **Layer C (agent-specific enhancer)** — On `SessionStart` / `UserPromptSubmit` / `Stop` hooks, if `DescriptionLocked = false`, the registered `DescriptionEnhancer` (currently `internal/agent/claude/CCDescriptionEnhancer`) returns a `(candidate, DescriptionLayer, ok)` tuple. `TryUpgradeDescription` applies the candidate only when its `DescriptionLayer` is strictly higher than the session's current layer. The Claude Code enhancer tries two signals in order of informativeness:
   - **Layer C-name (strong)** (`DescriptionLayerAgentName`) — first checks the transcript for `{"type":"ai-title","aiTitle":"…"}` (the value CC surfaces as "Session name" in `/status`). If absent, falls back to `~/.claude/sessions/<PID>.json`'s `name` when `nameSource` is anything other than `"derived"` (or the field is missing on older CC versions). This is the definitive name — treated as final Layer C-name for the session.
-  - **Layer C-name (derived)** (`DescriptionLayerAgentNameDerived`) — `~/.claude/sessions/<PID>.json` `name` with `nameSource == "derived"`: the tmux window hint jindaiko itself handed CC (e.g. `jin-395bce5c-71`). Fires at `SessionStart`, so the description leaves the Layer A baseline the moment the process boots, but any later stronger name (`aiTitle`, `/rename`) still overwrites it.
+  - **Layer C-name (derived)** (`DescriptionLayerAgentNameDerived`) — `~/.claude/sessions/<PID>.json` `name` with `nameSource == "derived"`: the tmux window hint jind-ai itself handed CC (e.g. `jin-395bce5c-71`). Fires at `SessionStart`, so the description leaves the Layer A baseline the moment the process boots, but any later stronger name (`aiTitle`, `/rename`) still overwrites it.
 
   The CC enhancer never returns `DescriptionLayerTranscript`: Claude Code owns the naming and eventually writes `aiTitle`, so the raw first user prompt is never promoted into `Description`. `DescriptionLayerTranscript` remains in the layer enum for future adapters that lack a native session-name field.
 
@@ -122,7 +122,7 @@ Runs after the worktree is created (step 3) and before Claude Code starts. `Star
 4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 3 `defer` — the worktree and its branch are rolled back, leaving no partial state
 5. Skipped without running when: no script is present, `opts.NoHook` (`--no-hook`), or `worktree.hook_enabled: false`
 
-stdout/stderr are saved to `~/.local/state/jindaiko/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.
+stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.
 
 ## Recovery (On Daemon Restart)
 

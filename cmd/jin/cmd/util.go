@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/paths"
 )
 
 // getConfigDir returns the user configuration directory (XDG-compliant).

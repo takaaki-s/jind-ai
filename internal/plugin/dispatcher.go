@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/debug"
+	"github.com/takaaki-s/jind-ai/internal/debug"
 )
 
 var pluginLog = debug.NewLogger("plugin-debug.log")

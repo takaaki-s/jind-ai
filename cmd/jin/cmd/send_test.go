@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/exitcode"
-	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/exitcode"
+	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
 func TestRenderSendResultJSON(t *testing.T) {

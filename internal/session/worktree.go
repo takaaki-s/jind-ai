@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/paths"
 )
 
 // maxWorktreeNameAttempts caps the number of suffixes (-2, -3, ...) tried
@@ -47,7 +47,7 @@ func deriveBranchName(worktreeName, prefix, override string) string {
 }
 
 // expandBaseDir expands {name}, {repo}, and ${ENV} in the base_dir template.
-// An empty template resolves to $XDG_STATE_HOME/jindaiko/worktrees/{name}.
+// An empty template resolves to $XDG_STATE_HOME/jind-ai/worktrees/{name}.
 // Returns an absolute path, or an error if the template contains an unknown
 // {xxx} variable or does not resolve to an absolute path.
 func expandBaseDir(template, worktreeName, repoBasename string) (string, error) {

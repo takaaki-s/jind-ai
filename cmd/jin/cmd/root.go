@@ -11,9 +11,9 @@ import (
 	// The blank import must fire before daemon.NewServer's agent.Lookup call
 	// path executes; root.go is the earliest deterministic entry point in
 	// the CLI.
-	_ "github.com/takaaki-s/jindaiko/internal/agent/register"
-	"github.com/takaaki-s/jindaiko/internal/exitcode"
-	"github.com/takaaki-s/jindaiko/internal/version"
+	_ "github.com/takaaki-s/jind-ai/internal/agent/register"
+	"github.com/takaaki-s/jind-ai/internal/exitcode"
+	"github.com/takaaki-s/jind-ai/internal/version"
 )
 
 var jsonOutput bool

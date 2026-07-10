@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/exitcode"
-	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/exitcode"
+	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
 // idPrefixMinLen is the minimum selector length required for ID-prefix

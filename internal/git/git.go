@@ -1,4 +1,4 @@
-// Package git wraps the git CLI for the operations jindaiko needs
+// Package git wraps the git CLI for the operations jind-ai needs
 // (worktree management, branch detection). The Runner interface exists so
 // tests can drive Client without spawning real git processes.
 package git

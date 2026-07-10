@@ -3,8 +3,8 @@ package cmd
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/tui"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/tui"
 )
 
 var helpPopupCmd = &cobra.Command{

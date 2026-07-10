@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/plugin"
+	"github.com/takaaki-s/jind-ai/internal/plugin"
 )
 
 // mockDispatcher records published events synchronously so tests can assert

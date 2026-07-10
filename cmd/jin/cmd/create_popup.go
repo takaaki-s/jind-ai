@@ -5,8 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/tmux"
-	"github.com/takaaki-s/jindaiko/internal/tui"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/tui"
 )
 
 var createPopupCmd = &cobra.Command{

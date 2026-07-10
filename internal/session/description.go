@@ -143,7 +143,7 @@ const (
 	// DescriptionLayerAgentNameDerived is Layer C-name (weak): the agent
 	// wrote a session name but flagged it as externally supplied (Claude Code
 	// 2.x nameSource="derived", i.e. round-tripped from the tmux window name
-	// jindaiko itself handed the process). Slightly better than nothing —
+	// jind-ai itself handed the process). Slightly better than nothing —
 	// it at least matches CC's own /resume picker — but a genuinely
 	// conversation-derived name should still be allowed to overwrite it.
 	DescriptionLayerAgentNameDerived DescriptionLayer = 1

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
 func TestRenderWaitResultJSON(t *testing.T) {

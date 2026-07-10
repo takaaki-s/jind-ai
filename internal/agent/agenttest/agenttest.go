@@ -7,8 +7,8 @@
 package agenttest
 
 import (
-	"github.com/takaaki-s/jindaiko/internal/agent"
-	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
 // StubAgent is a minimal Agent implementation for tests. Zero-value works;

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
 	"golang.org/x/term"
 )
 

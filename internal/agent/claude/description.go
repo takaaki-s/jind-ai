@@ -11,8 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 // descriptionMaxBytes caps the derived description length. 60 bytes keeps the
@@ -22,7 +22,7 @@ const descriptionMaxBytes = 60
 
 // ccNameSourceDerived is the value CC 2.x writes to nameSource when the
 // session name was derived from the tmux window name (or another externally
-// supplied hint) rather than generated from the conversation. jindaiko itself
+// supplied hint) rather than generated from the conversation. jind-ai itself
 // hands CC that hint, so a "derived" name round-trips our own tmux name
 // (e.g. "jin-<8>-<2>") back into Description. It is still slightly better
 // than the Layer A baseline — it matches CC's own /resume picker — so we
@@ -38,11 +38,11 @@ const ccNameSourceDerived = "derived"
 //     next to "Session name" in `/status` and is the closest thing CC has
 //     to an authoritative conversation label.
 //  2. The name field in ~/.claude/sessions/<PID>.json. When nameSource is
-//     "derived" this is just the tmux hint jindaiko itself passed CC, so
+//     "derived" this is just the tmux hint jind-ai itself passed CC, so
 //     it is downgraded to the weak sublayer.
 //
 // The enhancer never mines the raw first user prompt — Claude Code owns the
-// session naming and jindaiko lets it lead. Other agents that lack a native
+// session naming and jind-ai lets it lead. Other agents that lack a native
 // naming path can plug their own enhancer that uses DescriptionLayerTranscript.
 type CCDescriptionEnhancer struct {
 	reader     *transcript.Reader
@@ -69,7 +69,7 @@ func NewCCDescriptionEnhancer() *CCDescriptionEnhancer {
 //     DescriptionLayerAgentName (strong). Same tier as aiTitle so whichever
 //     one lands first is preserved by the strict-greater layer guard.
 //   - sessions/<PID>.json name with nameSource == "derived" →
-//     DescriptionLayerAgentNameDerived (weak). The round-trip of jindaiko's
+//     DescriptionLayerAgentNameDerived (weak). The round-trip of jind-ai's
 //     own tmux hint; escapes the Baseline but lets any later stronger name
 //     overwrite it.
 //

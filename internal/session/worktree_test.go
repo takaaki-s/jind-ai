@@ -68,7 +68,7 @@ func TestExpandBaseDir(t *testing.T) {
 			template:     "",
 			worktreeName: "jin-abc",
 			repoBasename: "myrepo",
-			wantPath:     "/state/jindaiko/worktrees/jin-abc",
+			wantPath:     "/state/jind-ai/worktrees/jin-abc",
 		},
 		{
 			name:         "explicit {name} substitution",

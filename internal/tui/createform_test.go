@@ -9,7 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/config"
 )
 
 // --- stepWorktree ---

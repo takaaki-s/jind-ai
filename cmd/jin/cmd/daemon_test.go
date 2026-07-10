@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/paths"
 )
 
 func TestGetSocketPath(t *testing.T) {

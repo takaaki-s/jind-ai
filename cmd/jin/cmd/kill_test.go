@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/exitcode"
+	"github.com/takaaki-s/jind-ai/internal/exitcode"
 )
 
 func TestRenderActionResultJSON(t *testing.T) {

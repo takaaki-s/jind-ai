@@ -3,7 +3,7 @@ package session
 import (
 	"fmt"
 
-	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // mockCall records a method invocation on mockTmuxRunner.

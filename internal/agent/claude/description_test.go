@@ -8,8 +8,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 func TestSmartTruncate(t *testing.T) {
@@ -192,7 +192,7 @@ func TestCCDescriptionEnhancer_TryGenerate(t *testing.T) {
 		}
 	})
 
-	// A "derived" name is the tmux hint that jindaiko itself passed CC; we
+	// A "derived" name is the tmux hint that jind-ai itself passed CC; we
 	// accept it but flag it as the weak Layer C-name sublayer so a later
 	// stronger name can overwrite it.
 	t.Run("derived name maps to LayerAgentNameDerived", func(t *testing.T) {

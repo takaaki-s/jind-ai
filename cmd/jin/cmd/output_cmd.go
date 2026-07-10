@@ -6,9 +6,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 var outputCmd = &cobra.Command{

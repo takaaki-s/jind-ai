@@ -1,8 +1,8 @@
 package claude
 
 import (
-	"github.com/takaaki-s/jindaiko/internal/agent"
-	"github.com/takaaki-s/jindaiko/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
 // HookStatusSource translates Claude Code hook payloads into StatusUpdates.

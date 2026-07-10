@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/takaaki-s/jindaiko/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/internal/worktreehook"
 )
 
 // mockHookRunner is a test double for worktreehook.Runner. Configure the maps

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/agent"
-	"github.com/takaaki-s/jindaiko/internal/agent/agenttest"
+	"github.com/takaaki-s/jind-ai/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/agent/agenttest"
 )
 
 func TestRegisterAndLookup(t *testing.T) {

@@ -1,5 +1,5 @@
 // Package claude is the Claude Code adapter. It owns every CC-specific
-// concern jindaiko used to inline into internal/session — hook language,
+// concern jind-ai used to inline into internal/session — hook language,
 // hooks-settings.json generation, trust-dialog suppression, the shell
 // command shape, and the transcript-derived description enhancer.
 //
@@ -11,8 +11,8 @@ package claude
 import (
 	"sync"
 
-	"github.com/takaaki-s/jindaiko/internal/agent"
-	"github.com/takaaki-s/jindaiko/internal/debug"
+	"github.com/takaaki-s/jind-ai/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/debug"
 )
 
 // claudeLog is shared across the whole adapter (agent / trust / hooks_settings)
@@ -47,7 +47,7 @@ func New() *Agent {
 	}
 }
 
-// Kind is the identifier jindaiko persists in Session.AgentKind.
+// Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "claude" }
 
 // StatusSource returns the CC hook interpreter.

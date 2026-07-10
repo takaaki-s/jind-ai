@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/internal/worktreehook"
 )
 
 var worktreeCmd = &cobra.Command{

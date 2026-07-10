@@ -37,7 +37,7 @@ func IsGitWorktreeDir(path string) bool {
 // ExitWorktree, making the session unable to restart.
 //
 // Note: this is specific to Claude Code's own worktree convention. It is
-// unrelated to jindaiko's configurable worktree base directory.
+// unrelated to jind-ai's configurable worktree base directory.
 func IsClaudeWorktreePath(path string) bool {
 	return strings.Contains(path, "/.claude/worktrees/")
 }

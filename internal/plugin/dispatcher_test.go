@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/config"
 )
 
 // installTestPlugin writes a plugin directory with the given manifest and

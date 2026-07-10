@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/paths"
 )
 
 type daemonStatusResult struct {

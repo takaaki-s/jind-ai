@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/paths"
-	"github.com/takaaki-s/jindaiko/internal/plugin"
-	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/plugin"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 var pluginCmd = &cobra.Command{

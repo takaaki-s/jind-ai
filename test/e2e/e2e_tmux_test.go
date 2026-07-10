@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // --- helpers ---

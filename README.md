@@ -1,6 +1,6 @@
 **English** | [日本語](README.ja.md)
 
-# jindaiko
+# jind-ai
 
 A CLI tool for running and managing multiple agent sessions simultaneously
 (Claude Code is the first-class citizen; other agents plug in via
@@ -25,26 +25,26 @@ https://github.com/user-attachments/assets/62e9d64a-aa7d-42f8-8edf-03f724fe0ee4
 
 ### Download from GitHub Releases
 
-Download the binary for your OS/architecture from the [Releases page](https://github.com/takaaki-s/jindaiko/releases).
+Download the binary for your OS/architecture from the [Releases page](https://github.com/takaaki-s/jind-ai/releases).
 
 ```bash
 # Example: Linux amd64
-curl -Lo jindaiko.tar.gz https://github.com/takaaki-s/jindaiko/releases/latest/download/jindaiko_0.1.0_linux_amd64.tar.gz
-tar xzf jindaiko.tar.gz
+curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.1.0_linux_amd64.tar.gz
+tar xzf jind-ai.tar.gz
 sudo mv jin /usr/local/bin/
 ```
 
 ### Go install
 
 ```bash
-go install github.com/takaaki-s/jindaiko/cmd/jin@latest
+go install github.com/takaaki-s/jind-ai/cmd/jin@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/takaaki-s/jindaiko.git
-cd jindaiko
+git clone https://github.com/takaaki-s/jind-ai.git
+cd jind-ai
 make build    # Build to bin/jin
 make install  # Install to $GOPATH/bin
 ```
@@ -245,13 +245,13 @@ jin completion fish | source
 
 ## Configuration
 
-jindaiko follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/). Files are split across config / state / runtime directories:
+jind-ai follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/). Files are split across config / state / runtime directories:
 
 ```
-$XDG_CONFIG_HOME/jindaiko/      (default: ~/.config/jindaiko)
+$XDG_CONFIG_HOME/jind-ai/      (default: ~/.config/jind-ai)
 └── config.yaml                # Configuration file
 
-$XDG_STATE_HOME/jindaiko/       (default: ~/.local/state/jindaiko)
+$XDG_STATE_HOME/jind-ai/       (default: ~/.local/state/jind-ai)
 ├── state.yaml                 # State file (last used repository, etc.)
 ├── sessions/                  # Session data
 ├── hooks-settings.json        # Generated hooks settings (auto-managed)
@@ -261,14 +261,14 @@ $XDG_STATE_HOME/jindaiko/       (default: ~/.local/state/jindaiko)
 ├── hook-debug.log             # Hook debug log (when JIN_DEBUG=1)
 └── plugin-debug.log           # Plugin dispatcher debug log (when JIN_DEBUG=1)
 
-$XDG_DATA_HOME/jindaiko/        (default: ~/.local/share/jindaiko)
+$XDG_DATA_HOME/jind-ai/        (default: ~/.local/share/jind-ai)
 └── plugins/                   # Installed plugins (see Plugins below)
 
-$XDG_RUNTIME_DIR/jindaiko/      (fallback: $TMPDIR/jindaiko-<uid>)
+$XDG_RUNTIME_DIR/jind-ai/      (fallback: $TMPDIR/jind-ai-<uid>)
 └── daemon.sock                # Daemon socket
 ```
 
-### Example configuration (`~/.config/jindaiko/config.yaml`)
+### Example configuration (`~/.config/jind-ai/config.yaml`)
 
 ```yaml
 # Customize keybindings (defaults are used when omitted)
@@ -298,7 +298,7 @@ keybindings:
 
 ### Worktree placement
 
-By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/jindaiko/worktrees/{name}` (typically `~/.local/state/jindaiko/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:
+By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/jind-ai/worktrees/{name}` (typically `~/.local/state/jind-ai/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:
 
 ```yaml
 worktree:
@@ -339,7 +339,7 @@ worktree:
 ```
 
 - **`branch_prefix`** — prepended to the auto-derived worktree name to form the branch name. The leading `jin-` on the worktree name is stripped first, so under the default `jin-abcd1234` becomes `jin/abcd1234` (not `jin/jin-abcd1234`). Ignored when you pass `--worktree-branch <name>` to `jin session new`, since that overrides the branch outright.
-- **`default_branch`** — used **only** when jindaiko cannot auto-detect the repository's default branch. Detection reads `refs/remotes/origin/HEAD`; local clones that never had it set (some tarballs, `git clone --no-checkout`, older clones) will hit the fallback. If detection fails and `default_branch` is empty, session creation errors with `cannot detect default branch`.
+- **`default_branch`** — used **only** when jind-ai cannot auto-detect the repository's default branch. Detection reads `refs/remotes/origin/HEAD`; local clones that never had it set (some tarballs, `git clone --no-checkout`, older clones) will hit the fallback. If detection fails and `default_branch` is empty, session creation errors with `cannot detect default branch`.
 
 Worktree creation itself is **offline** — the new branch is cut from your local `origin/<base>` with no network round-trip, so heavy repos aren't taxed on every session. If you want the worktree to start from the freshest remote tip, `git fetch origin <base>` in the source repo before running `jin session new --worktree`, or wire the fetch into the [post-create hook](#worktree-post-create-hook) below.
 
@@ -387,9 +387,9 @@ Supported detach keys:
 
 ## Claude Code Hooks
 
-jindaiko uses Claude Code hooks to detect session state changes. **Hooks are configured automatically** — no manual setup required.
+jind-ai uses Claude Code hooks to detect session state changes. **Hooks are configured automatically** — no manual setup required.
 
-When a session starts, jindaiko generates `$XDG_STATE_HOME/jindaiko/hooks-settings.json` (default `~/.local/state/jindaiko/hooks-settings.json`) and passes it to Claude Code via `claude --settings`. This file wires up the following hooks:
+When a session starts, jind-ai generates `$XDG_STATE_HOME/jind-ai/hooks-settings.json` (default `~/.local/state/jind-ai/hooks-settings.json`) and passes it to Claude Code via `claude --settings`. This file wires up the following hooks:
 
 | Hook Event | Role |
 |-----------|------|
@@ -400,7 +400,7 @@ When a session starts, jindaiko generates `$XDG_STATE_HOME/jindaiko/hooks-settin
 
 ## Worktree Post-Create Hook
 
-When you create a session with `jin session new --worktree`, jindaiko can run a setup script right after the worktree is created — installing dependencies, copying `.env`, initializing submodules — so every new worktree lands ready to use without any manual steps.
+When you create a session with `jin session new --worktree`, jind-ai can run a setup script right after the worktree is created — installing dependencies, copying `.env`, initializing submodules — so every new worktree lands ready to use without any manual steps.
 
 ### Script location
 
@@ -430,7 +430,7 @@ pnpm install
 
 ### Security: allowlist
 
-Since the script is checked into a repository, jindaiko never runs it unless the repository has been explicitly trusted (a direnv-style allow model). Trust is tracked by the script's SHA256 — editing the script requires trusting it again.
+Since the script is checked into a repository, jind-ai never runs it unless the repository has been explicitly trusted (a direnv-style allow model). Trust is tracked by the script's SHA256 — editing the script requires trusting it again.
 
 ```bash
 jin worktree allow    # Trust the current repository (shows the script, asks for confirmation)
@@ -444,18 +444,18 @@ If the script exists but isn't trusted (or changed since it was trusted), the ho
 ### Skipping the hook
 
 - `jin session new --worktree --no-hook` — skip the hook for this session only
-- `worktree.hook_enabled: false` in `~/.config/jindaiko/config.yaml` — disable the hook for all repositories
+- `worktree.hook_enabled: false` in `~/.config/jind-ai/config.yaml` — disable the hook for all repositories
 - `worktree.hook_timeout: <seconds>` — change the timeout (default: `300`). On expiry the hook's process group is sent `SIGTERM`, given a 5-second grace period, then `SIGKILL` if still alive.
 
 ### On failure
 
-If the hook exits non-zero or times out, the worktree and its branch are rolled back and `jin session new` fails with a non-zero exit code. The hook's stdout/stderr are kept at `~/.local/state/jindaiko/hook-logs/<session-id>.log` for troubleshooting, even after a rollback.
+If the hook exits non-zero or times out, the worktree and its branch are rolled back and `jin session new` fails with a non-zero exit code. The hook's stdout/stderr are kept at `~/.local/state/jind-ai/hook-logs/<session-id>.log` for troubleshooting, even after a rollback.
 
 ## Plugins
 
-jindaiko can run your own shell-executable plugins in reaction to session
+jind-ai can run your own shell-executable plugins in reaction to session
 status changes, or on demand. A plugin is a directory with a manifest and an
-entry-point script; jindaiko never inspects what the script does, only when
+entry-point script; jind-ai never inspects what the script does, only when
 it runs and what environment it gets.
 
 ### Two ways a plugin runs
@@ -491,7 +491,7 @@ timeout: 30s                     # optional; default 30s
 
 | Field | Required | Description |
 |-------|----------|--------------|
-| `name` | Yes | `[a-z0-9][a-z0-9-]*`; must match the directory name jindaiko installs it under |
+| `name` | Yes | `[a-z0-9][a-z0-9-]*`; must match the directory name jind-ai installs it under |
 | `api_version` | Yes | A single integer, not a range — see [API compatibility](#api-compatibility) |
 | `on` | No | List of `status_changed` or `status_changed:<status>` matchers. Empty or omitted = action-only |
 | `run` | Yes | Shell command, run via `bash -c` with the plugin directory as cwd |
@@ -524,7 +524,7 @@ Environment variables:
 The same data is also written to **stdin as JSON** (same fields, snake_case;
 caller tmux context is env-only).
 
-For anything beyond this thin payload, call back into jindaiko:
+For anything beyond this thin payload, call back into jind-ai:
 
 ```bash
 jin session info "$JIN_SESSION_ID" --json    # full session details
@@ -539,7 +539,7 @@ jin pane send-keys "$JIN_SESSION_ID" <keys>
 ```
 
 **Compatibility contract**: treat any environment variable, JSON field, or CLI
-flag you don't recognize as something to ignore, not an error. jindaiko only
+flag you don't recognize as something to ignore, not an error. jind-ai only
 adds to this surface without a version bump; it never removes or renames
 within an `api_version`.
 
@@ -563,7 +563,7 @@ commit SHA it resolved to, and asks for confirmation (`--yes` to skip) before
 touching anything; the approved commit SHA is recorded in
 `plugins.lock.yaml`, so a later `install`/`update` never silently lands on a
 different commit than the one you saw. A `--link`ed plugin skips this —
-linking a local path is itself the trust decision, and jindaiko never runs
+linking a local path is itself the trust decision, and jind-ai never runs
 `build:` for a linked plugin.
 
 ### Language-specific guidance
@@ -576,18 +576,18 @@ linking a local path is itself the trust decision, and jindaiko never runs
 - **Go / Rust / other compiled languages** — use `build:` to compile on
   install/update so the binary matches the user's platform/arch (and
   `go.sum` / `Cargo.lock` give reproducibility). `build:` runs exactly once
-  per install/update as a single declared command; jindaiko does not resolve
+  per install/update as a single declared command; jind-ai does not resolve
   dependencies or detect a toolchain for you — document what's required in
   your plugin's own README. A non-zero exit fails the install/update
   atomically (nothing is left half-installed), with output kept at
-  `~/.local/state/jindaiko/plugin-logs/<name>-build.log`. jindaiko injects
+  `~/.local/state/jind-ai/plugin-logs/<name>-build.log`. jind-ai injects
   `npm_config_ignore_scripts=true` into the build environment by default (a
   supply-chain guard you can override inside your own `build:` command); the
   build itself runs with your own user privileges — it is not sandboxed.
 
 ### Constraints
 
-- **No persistent processes.** jindaiko runs a plugin per event/action and
+- **No persistent processes.** jind-ai runs a plugin per event/action and
   tears it down; don't build a long-running daemon into `run:`. If you need
   one, run it yourself (manually, or as a systemd user unit) and keep the
   plugin a thin per-event client to it (e.g. `curl`).
@@ -600,14 +600,14 @@ linking a local path is itself the trust decision, and jindaiko never runs
 - **Fail-open.** A plugin that errors, times out, or hangs never blocks a
   session's status pipeline — it's logged and the pipeline moves on. Timeout
   defaults to 30s (`timeout:` in the manifest).
-- **Loop residual risk.** jindaiko debounces repeated dispatch of the same
+- **Loop residual risk.** jind-ai debounces repeated dispatch of the same
   (plugin, session, event) within a short window (default 3s,
   `plugins.debounce` below) and rejects a plugin chaining another plugin run
   beyond one hop (`JIN_PLUGIN_DEPTH`). Neither catches a *slow* ping-pong
   (e.g. a plugin that sends a prompt whose eventual response re-triggers the
   same plugin a few seconds later) — avoiding that is on the plugin author.
 
-### Config (`~/.config/jindaiko/config.yaml`)
+### Config (`~/.config/jind-ai/config.yaml`)
 
 ```yaml
 plugins:
@@ -619,7 +619,7 @@ plugins:
 
 ### API compatibility
 
-Plugins declare a single `api_version` integer; jindaiko supports a window
+Plugins declare a single `api_version` integer; jind-ai supports a window
 `[min, current]` (v1 today: both are `1`). Checked at install/update
 (fail-closed — a plugin outside the window is rejected before anything is
 written) and again at every dispatch (fail-open — an incompatible installed
@@ -630,8 +630,8 @@ list`, with `jin plugin run` pointing you at `jin plugin update <name>`).
 
 ```bash
 export JIN_DEBUG=1
-tail -f ~/.local/state/jindaiko/plugin-debug.log        # dispatcher decisions
-tail -f ~/.local/state/jindaiko/plugin-logs/<name>.log  # a plugin's own stdout/stderr
+tail -f ~/.local/state/jind-ai/plugin-debug.log        # dispatcher decisions
+tail -f ~/.local/state/jind-ai/plugin-logs/<name>.log  # a plugin's own stdout/stderr
 ```
 
 ## Debugging
@@ -644,7 +644,7 @@ export JIN_DEBUG=1
 jin daemon start
 
 # View logs
-tail -f ~/.local/state/jindaiko/daemon-debug.log
+tail -f ~/.local/state/jind-ai/daemon-debug.log
 ```
 
 ## Requirements

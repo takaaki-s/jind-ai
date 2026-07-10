@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/config"
 )
 
 // PluginState classifies an installed plugin at dispatch time: whether it will

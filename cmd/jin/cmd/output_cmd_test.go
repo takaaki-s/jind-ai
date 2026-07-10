@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 func TestTranscriptWorkDir(t *testing.T) {

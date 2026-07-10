@@ -7,10 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/daemon"
-	"github.com/takaaki-s/jindaiko/internal/tmux"
-	"github.com/takaaki-s/jindaiko/internal/tui"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/tui"
 	"golang.org/x/term"
 )
 
@@ -25,7 +25,7 @@ const (
 	inactivePaneBorderStyle = "fg=#414868"
 	paneBorderFormat        = "#{?#{@session_name}, #[bold]#{@session_name}#[nobold] ,}"
 	// tuiPaneBorderLabel is the pane-border-format text shown on the TUI (left)
-	// pane. Kept short since the user already knows they're in jindaiko.
+	// pane. Kept short since the user already knows they're in jind-ai.
 	tuiPaneBorderLabel = "sessions"
 )
 

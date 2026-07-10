@@ -3,7 +3,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 func TestFilterResultEntries_Passthrough(t *testing.T) {

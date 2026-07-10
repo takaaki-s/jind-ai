@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/config"
 )
 
 // writePluginDir creates <pluginsDir>/<name> with a valid jin-plugin.yaml

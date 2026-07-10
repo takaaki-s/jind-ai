@@ -8,7 +8,7 @@ import (
 )
 
 // Settings is the on-disk shape of ~/.claude/settings.local.json (the subset
-// jindaiko needs to touch). Only the "projects" map is written; unknown fields
+// jind-ai needs to touch). Only the "projects" map is written; unknown fields
 // in the user's existing file survive because we round-trip through the
 // typed representation only for keys we care about.
 type Settings struct {

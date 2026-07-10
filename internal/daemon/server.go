@@ -13,15 +13,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/takaaki-s/jindaiko/internal/agent"
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/debug"
-	"github.com/takaaki-s/jindaiko/internal/paths"
-	"github.com/takaaki-s/jindaiko/internal/plugin"
-	"github.com/takaaki-s/jindaiko/internal/session"
-	"github.com/takaaki-s/jindaiko/internal/tmux"
-	"github.com/takaaki-s/jindaiko/internal/transcript"
-	"github.com/takaaki-s/jindaiko/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/internal/agent"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/debug"
+	"github.com/takaaki-s/jind-ai/internal/paths"
+	"github.com/takaaki-s/jind-ai/internal/plugin"
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
+	"github.com/takaaki-s/jind-ai/internal/worktreehook"
 )
 
 // agentResolverAdapter wraps agent.Lookup so it satisfies session.AgentResolver

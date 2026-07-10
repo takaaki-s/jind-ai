@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takaaki-s/jindaiko/internal/config"
-	"github.com/takaaki-s/jindaiko/internal/git"
-	"github.com/takaaki-s/jindaiko/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/git"
+	"github.com/takaaki-s/jind-ai/internal/worktreehook"
 )
 
 // hookHappyPathGitRunner returns a scriptedGitRunner wired for the success

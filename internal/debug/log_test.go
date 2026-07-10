@@ -20,7 +20,7 @@ func withStateHome(t *testing.T, dir string) string {
 			os.Unsetenv("XDG_STATE_HOME")
 		}
 	})
-	stateDir := filepath.Join(dir, "jindaiko")
+	stateDir := filepath.Join(dir, "jind-ai")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatalf("failed to create state dir: %v", err)
 	}

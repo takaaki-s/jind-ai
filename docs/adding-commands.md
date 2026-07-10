@@ -34,7 +34,7 @@ func init() {
 ### 3. If Daemon Communication Is Needed
 
 ```go
-import "github.com/takaaki-s/jindaiko/internal/daemon"
+import "github.com/takaaki-s/jind-ai/internal/daemon"
 
 client, err := daemon.NewClient()
 if err != nil {
