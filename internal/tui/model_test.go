@@ -1416,3 +1416,31 @@ func TestWriteCursorEnv_UpdatesTmux(t *testing.T) {
 	// Must not panic with a nil client.
 	m.writeCursorEnv()
 }
+
+// Pin the tick intervals so a stray edit that lengthens envTickInterval (which
+// would re-introduce the popup pickup lag this split was built to remove) or
+// shortens sessionTickInterval (which would raise daemon-refetch churn) fails
+// loudly instead of drifting silently.
+func TestEnvTickInterval(t *testing.T) {
+	if envTickInterval != 250*time.Millisecond {
+		t.Errorf("envTickInterval = %v, want 250ms", envTickInterval)
+	}
+}
+
+func TestSessionTickInterval(t *testing.T) {
+	if sessionTickInterval != 2*time.Second {
+		t.Errorf("sessionTickInterval = %v, want 2s", sessionTickInterval)
+	}
+}
+
+func TestEnvTickCmd_NonNil(t *testing.T) {
+	if envTickCmd() == nil {
+		t.Fatal("envTickCmd returned nil")
+	}
+}
+
+func TestSessionTickCmd_NonNil(t *testing.T) {
+	if sessionTickCmd() == nil {
+		t.Fatal("sessionTickCmd returned nil")
+	}
+}

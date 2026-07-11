@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -187,6 +188,30 @@ func TestHasTmux(t *testing.T) {
 	os.Setenv("PATH", t.TempDir())
 	if HasTmux() {
 		t.Error("HasTmux() = true with empty PATH, want false")
+	}
+}
+
+func TestParseEnvironmentOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want map[string]string
+	}{
+		{"multiple lines", "FOO=bar\nBAZ=qux\nHELLO=world", map[string]string{"FOO": "bar", "BAZ": "qux", "HELLO": "world"}},
+		{"unset lines skipped", "FOO=bar\n-UNSET_VAR\nBAZ=qux", map[string]string{"FOO": "bar", "BAZ": "qux"}},
+		{"malformed lines skipped", "FOO=bar\nno_equals_here\nBAZ=qux\n", map[string]string{"FOO": "bar", "BAZ": "qux"}},
+		{"empty string", "", map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseEnvironmentOutput(tt.in)
+			if got == nil {
+				t.Fatal("parseEnvironmentOutput returned nil, want non-nil map")
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseEnvironmentOutput() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -441,7 +441,13 @@ func (m *Model) applySearchFilter() {
 // Messages
 type sessionsMsg []session.Info
 type errMsg error
-type tickMsg time.Time
+
+// envTickMsg fires on envTickInterval to poll tmux env pushed by popup children.
+type envTickMsg time.Time
+
+// sessionTickMsg fires on sessionTickInterval to refetch the session list.
+type sessionTickMsg time.Time
+
 type deleteErrMsg struct {
 	sessionID string
 	err       error
@@ -460,9 +466,28 @@ func (m *Model) fetchSessions() tea.Msg {
 	return sessionsMsg(sessions)
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
+const (
+	// envTickInterval controls how often the TUI polls tmux env vars pushed
+	// by popup children (JIN_CREATED_SESSION / JIN_CREATED_WARNING /
+	// JIN_NOTIFY_SESSION / JIN_ACTION_ID). Kept short so popup selections
+	// reflect in the parent TUI without user-visible lag.
+	envTickInterval = 250 * time.Millisecond
+
+	// sessionTickInterval controls how often the TUI refetches the session
+	// list from the daemon. Longer than envTickInterval because refetches
+	// touch the daemon socket and re-render the full list.
+	sessionTickInterval = 2 * time.Second
+)
+
+func envTickCmd() tea.Cmd {
+	return tea.Tick(envTickInterval, func(t time.Time) tea.Msg {
+		return envTickMsg(t)
+	})
+}
+
+func sessionTickCmd() tea.Cmd {
+	return tea.Tick(sessionTickInterval, func(t time.Time) tea.Msg {
+		return sessionTickMsg(t)
 	})
 }
 
@@ -873,7 +898,8 @@ func (m Model) handlePluginRun(name string) (tea.Model, tea.Cmd) {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.fetchSessions,
-		tickCmd(),
+		envTickCmd(),
+		sessionTickCmd(),
 	)
 }
 
@@ -1355,41 +1381,50 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processingMsg = ""
 		m.err = msg
 
-	case tickMsg:
-		// Poll for session created via tmux popup
+	case envTickMsg:
 		if m.tmuxClient != nil {
-			if id := m.tmuxClient.GetEnvironment(tmux.SessionName, "JIN_CREATED_SESSION"); id != "" {
-				_ = m.tmuxClient.UnsetEnvironment(tmux.SessionName, "JIN_CREATED_SESSION")
+			env := m.tmuxClient.ListEnvironment(tmux.SessionName)
+			// consume reads a JIN_* key and, if set, unsets it on tmux so
+			// the same value isn't picked up again on the next tick.
+			consume := func(key string) string {
+				v := env[key]
+				if v != "" {
+					_ = m.tmuxClient.UnsetEnvironment(tmux.SessionName, key)
+				}
+				return v
+			}
+
+			if id := consume("JIN_CREATED_SESSION"); id != "" {
 				m.focusSessionID = id
 			}
 			// Non-fatal warning from the create popup (e.g. hook not
 			// allowlisted). Read alongside JIN_CREATED_SESSION so it
 			// surfaces on the same tick.
-			if w := m.tmuxClient.GetEnvironment(tmux.SessionName, "JIN_CREATED_WARNING"); w != "" {
-				_ = m.tmuxClient.UnsetEnvironment(tmux.SessionName, "JIN_CREATED_WARNING")
+			if w := consume("JIN_CREATED_WARNING"); w != "" {
 				m.warning = w
 			}
 			// Poll for session selected from notification history popup
-			if id := m.tmuxClient.GetEnvironment(tmux.SessionName, "JIN_NOTIFY_SESSION"); id != "" {
-				_ = m.tmuxClient.UnsetEnvironment(tmux.SessionName, "JIN_NOTIFY_SESSION")
+			if id := consume("JIN_NOTIFY_SESSION"); id != "" {
 				m.focusSessionID = id
 			}
 			// Poll for an action ID pushed by the action-popup, then route
 			// through dispatchAction so palette and direct-key paths share
 			// the same helpers. If the helper returns a Cmd (e.g. Refresh),
 			// merge it into the tick's Batch so tea sees a single frame.
-			if id := m.tmuxClient.GetEnvironment(tmux.SessionName, "JIN_ACTION_ID"); id != "" {
-				_ = m.tmuxClient.UnsetEnvironment(tmux.SessionName, "JIN_ACTION_ID")
+			if id := consume("JIN_ACTION_ID"); id != "" {
 				next, cmd := m.dispatchAction(id)
 				if nm, ok := next.(Model); ok {
 					m = nm
 				}
 				if cmd != nil {
-					return m, tea.Batch(m.fetchSessions, tickCmd(), cmd)
+					return m, tea.Batch(envTickCmd(), cmd)
 				}
 			}
 		}
-		return m, tea.Batch(m.fetchSessions, tickCmd())
+		return m, envTickCmd()
+
+	case sessionTickMsg:
+		return m, tea.Batch(m.fetchSessions, sessionTickCmd())
 	}
 
 	return m, nil

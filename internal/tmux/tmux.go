@@ -230,11 +230,34 @@ func (c *Client) GetEnvironment(session, name string) string {
 	if err != nil {
 		return ""
 	}
-	// Output format: "NAME=value"
-	if idx := strings.Index(out, "="); idx >= 0 {
-		return out[idx+1:]
+	return parseEnvironmentOutput(out)[name]
+}
+
+// parseEnvironmentOutput parses "show-environment" output into a name→value
+// map. Each line is either "NAME=value" or "-NAME" (unset marker); unset
+// markers and empty/malformed lines all lack a "=" and are skipped in one
+// pass by strings.Cut.
+func parseEnvironmentOutput(out string) map[string]string {
+	env := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		env[name] = value
 	}
-	return ""
+	return env
+}
+
+// ListEnvironment returns every environment variable set on the tmux session
+// as a name→value map in a single tmux call. Returns an empty (non-nil) map
+// on tmux error so callers can range safely.
+func (c *Client) ListEnvironment(session string) map[string]string {
+	out, err := c.run("show-environment", "-t", session)
+	if err != nil {
+		return map[string]string{}
+	}
+	return parseEnvironmentOutput(out)
 }
 
 // UnsetEnvironment removes an environment variable from the tmux session.
