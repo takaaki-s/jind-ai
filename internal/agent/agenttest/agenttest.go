@@ -61,6 +61,31 @@ func Reset() {
 	agent.ResetRegistryForTest()
 }
 
+// Snapshot captures every currently-registered adapter. Pair with Restore in
+// a t.Cleanup to preserve adapters that root.go's blank import registered at
+// program start, so tests that swap in stubs do not permanently empty the
+// registry for later tests.
+func Snapshot() []session.Agent {
+	kinds := agent.Kinds()
+	out := make([]session.Agent, 0, len(kinds))
+	for _, k := range kinds {
+		if a, err := agent.Lookup(k); err == nil {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Restore wipes the registry and re-registers every agent previously captured
+// by Snapshot. Safe to call with a nil / empty slice — the registry ends up
+// empty in that case.
+func Restore(agents []session.Agent) {
+	agent.ResetRegistryForTest()
+	for _, a := range agents {
+		agent.Register(a)
+	}
+}
+
 // Register is a convenience wrapper around agent.Register that returns the
 // argument to allow chaining in table tests.
 func Register(a session.Agent) session.Agent {

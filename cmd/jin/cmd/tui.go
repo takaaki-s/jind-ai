@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/takaaki-s/jind-ai/internal/agent"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
@@ -95,17 +96,53 @@ var tuiCmd = &cobra.Command{
 	Short:   "Open the interactive TUI",
 	Long:    `Open the interactive terminal user interface for managing Claude Code sessions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		agentFlag, _ := cmd.Flags().GetString("agent")
+		if err := validateTuiAgentFlag(agentFlag); err != nil {
+			return err
+		}
+
 		// If running inside jin tmux session, run the TUI directly
 		if os.Getenv(envJinTmux) == "1" {
 			return runTUIInner()
 		}
 		// Otherwise, set up tmux and attach
-		return runTUIWithTmux()
+		return runTUIWithTmux(agentFlag)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
+	tuiCmd.Flags().String("agent", "", "Transient default adapter kind for the create form (does not modify config.default_agent)")
+}
+
+// validateTuiAgentFlag returns nil for empty (unset) or a registered kind.
+// Non-empty unknown kinds surface agent.Lookup's error text unchanged so the
+// user sees the same "available: ..." list as `jin session new --agent`.
+func validateTuiAgentFlag(kind string) error {
+	if kind == "" {
+		return nil
+	}
+	_, err := agent.Lookup(kind)
+	return err
+}
+
+// agentEnvSetter is the minimal tmux surface setTransientAgentEnv needs.
+// *tmux.Client satisfies it directly; tests inject a fake.
+type agentEnvSetter interface {
+	SetEnvironment(session, name, value string) error
+	UnsetEnvironment(session, name string) error
+}
+
+// setTransientAgentEnv writes (or clears) the outer-tmux env variable that
+// tells create-popup which adapter kind to preselect. Clearing on empty flag
+// prevents a stale value from a prior `jin ui --agent codex` invocation on
+// the same outer tmux server from leaking into a subsequent plain `jin ui`.
+func setTransientAgentEnv(tc agentEnvSetter, agentFlag string) {
+	if agentFlag == "" {
+		_ = tc.UnsetEnvironment(tmux.SessionName, "JIN_UI_AGENT")
+		return
+	}
+	_ = tc.SetEnvironment(tmux.SessionName, "JIN_UI_AGENT", agentFlag)
 }
 
 // tuiInnerCommand returns the shell command for the inner TUI process.
@@ -118,7 +155,7 @@ func tuiInnerCommand() (string, error) {
 }
 
 // runTUIWithTmux creates or reattaches to a tmux session with 2-pane layout.
-func runTUIWithTmux() error {
+func runTUIWithTmux(agentFlag string) error {
 	client := daemon.NewClient(getSocketPath())
 	if !client.IsRunning() {
 		return fmt.Errorf("daemon is not running. Start with: jin daemon start")
@@ -137,16 +174,16 @@ func runTUIWithTmux() error {
 
 	// Reattach to existing session if it exists
 	if tc.HasSession(tmux.SessionName) {
-		return reattachTmux(tc, tuiInnerCmd)
+		return reattachTmux(tc, tuiInnerCmd, agentFlag)
 	}
 
 	// Create new tmux session
-	return createAndAttachTmux(tc, tuiInnerCmd)
+	return createAndAttachTmux(tc, tuiInnerCmd, agentFlag)
 }
 
 // createAndAttachTmux creates a new outer tmux session with 2-pane fixed layout and attaches.
 // The outer tmux (jin-mgr) has prefix=None so all keystrokes pass through to the inner tmux.
-func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
+func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd, agentFlag string) error {
 	// Load config for detach key
 	configMgr, _ := config.NewManager(getConfigDir())
 	detachTmuxKey := "C-]"
@@ -215,6 +252,7 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 	if displayPaneID != "" {
 		_ = tc.SetEnvironment(tmux.SessionName, "JIN_DISPLAY_PANE", displayPaneID)
 	}
+	setTransientAgentEnv(tc, agentFlag)
 	applyTogglePaneBinding(tc, configMgr, displayPaneID)
 	selfBin, _ := os.Executable()
 	applyActionPanelBinding(tc, configMgr, selfBin)
@@ -235,7 +273,7 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 }
 
 // reattachTmux reattaches to an existing outer tmux session, respawning dead panes.
-func reattachTmux(tc *tmux.Client, tuiInnerCmd string) error {
+func reattachTmux(tc *tmux.Client, tuiInnerCmd, agentFlag string) error {
 	// Load config so we can re-apply outer-tmux bindings (toggle_pane etc.) on reattach
 	configMgr, _ := config.NewManager(getConfigDir())
 	// Ensure pane-died hook is active (handles upgrade from older version)
@@ -274,6 +312,7 @@ func reattachTmux(tc *tmux.Client, tuiInnerCmd string) error {
 	if displayPaneID != "" && tc.IsPaneDead(displayPaneID) {
 		_ = tc.RespawnPane(displayPaneID, tmux.PlaceholderCmd)
 	}
+	setTransientAgentEnv(tc, agentFlag)
 	applyTogglePaneBinding(tc, configMgr, displayPaneID)
 	selfBin, _ := os.Executable()
 	applyActionPanelBinding(tc, configMgr, selfBin)

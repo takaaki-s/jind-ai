@@ -122,6 +122,23 @@ never accidentally clobbered by a stale merge. The Claude Code adapter's
 generated `hooks-settings.json` lives under jind-ai's own state directory
 for the same reason.
 
+### Adapter kind resolution
+
+The kind sent to the daemon on session creation is resolved in this order:
+
+1. Explicit `--agent <kind>` flag (`jin session new`, or the TUI create
+   form's agent picker step)
+2. `config.default_agent` (`~/.config/jind-ai/config.yaml`)
+3. Hard-coded `"claude"` fallback
+
+The daemon backfills the empty case and validates the final value against
+the registry in `internal/daemon/server.go`. The TUI create form runs the
+same resolution client-side to seed the picker's initial selection; the
+`jin ui --agent <kind>` flag is a **transient** default propagated to the
+create-popup via the outer-tmux env `JIN_UI_AGENT` (unset when no flag
+was passed), so it never modifies `config.default_agent`. The picker step
+itself is skipped when only one adapter is registered.
+
 The daemon injects a thin resolver (`agent.Lookup`) into `session.Manager`,
 so `internal/session/` never imports `internal/agent/*`. Adding a new
 adapter is a matter of dropping `internal/agent/<kind>/` with an

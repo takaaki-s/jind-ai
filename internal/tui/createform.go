@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/takaaki-s/jind-ai/internal/agent"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
 	"github.com/takaaki-s/jind-ai/internal/git"
@@ -29,6 +31,7 @@ type formStep int
 
 const (
 	stepWorkDir    formStep = iota // Work directory selection
+	stepAgent                      // Agent adapter selection (skipped when len(Kinds())<2)
 	stepFleet                      // Fleet selection
 	stepWorktree                   // Worktree yes/no
 	stepHookPrompt                 // Post-create hook not-allowed / changed prompt
@@ -56,15 +59,20 @@ type CreateFormModel struct {
 	// Step 1: Work directory selection
 	dirPicker DirPickerModel
 
-	// Step 2: Fleet selection
+	// Step 2: Agent adapter selection (skipped when len(agentKindOptions)<2)
+	agentKindOptions  []string // sorted, cached from agent.Kinds() at construction
+	selectedAgentKind string   // sent to daemon; "" delegates to daemon fallback
+	agentCursor       int
+
+	// Step 3: Fleet selection
 	fleetInput textinput.Model
 
-	// Step 3: Worktree
+	// Step 4: Worktree
 	worktreeEnabled  bool   // user selection
 	worktreeDisabled bool   // true when the current dir cannot support worktree
 	worktreeReason   string // shown when disabled
 
-	// Step 4: Hook prompt (only reached when a post-create hook exists but
+	// Step 5: Hook prompt (only reached when a post-create hook exists but
 	// is not on the allowlist, or its SHA256 has changed).
 	hookScriptPath string
 	hookVerdict    worktreehook.Verdict
@@ -78,7 +86,11 @@ type createFormCompleteMsg struct {
 }
 
 // NewCreateFormModel creates a new CreateFormModel with all inputs initialized.
-func NewCreateFormModel(socketPath string) CreateFormModel {
+//
+// initialAgentKind is the transient default from `jin ui --agent` (propagated
+// via outer-tmux env `JIN_UI_AGENT`). Empty means "no transient default" —
+// selection falls back to configMgr.GetDefaultAgent() → "claude" → Kinds()[0].
+func NewCreateFormModel(socketPath, initialAgentKind string) CreateFormModel {
 	home, _ := os.UserHomeDir()
 	configMgr, _ := config.NewManager(paths.Config())
 
@@ -93,12 +105,18 @@ func NewCreateFormModel(socketPath string) CreateFormModel {
 	// Dir picker - start at home directory
 	dirPicker := NewDirPickerModel(home)
 
+	kinds := agent.Kinds()
+	resolved := resolveInitialAgentKind(initialAgentKind, configMgr, kinds)
+
 	m := CreateFormModel{
-		client:     client,
-		configMgr:  configMgr,
-		fleetInput: fleetInput,
-		dirPicker:  dirPicker,
-		step:       stepWorkDir,
+		client:            client,
+		configMgr:         configMgr,
+		fleetInput:        fleetInput,
+		dirPicker:         dirPicker,
+		step:              stepWorkDir,
+		agentKindOptions:  kinds,
+		selectedAgentKind: resolved,
+		agentCursor:       max(0, slices.Index(kinds, resolved)),
 	}
 
 	// Fetch existing sessions for duplicate check
@@ -143,9 +161,19 @@ func (m CreateFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.step {
 			case stepWorkDir:
 				return m, tea.Quit
-			case stepFleet:
+			case stepAgent:
 				m.step = stepWorkDir
 				m.dirPicker.selected = false
+				return m, nil
+			case stepFleet:
+				// When stepAgent was skipped, Esc jumps back to stepWorkDir
+				// directly so the skip stays symmetric.
+				if m.agentSkipped() {
+					m.step = stepWorkDir
+					m.dirPicker.selected = false
+				} else {
+					m.step = stepAgent
+				}
 				m.fleetInput.Blur()
 				return m, nil
 			case stepWorktree:
@@ -188,6 +216,8 @@ func (m CreateFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.step {
 	case stepWorkDir:
 		return m.updateWorkDirStep(msg)
+	case stepAgent:
+		return m.updateAgentStep(msg)
 	case stepFleet:
 		return m.updateFleetStep(msg)
 	case stepWorktree:
@@ -221,11 +251,22 @@ func (m CreateFormModel) View() string {
 
 	// Step indicator
 	stepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	agentSkipped := m.agentSkipped()
 	switch m.step {
 	case stepWorkDir:
 		b.WriteString(stepStyle.Render("  Step 1: Select Work Directory"))
 		b.WriteString("\n")
 		b.WriteString(m.dirPicker.View())
+	case stepAgent:
+		displayDir := m.dirPicker.Result()
+		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(displayDir, home) {
+			displayDir = "~" + displayDir[len(home):]
+		}
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Dir: %s", displayDir)))
+		b.WriteString("\n")
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Step %d: Agent", stepIndex(stepAgent, agentSkipped))))
+		b.WriteString("\n\n")
+		b.WriteString(m.viewAgentStep())
 	case stepFleet:
 		displayDir := m.dirPicker.Result()
 		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(displayDir, home) {
@@ -233,7 +274,7 @@ func (m CreateFormModel) View() string {
 		}
 		b.WriteString(stepStyle.Render(fmt.Sprintf("  Dir: %s", displayDir)))
 		b.WriteString("\n")
-		b.WriteString(stepStyle.Render("  Step 2: Fleet"))
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Step %d: Fleet", stepIndex(stepFleet, agentSkipped))))
 		b.WriteString("\n\n")
 		b.WriteString(m.viewFleetStep())
 	case stepWorktree:
@@ -249,7 +290,7 @@ func (m CreateFormModel) View() string {
 		}
 		b.WriteString(stepStyle.Render(fmt.Sprintf("  Fleet: %s", fleet)))
 		b.WriteString("\n")
-		b.WriteString(stepStyle.Render("  Step 3: Worktree"))
+		b.WriteString(stepStyle.Render(fmt.Sprintf("  Step %d: Worktree", stepIndex(stepWorktree, agentSkipped))))
 		b.WriteString("\n\n")
 		b.WriteString(m.viewWorktreeStep())
 	case stepHookPrompt:
@@ -265,14 +306,115 @@ func (m CreateFormModel) updateWorkDirStep(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.dirPicker, cmd = m.dirPicker.Update(msg)
 
-	// Check if directory was selected
 	if m.dirPicker.Selected() {
+		advanced, advCmd := m.advanceFromWorkDir()
+		return advanced, advCmd
+	}
+
+	return m, cmd
+}
+
+// advanceFromWorkDir moves past stepWorkDir, skipping stepAgent when fewer
+// than 2 adapter kinds are registered. selectedAgentKind is left as the
+// value resolved by the constructor when skipping (or "" when no adapters
+// are registered, delegating to the daemon fallback).
+func (m CreateFormModel) advanceFromWorkDir() (CreateFormModel, tea.Cmd) {
+	if m.agentSkipped() {
 		m.step = stepFleet
 		m.fleetInput.Focus()
 		return m, textinput.Blink
 	}
+	m.step = stepAgent
+	return m, nil
+}
 
-	return m, cmd
+// agentSkipped reports whether stepAgent is bypassed for lack of adapter
+// choice (fewer than 2 kinds registered). Single source for the predicate
+// used by advanceFromWorkDir, Esc-back, and View's step-number rendering.
+func (m CreateFormModel) agentSkipped() bool {
+	return len(m.agentKindOptions) < 2
+}
+
+// --- Step: Agent ---
+
+func (m CreateFormModel) updateAgentStep(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "up", "k":
+		if m.agentCursor > 0 {
+			m.agentCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.agentCursor < len(m.agentKindOptions)-1 {
+			m.agentCursor++
+		}
+		return m, nil
+	case "enter":
+		m.selectedAgentKind = m.agentKindOptions[m.agentCursor]
+		m.step = stepFleet
+		m.fleetInput.Focus()
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m CreateFormModel) viewAgentStep() string {
+	var b strings.Builder
+
+	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7aa2f7"))
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("255")).
+		Background(lipgloss.Color("#7aa2f7"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#414868"))
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
+	b.WriteString("  " + labelStyle.Render("▸ Agent:"))
+	b.WriteString("\n")
+	for i, kind := range m.agentKindOptions {
+		style := dimStyle
+		if i == m.agentCursor {
+			style = selectedStyle
+		}
+		b.WriteString("    " + style.Render("  "+kind+"  ") + "\n")
+	}
+	b.WriteString("\n  " + helpStyle.Render("↑↓/j/k:move  Enter:next  Esc:back"))
+
+	return b.String()
+}
+
+// resolveInitialAgentKind picks the initial cursor kind from (in order):
+// the transient default, the config default, or the first registered kind.
+// Returns "" only when kinds is empty.
+func resolveInitialAgentKind(initial string, cfg *config.Manager, kinds []string) string {
+	if slices.Contains(kinds, initial) {
+		return initial
+	}
+	if cfg != nil {
+		if k := cfg.GetDefaultAgent(); slices.Contains(kinds, k) {
+			return k
+		}
+	}
+	if len(kinds) > 0 {
+		return kinds[0]
+	}
+	return ""
+}
+
+// stepIndex returns the human-facing "Step N" number for the given step.
+// When agentSkipped is true (single-adapter build), stepFleet / stepWorktree
+// shift up by one so the visible numbering stays contiguous
+// (Step 1 → Step 2 → Step 3) instead of jumping over the skipped picker.
+func stepIndex(step formStep, agentSkipped bool) int {
+	n := int(step) + 1
+	if agentSkipped && step > stepAgent {
+		n--
+	}
+	return n
 }
 
 // --- Step: Fleet ---
@@ -564,13 +706,15 @@ func (m CreateFormModel) submitWith(noHook bool) tea.Cmd {
 	fleet := strings.TrimSpace(m.fleetInput.Value())
 	client := m.client
 	worktree := m.worktreeEnabled
+	agentKind := m.selectedAgentKind
 	return func() tea.Msg {
 		s, warning, err := client.NewWithOptions(daemon.NewOptions{
-			WorkDir:  workDir,
-			Start:    true,
-			Fleet:    fleet,
-			Worktree: worktree,
-			NoHook:   noHook,
+			WorkDir:   workDir,
+			Start:     true,
+			Fleet:     fleet,
+			Worktree:  worktree,
+			NoHook:    noHook,
+			AgentKind: agentKind,
 		})
 		if err != nil {
 			return createFormCompleteMsg{err: err}

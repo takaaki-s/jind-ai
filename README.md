@@ -23,7 +23,13 @@ Select a non-default adapter per session:
 jin session new --agent codex --workdir ~/repos/myrepo
 ```
 
-Or set a persistent default via `default_agent: codex` in `~/.config/jind-ai/config.yaml`. The TUI create form currently uses this default; a picker step is planned as a follow-up.
+Or set a persistent default via `default_agent: codex` in `~/.config/jind-ai/config.yaml`.
+
+The TUI create form includes an **agent picker step** whenever more than one adapter is registered — pick the kind per session with ↑↓/j/k + Enter. Initial selection is resolved as `--agent > default_agent > "claude"`. Use `jin ui --agent codex` to preselect Codex for this TUI run only (config is left untouched):
+
+```bash
+jin ui --agent codex   # transient default; ends when TUI exits
+```
 
 ## Features
 

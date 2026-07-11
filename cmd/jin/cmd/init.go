@@ -35,6 +35,11 @@ keybindings:
   # While attached
   # Supported keys: ctrl+^, ctrl+], ctrl+\, ctrl+g
   detach: ["ctrl+]"]
+
+# Adapter used when 'jin session new' omits --agent.
+# Leave commented to fall back to "claude". Uncomment and change to
+# override (available kinds: "claude", "codex").
+# default_agent: claude
 `
 
 var forceInit bool

@@ -65,6 +65,26 @@ Common pitfalls and caveats that agents tend to fall into.
   `<environment_context>` pseudo-user injection. See
   `internal/agent/codex/rollout.go`.
 
+## Agent picker (TUI)
+
+- **Picker initial selection is snapshot at create-popup launch, not on
+  each keystroke.** The create-popup reads `JIN_UI_AGENT` (transient
+  default from `jin ui --agent`) and `config.default_agent` when it
+  starts. Editing `config.yaml` while the TUI is already open does not
+  change what the picker preselects on the next `n` press until the
+  create-popup process re-launches (which it does per `n` press, so a
+  new session created after saving config picks up the new default).
+
+- **`jin ui --agent <kind>` writes an outer-tmux env, not a config
+  value.** Starting `jin ui` without `--agent` on the same outer-tmux
+  server clears the env (`UnsetEnvironment`) so a stale value from a
+  previous `--agent codex` invocation does not silently preselect Codex.
+
+- **The picker step disappears when only one adapter is registered.**
+  `stepAgent` is skipped based on `len(agent.Kinds()) < 2`. Both create
+  → agent and fleet-step Esc-back short-circuit past it so the flow
+  matches the pre-picker UX in single-adapter builds.
+
 ## Code Structure
 
 - **Debug logging uses `internal/debug.NewLogger`**.

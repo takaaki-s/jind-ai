@@ -62,7 +62,7 @@ func (m Model) View() string {
 
 ### Popup (launched as independent process via tmux popup)
 
-- **Create form**: `CreateFormModel` in `createform.go` (4 steps: WorkDir → Name → Fleet → Worktree)
+- **Create form**: `CreateFormModel` in `createform.go` (WorkDir → Agent → Fleet → Worktree; Agent step is skipped when only one adapter is registered)
 - **Help**: `HelpModel` in `helpview.go` (keybind list)
 - **Notification history**: `NotifyModel` in `notifyview.go` (notification list + session selection)
 

@@ -77,6 +77,7 @@ func TestConfigTemplate_ContainsExpectedKeys(t *testing.T) {
 		"attach:",
 		"detach:",
 		"quit:",
+		"# default_agent:",
 	}
 	for _, key := range keys {
 		found := false
