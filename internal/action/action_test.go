@@ -15,6 +15,7 @@ func TestCoreActions_LabelStable(t *testing.T) {
 		IDVscode:        "open in vscode",
 		IDNotifications: "notification history",
 		IDHelp:          "shortcuts help",
+		IDSessionFilter: "session filter",
 		IDTogglePane:    "toggle sidebar",
 	}
 
@@ -44,6 +45,7 @@ func TestCoreActions_ShortcutResolution(t *testing.T) {
 		Notifications: []string{"!"},
 		Help:          []string{"?"},
 		TogglePane:    []string{"M-\\"},
+		Search:        []string{"M-f"},
 	}
 	want := map[string]string{
 		IDNew:           "n",
@@ -54,6 +56,7 @@ func TestCoreActions_ShortcutResolution(t *testing.T) {
 		IDNotifications: "!",
 		IDHelp:          "?",
 		IDTogglePane:    "Alt+\\",
+		IDSessionFilter: "Alt+F",
 	}
 
 	for _, a := range CoreActions(kb) {
@@ -81,6 +84,7 @@ func TestCoreActions_NeedsSession(t *testing.T) {
 		IDNotifications: false,
 		IDHelp:          false,
 		IDTogglePane:    false,
+		IDSessionFilter: false,
 	}
 
 	for _, a := range CoreActions(KeyBindings{}) {

@@ -37,6 +37,7 @@ const (
 	IDNotifications = "core:notifications"
 	IDHelp          = "core:help"
 	IDTogglePane    = "core:toggle-pane"
+	IDSessionFilter = "core:session-filter"
 )
 
 const (
@@ -48,7 +49,7 @@ const (
 // Shortcut. Kept as an internal struct so this package does not import
 // config (avoiding a cycle if config later needs action).
 type KeyBindings struct {
-	New, Kill, Delete, Refresh, Vscode, Notifications, Help, TogglePane []string
+	New, Kill, Delete, Refresh, Vscode, Notifications, Help, TogglePane, Search []string
 }
 
 // CoreActions returns the built-in action set, with Shortcut resolved from
@@ -69,6 +70,7 @@ func CoreActions(kb KeyBindings) []Action {
 		{ID: IDVscode, Kind: KindCore, Label: "open in vscode", Shortcut: first(kb.Vscode), NeedsSession: true},
 		{ID: IDNotifications, Kind: KindCore, Label: "notification history", Shortcut: first(kb.Notifications)},
 		{ID: IDHelp, Kind: KindCore, Label: "shortcuts help", Shortcut: first(kb.Help)},
+		{ID: IDSessionFilter, Kind: KindCore, Label: "session filter", Description: "Fuzzy-filter and switch to a session", Shortcut: first(kb.Search)},
 		{ID: IDTogglePane, Kind: KindCore, Label: "toggle sidebar", Shortcut: first(kb.TogglePane)},
 	}
 }

@@ -71,11 +71,12 @@ func init() {
 // A nil manager (config load failure) yields empty bindings so CoreActions
 // still returns rows, just without shortcut hints.
 //
-// TogglePane is resolved via the dedicated getter because GetKeybindings
-// intentionally omits the field from its len==0 fallback: TogglePane
-// preserves a nil↔empty distinction (nil=default M-\, empty=user disabled).
-// Reading kb.TogglePane directly leaks a raw nil into the palette on any
-// install without a config file, blanking the "toggle sidebar" shortcut.
+// TogglePane and Search are resolved via their dedicated getters because
+// GetKeybindings intentionally omits both from its len==0 fallback: they
+// preserve a nil↔empty distinction (nil=default binding, empty=user
+// disabled). Reading kb.TogglePane / kb.Search directly leaks a raw nil
+// into the palette on any install without a config file, blanking the
+// corresponding shortcut hint.
 func actionKeyBindingsFromConfig(mgr *config.Manager) action.KeyBindings {
 	if mgr == nil {
 		return action.KeyBindings{}
@@ -90,5 +91,6 @@ func actionKeyBindingsFromConfig(mgr *config.Manager) action.KeyBindings {
 		Notifications: kb.Notifications,
 		Help:          kb.Help,
 		TogglePane:    mgr.GetTogglePaneKeys(),
+		Search:        mgr.GetSessionFilterKeys(),
 	}
 }

@@ -89,7 +89,7 @@ After popup completion, results are returned to the parent TUI via environment v
 Keybindings are retrieved from `config.GetKeybindings()`.
 Default values are defined in `config.DefaultKeybindings()`.
 Users can customize them in the `keybindings` section of `~/.config/jind-ai/config.yaml` (or wherever `$XDG_CONFIG_HOME/jind-ai/config.yaml` resolves to).
-`action_panel` (default `M-p`) and `search` (default `/`) are two more
+`action_panel` (default `M-p`) and `search` (default `M-f`) are two more
 outer-tmux root bindings, same shape as `toggle_pane` below — see
 [Action Palette](#action-palette) and [Session Filter Popup](#session-filter-popup).
 
@@ -120,12 +120,14 @@ intentional.
 ## Action Palette
 
 The action palette is a searchable popup that unifies every action a user
-might want to trigger from the TUI: the 8 built-in actions (new / kill /
-delete / refresh / vscode / notifications / help / toggle sidebar) plus any
-`plugin:*` action from installed plugins, all in one substring-searchable
-list. Like `toggle_pane`, it's bound at the outer tmux (`jin-mgr`) root key
-table, so it can be launched from either the session list (left) or an
-attached agent (right) pane.
+might want to trigger from the TUI: the 9 built-in actions (new / kill /
+delete / refresh / vscode / notifications / help / session filter / toggle
+sidebar) plus any `plugin:*` action from installed plugins, all in one
+fuzzy-searchable list (via [sahilm/fuzzy](https://github.com/sahilm/fuzzy),
+same engine as the session filter popup — matched runes are underlined in
+the label column). Like `toggle_pane`, it's bound at the outer tmux
+(`jin-mgr`) root key table, so it can be launched from either the session
+list (left) or an attached agent (right) pane.
 
 The default trigger is `M-p` (Alt+p). Once open, each row shows its Label
 alongside a Shortcut column — this doubles as a live reference for the
@@ -143,12 +145,18 @@ keybindings:
 ## Session Filter Popup
 
 The session filter is a fuzzy-search popup for jumping straight to a
-session: press `/` (default, configurable via `keybindings.search`), type a
-few characters, and hit `Enter` to attach. It replaced the old inline
+session: press `M-f` (default, configurable via `keybindings.search`), type
+a few characters, and hit `Enter` to attach. It replaced the old inline
 substring filter that used to live directly in the session list — like
 `action_panel`, it's bound at the outer tmux (`jin-mgr`) root key table, so
-`/` opens the popup from either the session list (left) or an attached
-agent (right) pane, not just from the list itself.
+`M-f` opens the popup from either the session list (left) or an attached
+agent (right) pane, not just from the list itself. It is also reachable via
+the action palette (`M-p` → "session filter"), so a shortcut isn't required.
+
+The default changed from `/` to `M-f` (Alt+f) because a bare-letter binding
+at the outer tmux root also captures `/` typed in the display pane, breaking
+agent slash-commands (Claude Code `/help`, less/vim `/search`, etc.). To
+restore the old behavior, set `keybindings.search: ["/"]` explicitly.
 
 - **Engine**: [sahilm/fuzzy](https://github.com/sahilm/fuzzy) subsequence
   matching with smart-case and score-based ranking (`SessionFilterModel` in

@@ -302,7 +302,12 @@ keybindings:
   kill: ["x"]
   delete: ["d"]
   refresh: ["r"]
-  search: ["/"]           # opens the session filter popup (fuzzy search)
+  search: ["M-f"]         # opens the session filter popup (fuzzy search).
+                          # Default M-f (Alt+f). Must be modifier-prefixed —
+                          # a bare letter is consumed by the display pane and
+                          # never reaches the outer tmux binding.
+                          # Use ["/"] to restore the pre-M-f bare-slash key
+                          # (breaks agent slash-commands in the display pane).
   vscode: ["v"]
   notifications: ["!"]
   quit: ["q", "ctrl+c"]
@@ -378,7 +383,7 @@ Worktree creation itself is **offline** — the new branch is cut from your loca
 | `↓/j` | Move down |
 | `←/h` | Previous page |
 | `→/l` | Next page |
-| `/` | Open session filter (fuzzy popup) |
+| `M-f` | Open session filter (fuzzy popup) — see [Outer tmux — session filter](#outer-tmux--session-filter) |
 | `Enter` | Attach to session |
 | `n` | Create new session |
 | `x` | Kill session |
@@ -432,22 +437,29 @@ tmux binding.
 
 ### Outer tmux — session filter
 
-`/` (default) opens the session filter, a fuzzy-search popup for jumping
-straight to a session: type a few characters and press `Enter` to attach
-immediately. It's bound the same way as the action palette above — at the
-outer tmux (`jin-mgr`) root key table, so it fires from either pane. Matched
-fields are session description, working directory, current working
+`M-f` (Alt+f, default) opens the session filter, a fuzzy-search popup for
+jumping straight to a session: type a few characters and press `Enter` to
+attach immediately. It's bound the same way as the action palette above — at
+the outer tmux (`jin-mgr`) root key table, so it fires from either pane.
+Matched fields are session description, working directory, current working
 directory, git branch, fleet, and agent kind (subsequence matching via
 [sahilm/fuzzy](https://github.com/sahilm/fuzzy), smart-case, ranked by
 score). `Esc` closes the popup without changing anything; `↑`/`↓` or
 `Ctrl+P`/`Ctrl+N` move the cursor.
 
+The default changed from `/` to `M-f` because a bare-letter binding at the
+outer tmux root also swallows `/` typed in the display pane, breaking agent
+slash-commands (Claude Code `/help`, less/vim `/search`, etc.). The action
+palette entry ("session filter") also invokes this popup, so you can reach
+it without a shortcut at all.
+
 Override or disable the trigger the same way as `action_panel`:
 
 ```yaml
 keybindings:
-  search: ["ctrl+p"]  # rebind to Ctrl+p
-  # search: []           # disable entirely (no bind-key issued)
+  search: ["ctrl+p"]      # rebind to Ctrl+p
+  # search: ["/"]         # restore pre-M-f bare-slash (breaks display-pane `/`)
+  # search: []            # disable entirely (no bind-key issued)
 ```
 
 ## Claude Code Hooks

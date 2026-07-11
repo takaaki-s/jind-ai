@@ -1152,6 +1152,25 @@ func TestDispatchAction_CoreRouting_TogglePane(t *testing.T) {
 	}
 }
 
+// TestDispatchAction_CoreRouting_SessionFilter verifies that IDSessionFilter
+// routes to handleSessionFilter and that the tmuxClient=nil guard keeps it
+// a safe no-op — the palette must be able to dispatch the action even on
+// an unwired Model (e.g. before the outer tmux binding has been applied).
+func TestDispatchAction_CoreRouting_SessionFilter(t *testing.T) {
+	m := Model{deletingIDs: map[string]bool{}}
+	next, cmd := m.dispatchAction(action.IDSessionFilter)
+	if cmd != nil {
+		t.Errorf("expected nil Cmd from session-filter on unwired model, got %T", cmd)
+	}
+	nm, ok := next.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", next)
+	}
+	if nm.err != nil {
+		t.Errorf("expected no err, got %v", nm.err)
+	}
+}
+
 // TestDispatchAction_PluginRouting verifies the plugin: prefix routes to
 // handlePluginRun and that the m.client=nil guard prevents any panic /
 // spurious m.err when the daemon is unavailable.

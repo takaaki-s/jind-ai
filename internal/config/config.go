@@ -337,7 +337,7 @@ func DefaultKeybindings() KeybindingsConfig {
 		Refresh:       []string{"r"},
 		Quit:          []string{"q", "ctrl+c"},
 		Help:          []string{"?"},
-		Search:        []string{"/"},
+		Search:        []string{"M-f"},
 		Vscode:        []string{"v"},
 		Notifications: []string{"!"},
 

@@ -708,18 +708,27 @@ func (m Model) writeCursorEnv() {
 	_ = m.tmuxClient.SetEnvironment(tmux.SessionName, "JIN_CURSOR_SESSION", m.currentCursorSessionID())
 }
 
+// openPopup runs one of the hidden `jin <subcmd>` UIs inside a tmux popup.
+// No-op when tmuxClient is unwired (tests, legacy mode); popup errors are
+// swallowed since there is no useful recovery from a failed popup spawn
+// mid-Bubble Tea update loop.
+func (m Model) openPopup(width, height, subcmd, title string) {
+	if m.tmuxClient == nil {
+		return
+	}
+	selfBin, _ := os.Executable()
+	_ = m.tmuxClient.DisplayPopup(tmux.DisplayPopupOptions{
+		Width:  width,
+		Height: height,
+		Cmd:    fmt.Sprintf("'%s' %s", selfBin, subcmd),
+		Title:  title,
+	})
+}
+
 // handleNew opens the session-creation popup in outer tmux. Matches the
 // former inline keys.New case verbatim.
 func (m Model) handleNew() (tea.Model, tea.Cmd) {
-	if m.tmuxClient != nil {
-		selfBin, _ := os.Executable()
-		_ = m.tmuxClient.DisplayPopup(tmux.DisplayPopupOptions{
-			Width:  "80%",
-			Height: "80%",
-			Cmd:    fmt.Sprintf("'%s' create-popup", selfBin),
-			Title:  " New Session ",
-		})
-	}
+	m.openPopup("80%", "80%", "create-popup", " New Session ")
 	return m, nil
 }
 
@@ -779,29 +788,22 @@ func (m Model) handleVscode() (tea.Model, tea.Cmd) {
 
 // handleNotifications opens the notification-history popup.
 func (m Model) handleNotifications() (tea.Model, tea.Cmd) {
-	if m.tmuxClient != nil {
-		selfBin, _ := os.Executable()
-		_ = m.tmuxClient.DisplayPopup(tmux.DisplayPopupOptions{
-			Width:  "70%",
-			Height: "60%",
-			Cmd:    fmt.Sprintf("'%s' notify-popup", selfBin),
-			Title:  " Notifications ",
-		})
-	}
+	m.openPopup("70%", "60%", "notify-popup", " Notifications ")
+	return m, nil
+}
+
+// handleSessionFilter opens the session filter popup — the same popup
+// bound at the outer-tmux root key table via keybindings.search. Wired
+// here so the action palette can launch it without depending on the
+// tmux root binding being set (or on the user's default key).
+func (m Model) handleSessionFilter() (tea.Model, tea.Cmd) {
+	m.openPopup("70%", "70%", "session-filter-popup", " Session Filter ")
 	return m, nil
 }
 
 // handleHelp opens the shortcut help popup.
 func (m Model) handleHelp() (tea.Model, tea.Cmd) {
-	if m.tmuxClient != nil {
-		selfBin, _ := os.Executable()
-		_ = m.tmuxClient.DisplayPopup(tmux.DisplayPopupOptions{
-			Width:  "60%",
-			Height: "60%",
-			Cmd:    fmt.Sprintf("'%s' help-popup", selfBin),
-			Title:  " Shortcuts ",
-		})
-	}
+	m.openPopup("60%", "60%", "help-popup", " Shortcuts ")
 	return m, nil
 }
 
@@ -836,6 +838,8 @@ func (m Model) dispatchAction(id string) (tea.Model, tea.Cmd) {
 		return m.handleHelp()
 	case action.IDTogglePane:
 		return m.handleTogglePane()
+	case action.IDSessionFilter:
+		return m.handleSessionFilter()
 	}
 	if strings.HasPrefix(id, action.PluginIDPrefix) {
 		return m.handlePluginRun(strings.TrimPrefix(id, action.PluginIDPrefix))

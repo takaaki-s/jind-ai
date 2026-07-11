@@ -395,7 +395,7 @@ func TestGetActionPanelKeys_MultipleKeys(t *testing.T) {
 func TestGetSessionFilterKeys_DefaultWhenNil(t *testing.T) {
 	m := &Manager{config: &Config{}}
 	got := m.GetSessionFilterKeys()
-	want := []string{"/"}
+	want := []string{"M-f"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("GetSessionFilterKeys() = %v, want %v", got, want)
 	}
