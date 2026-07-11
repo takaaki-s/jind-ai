@@ -438,37 +438,30 @@ func sessionTickCmd() tea.Cmd {
 // after tmux pane operations (ZoomPane).
 type resizeSettledMsg struct{}
 
-// resolveFocusSession attempts to complete a pending focus switch (a session
-// ID pushed by any *_SESSION popup and copied into m.focusSessionID). Returns
-// true when there was nothing pending, or when the target was found in the
-// current m.sessions snapshot and switchToSession was fired; in that case
-// focusSessionID is cleared and JIN_CURSOR_SESSION is refreshed. Returns false
-// when focusSessionID is still set but the target has not yet appeared in
-// m.sessions — the caller (envTick fast path) is expected to kick a fetch so
-// the sessionsMsg branch can retry via the slow path.
-//
-// The clear-on-success semantics are asymmetric with the sessionsMsg caller,
-// which unconditionally clears focusSessionID even on miss (giving up after a
-// fresh List). This asymmetry is intentional: envTick may run before the
-// fetch has landed and must keep the target armed for retry, whereas
-// sessionsMsg has already observed a fresh snapshot and further retries
-// would spin.
+// resolveFocusSession completes a pending focus switch. Returns true if
+// nothing was pending or the target was found and switched (clearing
+// focusSessionID + refreshing JIN_CURSOR_SESSION). Returns false with
+// focusSessionID retained if the target is not yet in m.sessions; callers
+// decide whether to keep it armed for retry (envTick fast path) or clear
+// and give up (sessionsMsg slow path, already ran against a fresh List).
 func (m *Model) resolveFocusSession() bool {
 	if m.focusSessionID == "" {
 		return true
 	}
-	for i, s := range m.sessions {
-		if s.ID == m.focusSessionID {
-			m.cursor = i
-			m.adjustScrollForCursor()
-			m.currentSessionID = "" // Force reset so switchToSession runs even when the cursor was already on this session.
-			m.switchToSession(s.ID)
-			m.focusSessionID = ""
-			m.writeCursorEnv()
-			return true
-		}
+	displaySessions := m.getDisplaySessions()
+	i := slices.IndexFunc(displaySessions, func(s session.Info) bool {
+		return s.ID == m.focusSessionID
+	})
+	if i < 0 {
+		return false
 	}
-	return false
+	m.cursor = i
+	m.adjustScrollForCursor()
+	m.currentSessionID = "" // Force reset so switchToSession runs even when the cursor was already on this session.
+	m.switchToSession(displaySessions[i].ID)
+	m.focusSessionID = ""
+	m.writeCursorEnv()
+	return true
 }
 
 // switchToSession displays the given session in the right pane via RespawnPane.
@@ -1309,14 +1302,10 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focusSessionID = id
 				}
 			}
-			// Fast path: complete the focus switch here without waiting for
-			// the next sessionTick (~2s). If the target is not yet in the
-			// snapshot (JIN_CREATED_SESSION for a freshly created session),
-			// keep it armed and kick an immediate fetch so the sessionsMsg
-			// slow path resolves on the same round-trip. JIN_CREATED_WARNING
-			// and JIN_ACTION_ID may co-occur only across popups (create vs.
-			// action popup), so skipping their consume for one 250ms tick on
-			// the miss branch is benign — they surface on the next tick.
+			// Fast path: resolve now, or kick a fetch so the sessionsMsg slow
+			// path resolves on the next round-trip instead of after the next
+			// sessionTick (~2s). JIN_CREATED_WARNING / JIN_ACTION_ID stay in
+			// tmux env and surface on the next envTick.
 			if !m.resolveFocusSession() {
 				return m, tea.Batch(envTickCmd(), m.fetchSessions)
 			}

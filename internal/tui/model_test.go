@@ -1368,30 +1368,24 @@ func TestEnvTickConsume_FocusSession_EmptyIsNoOp(t *testing.T) {
 func TestResolveFocusSession_EmptyID_ReturnsTrue(t *testing.T) {
 	m := &Model{
 		sessions: []session.Info{{ID: "a"}, {ID: "b"}},
-		cursor:   0,
+		cursor:   1,
 	}
 	if !m.resolveFocusSession() {
 		t.Errorf("resolveFocusSession() = false, want true (nothing pending)")
 	}
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (unchanged)", m.cursor)
-	}
-	if m.focusSessionID != "" {
-		t.Errorf("focusSessionID = %q, want \"\"", m.focusSessionID)
+	// Cursor must not move on the no-op path — the helper is called from
+	// envTick every 250ms and any drift would silently scroll the list.
+	if m.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (unchanged)", m.cursor)
 	}
 }
 
 func TestResolveFocusSession_TargetInSessions_Switches(t *testing.T) {
 	m := &Model{
-		sessions: []session.Info{
-			{ID: "a", Description: "alpha"},
-			{ID: "b", Description: "beta"},
-			{ID: "c", Description: "gamma"},
-		},
+		sessions:         []session.Info{{ID: "a"}, {ID: "b"}, {ID: "c"}},
 		focusSessionID:   "b",
 		cursor:           0,
 		currentSessionID: "a",
-		height:           20,
 	}
 	if !m.resolveFocusSession() {
 		t.Fatalf("resolveFocusSession() = false, want true (target present)")
