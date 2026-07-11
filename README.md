@@ -10,6 +10,21 @@ A CLI tool for running and managing multiple agent sessions simultaneously
 
 https://github.com/user-attachments/assets/62e9d64a-aa7d-42f8-8edf-03f724fe0ee4
 
+## Supported agents
+
+| Kind | CLI | Notes |
+|---|---|---|
+| `claude` (default) | [Claude Code](https://claude.com/product/claude-code) 2.x | First-class support. Uses `--session-id` / `--resume` and Claude Code's native hook system for state tracking. |
+| `codex` | [OpenAI Codex CLI](https://github.com/openai/codex) 0.144+ | Hooks are injected per-invocation via `-c hooks.X=[...]`; grant trust once through the `/hooks` dialog on first launch (see [docs/gotchas.md](docs/gotchas.md#codex-adapter)). Session name / resume UUID are learned from Codex's `SessionStart` hook payload (no `--session-id` equivalent upstream yet). |
+
+Select a non-default adapter per session:
+
+```bash
+jin session new --agent codex --workdir ~/repos/myrepo
+```
+
+Or set a persistent default via `default_agent: codex` in `~/.config/jind-ai/config.yaml`. The TUI create form currently uses this default; a picker step is planned as a follow-up.
+
 ## Features
 
 - **Multi-session management**: Run multiple Claude Code sessions in the background simultaneously

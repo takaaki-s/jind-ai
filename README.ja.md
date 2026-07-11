@@ -10,6 +10,21 @@
 
 https://github.com/user-attachments/assets/62e9d64a-aa7d-42f8-8edf-03f724fe0ee4
 
+## 対応エージェント
+
+| Kind | CLI | 備考 |
+|---|---|---|
+| `claude` (デフォルト) | [Claude Code](https://claude.com/product/claude-code) 2.x | first-class サポート。`--session-id` / `--resume` と CC のネイティブ hook で状態追跡。 |
+| `codex` | [OpenAI Codex CLI](https://github.com/openai/codex) 0.144+ | spawn ごとに `-c hooks.X=[...]` で hook を注入。初回のみ `/hooks` ダイアログでトラスト承認が必要 (詳細: [docs/gotchas.md](docs/gotchas.md#codex-adapter))。Codex には `--session-id` 相当がないため、session UUID は `SessionStart` hook で受け取って daemon 側に書き戻す。 |
+
+セッションごとに adapter を選ぶ:
+
+```bash
+jin session new --agent codex --workdir ~/repos/myrepo
+```
+
+`~/.config/jind-ai/config.yaml` に `default_agent: codex` を書けば常時デフォルトを切り替えられる。TUI の作成フォームは現状このデフォルトを使う (picker 追加は後続 PR を予定)。
+
 ## 特長
 
 - **複数セッション管理**: 複数の Claude Code セッションをバックグラウンドで同時実行

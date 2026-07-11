@@ -27,6 +27,44 @@ Common pitfalls and caveats that agents tend to fall into.
   tmux's `pane_current_path` is also polled, but the hook takes priority.
   (Added in commit a705a80)
 
+## Codex adapter
+
+- **Initial `/hooks` trust approval is required.** The first time `jin
+  session new --agent codex` runs in a given install (or after the `jin`
+  binary path changes), Codex shows a `Hooks need review — N hooks are new
+  or changed` dialog. Select **"Trust all and continue"** to enable status
+  tracking. The trust hash is persisted to `~/.codex/config.toml` under
+  `[hooks.state]`, so subsequent spawns skip the dialog as long as the
+  command path stays the same. `--dangerously-bypass-hook-trust` is not
+  used by jind-ai on purpose (see 02_design.md §3.3).
+
+- **30 s poll fallback during the trust dialog is harmless.** Between
+  session spawn and the user's trust confirmation, no hook fires. The
+  daemon's `[POLL] no hook received for 30s, fallback` path takes the
+  status from `running` down to `idle`. Once trust lands, subsequent
+  `UserPromptSubmit` / `Stop` hooks drive the status correctly. If you see
+  the poll fallback in normal use, the trust dialog is usually still open
+  in the pane.
+
+- **Directory trust ("Do you trust this directory?")** is a separate
+  Codex sandbox prompt shown on the first launch in a given cwd; it is
+  unrelated to `/hooks` and answered independently.
+
+- **`AgentSessionID` is unknown until SessionStart.** Codex has no
+  `--session-id` equivalent (openai/codex#13242). jind-ai spawns fresh
+  `codex` on first start, ignores the pre-minted UUID it created for the
+  Session record, and lets the `SessionStart` hook's stdin JSON carry the
+  real Codex UUID back — the existing re-key path
+  (`manager.go:1231-1234`) latches it without any daemon change. On
+  resume, `codex resume <UUID>` fast-fails in a few seconds for unknown
+  IDs, so the existing 10-second quick-fail auto-recovery covers the
+  "session removed by hand" edge case without a defensive pre-glob.
+
+- **`Layer C-transcript` reads the rollout JSONL.** The Codex enhancer
+  extracts the first `role: "user"` message that is not a
+  `<environment_context>` pseudo-user injection. See
+  `internal/agent/codex/rollout.go`.
+
 ## Code Structure
 
 - **Debug logging uses `internal/debug.NewLogger`**.

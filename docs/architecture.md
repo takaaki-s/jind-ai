@@ -43,13 +43,30 @@ Claude Code (hook event)
 ```
 
 The event vocabulary (which hook name means what status) lives entirely in
-the agent adapter — `HandleHookEvent` itself is agent-agnostic wiring. The
-Claude Code mapping is documented in `internal/agent/claude/status.go`; the
-common cases are:
+the agent adapter — `HandleHookEvent` itself is agent-agnostic wiring. Each
+adapter owns the mapping and any needed vocabulary normalisation.
+
+**Canonical events** the manager's side effects key on
+(`SessionStart` → `AgentSessionStarted` bookkeeping + Layer C trigger,
+`UserPromptSubmit` / `Stop` → Layer C trigger, `CwdChanged` → git branch
+reprobe). Adapters whose native events do not match these names must
+normalise before calling `jin hook` — see
+`internal/agent/codex/status.go` and 02_design.md §2.2 for the exact
+Codex mapping (native events already match Claude Code by name), and
+future OpenCode integration for a plugin-side normaliser.
+
+The Claude Code adapter's mapping is documented in
+`internal/agent/claude/status.go`; typical entries are:
 
 - `UserPromptSubmit` → StatusThinking + Layer C Description upgrade attempt (may pick up a stronger CC-authored name if CC has renamed the session since SessionStart)
 - `Stop` → StatusIdle + task-complete notification
 - `Notification(permission_prompt)` → StatusPermission + permission notification
+
+The Codex adapter's mapping mirrors the same shape:
+
+- `UserPromptSubmit` / `PreToolUse` / `PostToolUse` → StatusThinking
+- `PermissionRequest` → StatusPermission + permission notification
+- `Stop` → StatusIdle + task-complete notification
 
 ## Plugin Event Flow
 
@@ -78,7 +95,7 @@ empty session fields, carrying the invoking CLI's tmux context
 
 ## Agent Adapters
 
-Every session records an `AgentKind` (`"claude"` today; more later). The
+Every session records an `AgentKind` (`"claude"` and `"codex"` today). The
 Manager fetches the concrete adapter through the `session.AgentResolver`
 interface:
 
@@ -89,7 +106,21 @@ internal/agent/register blank-import → wires every kind into the registry at i
 internal/agent/claude/  Claude Code adapter: SpawnCommand / StatusSource / Setup
                          (hooks-settings.json + trust-dialog files), Description
                          (Layer C enhancer over ~/.claude/sessions/<PID>.json)
+internal/agent/codex/   Codex CLI adapter: SpawnCommand appends `--enable hooks
+                         + -c 'hooks.X=[...]'` per invocation (Setup writes no
+                         files), Description (Layer C-transcript enhancer over
+                         $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<UUID>.jsonl)
+internal/agent/textutil.go  Cross-adapter helper — currently `SmartTruncate`
+                         shared by claude and codex description enhancers.
 ```
+
+Design principle: **adapters must not write to user-global config**. The
+Codex adapter injects hooks per-invocation via `-c` overrides rather than
+touching `~/.codex/hooks.json` or `~/.codex/config.toml`. This keeps
+uninstalls automatic (no residue) and guarantees the user's own hooks are
+never accidentally clobbered by a stale merge. The Claude Code adapter's
+generated `hooks-settings.json` lives under jind-ai's own state directory
+for the same reason.
 
 The daemon injects a thin resolver (`agent.Lookup`) into `session.Manager`,
 so `internal/session/` never imports `internal/agent/*`. Adding a new
@@ -106,9 +137,11 @@ Sessions carry a human-readable `Description` field decoupled from the technical
   - **Layer C-name (strong)** (`DescriptionLayerAgentName`) — first tries the AI-generated session title CC writes to the transcript as `{"type":"ai-title","aiTitle":"…"}` (the same value CC shows next to "Session name" in `/status`). If no `aiTitle` is present, falls back to the name in `~/.claude/sessions/<PID>.json` when `nameSource` is anything other than `"derived"` (or the field is absent on older CC versions).
   - **Layer C-name (weak)** (`DescriptionLayerAgentNameDerived`) — the `name` field in `~/.claude/sessions/<PID>.json` with `nameSource="derived"`: the tmux window hint jind-ai itself handed CC round-tripped back to disk (e.g. `jin-395bce5c-71`). Better than the Layer A baseline because it matches CC's own `/resume` picker, but any stronger name (later `aiTitle`, `/rename`, …) is allowed to overwrite it.
 
-  The CC adapter intentionally does NOT mine the raw first user prompt for a Layer C description. Claude Code owns the naming and eventually replaces the derived hint with `aiTitle`, so pulling the prompt text into `Description` would just clobber that CC-native title with what the user typed. `DescriptionLayerTranscript` is reserved for future adapters that lack a native session-name path.
+  The CC adapter intentionally does NOT mine the raw first user prompt for a Layer C description. Claude Code owns the naming and eventually replaces the derived hint with `aiTitle`, so pulling the prompt text into `Description` would just clobber that CC-native title with what the user typed. `DescriptionLayerTranscript` is reserved for adapters that lack a native session-name path.
 
-  Future agents (Codex, Aider, …) plug in the same way — return an enhancer from `Description()` (any subset of layers) and the plumbing works for them unchanged.
+  The Codex adapter (`internal/agent/codex/`) is the first user of Layer C-transcript. Codex 0.144.1 stores a `title` in `~/.codex/state_5.sqlite`, but empirically the CLI never populates it with an AI summary — `title` always equals the first user message — so the adapter reads the first genuine user prompt straight from the rollout JSONL and returns it at `DescriptionLayerTranscript`. `<environment_context>` and other Codex-injected pseudo-user rows are filtered out before the first real turn is used. See `internal/agent/codex/description.go` for the implementation.
+
+  Future agents (Aider, …) plug in the same way — return an enhancer from `Description()` (any subset of layers) and the plumbing works for them unchanged.
 
 The `Name` field was retired in favour of `Description` + `DescriptionLocked`. Existing session JSON is migrated in place on daemon startup by `internal/session/migration.go`.
 
@@ -124,7 +157,8 @@ session/           → config, tmux, notify, transcript, plugin (Dispatcher seam
                       │
 agent/             → session (borrows Agent + supporting types via aliases)
 agent/claude/      → agent, session, transcript, debug   (CC-specific adapter)
-agent/register/    → agent, agent/claude (init-time Register)
+agent/codex/       → agent, session                       (Codex-specific adapter)
+agent/register/    → agent, agent/claude, agent/codex     (init-time Register)
                       │
 plugin/            → config (PluginsConfig), debug   (no import of tmux/ or session/)
                       │
