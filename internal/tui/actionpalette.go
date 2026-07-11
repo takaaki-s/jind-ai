@@ -22,13 +22,14 @@ type PaletteModel struct {
 	cursorSessionDesc string
 
 	// UI state
-	query     string
-	input     textinput.Model
-	filtered  []paletteRow
-	cursor    int
-	scrollTop int
-	width     int
-	height    int
+	query            string
+	input            textinput.Model
+	filtered         []paletteRow
+	cursor           int
+	scrollTop        int
+	width            int
+	height           int
+	shortcutColWidth int
 
 	// Selection outcome
 	selected string
@@ -41,10 +42,17 @@ type paletteRow struct {
 	separator bool
 }
 
-// shortcutColWidth is the fixed width of the right-hand shortcut column.
-// 6 comfortably fits keys like "M-\" and any future two-modifier notation
-// (e.g. "C-M-p") without wrapping.
-const shortcutColWidth = 6
+// Shortcut column width bounds. The lower bound preserves the historical
+// visual balance for single-letter shortcuts; the upper bound guards against
+// pathological plugin entries eating the label column.
+const (
+	minShortcutColWidth = 6
+	// Upper bound must fit the widest realistic hint FormatKeyHint can
+	// emit — currently "Shift+Ctrl+Alt+P" at 16 runes. Bump this in step
+	// with any new modifier support so 3-modifier bindings never silently
+	// truncate.
+	maxShortcutColWidth = 16
+)
 
 // NewPaletteModel constructs a PaletteModel with the given actions and
 // current-cursor session context.
@@ -62,9 +70,34 @@ func NewPaletteModel(core, plugins []action.Action, cursorSessionID, cursorSessi
 		cursorSessionID:   cursorSessionID,
 		cursorSessionDesc: cursorSessionDesc,
 		input:             ti,
+		shortcutColWidth:  computeShortcutColWidth(core, plugins),
 	}
 	m.applyFilter()
 	return m
+}
+
+// computeShortcutColWidth returns the max display width of any Shortcut
+// across core+plugin actions, clamped to [minShortcutColWidth,
+// maxShortcutColWidth].
+func computeShortcutColWidth(core, plugins []action.Action) int {
+	w := 0
+	for _, a := range core {
+		if sw := runewidth.StringWidth(a.Shortcut); sw > w {
+			w = sw
+		}
+	}
+	for _, a := range plugins {
+		if sw := runewidth.StringWidth(a.Shortcut); sw > w {
+			w = sw
+		}
+	}
+	if w < minShortcutColWidth {
+		w = minShortcutColWidth
+	}
+	if w > maxShortcutColWidth {
+		w = maxShortcutColWidth
+	}
+	return w
 }
 
 // Selected returns the ID of the action the user picked, or "" if the
@@ -248,10 +281,10 @@ func (m PaletteModel) View() string {
 		totalWidth = 60
 	}
 	rowWidth := totalWidth - 2
-	if rowWidth < shortcutColWidth+1 {
-		rowWidth = shortcutColWidth + 1
+	if rowWidth < m.shortcutColWidth+1 {
+		rowWidth = m.shortcutColWidth + 1
 	}
-	labelWidth := rowWidth - shortcutColWidth - 1 // 1 space gutter
+	labelWidth := rowWidth - m.shortcutColWidth - 1 // 1 space gutter
 
 	if len(m.filtered) == 0 {
 		b.WriteString(helpStyle.Render("  No matching actions"))
@@ -291,10 +324,10 @@ func (m PaletteModel) View() string {
 			}
 
 			shortcut := row.action.Shortcut
-			if runewidth.StringWidth(shortcut) > shortcutColWidth {
-				shortcut = truncateString(shortcut, shortcutColWidth)
+			if runewidth.StringWidth(shortcut) > m.shortcutColWidth {
+				shortcut = truncateString(shortcut, m.shortcutColWidth)
 			}
-			shortcutPad := shortcutColWidth - runewidth.StringWidth(shortcut)
+			shortcutPad := m.shortcutColWidth - runewidth.StringWidth(shortcut)
 			if shortcutPad < 0 {
 				shortcutPad = 0
 			}

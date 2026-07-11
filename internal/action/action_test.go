@@ -53,7 +53,7 @@ func TestCoreActions_ShortcutResolution(t *testing.T) {
 		IDVscode:        "v",
 		IDNotifications: "!",
 		IDHelp:          "?",
-		IDTogglePane:    "M-\\",
+		IDTogglePane:    "Alt+\\",
 	}
 
 	for _, a := range CoreActions(kb) {

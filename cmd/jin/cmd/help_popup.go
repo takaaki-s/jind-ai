@@ -3,6 +3,7 @@ package cmd
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/takaaki-s/jind-ai/internal/action"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/tui"
 )
@@ -20,7 +21,7 @@ var helpPopupCmd = &cobra.Command{
 			keybindings = configMgr.GetKeybindings()
 			detachKeyHint = configMgr.GetDetachKeyHint()
 			if apk := configMgr.GetActionPanelKeys(); len(apk) > 0 {
-				actionPanelHint = apk[0]
+				actionPanelHint = action.FormatKeyHint(apk[0])
 			}
 		} else {
 			keybindings = config.DefaultKeybindings()

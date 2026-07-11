@@ -59,7 +59,7 @@ func CoreActions(kb KeyBindings) []Action {
 		if len(keys) == 0 {
 			return ""
 		}
-		return keys[0]
+		return FormatKeyHint(keys[0])
 	}
 	return []Action{
 		{ID: IDNew, Kind: KindCore, Label: "new session", Shortcut: first(kb.New)},

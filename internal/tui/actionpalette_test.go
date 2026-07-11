@@ -191,6 +191,56 @@ func TestPaletteModel_EnterSelects(t *testing.T) {
 	}
 }
 
+func TestPaletteModel_ShortcutColWidth(t *testing.T) {
+	t.Run("clamps to minimum with only single-char shortcuts", func(t *testing.T) {
+		m := NewPaletteModel(sampleCore(), samplePlugins(), "", "")
+		if m.shortcutColWidth != minShortcutColWidth {
+			t.Errorf("shortcutColWidth = %d, want %d", m.shortcutColWidth, minShortcutColWidth)
+		}
+	})
+
+	t.Run("expands to accommodate a longer shortcut", func(t *testing.T) {
+		core := append(sampleCore(), action.Action{
+			ID: "core:custom", Kind: action.KindCore, Label: "custom", Shortcut: "Ctrl+Alt+P",
+		})
+		m := NewPaletteModel(core, nil, "", "")
+		if m.shortcutColWidth != 10 {
+			t.Errorf("shortcutColWidth = %d, want 10", m.shortcutColWidth)
+		}
+		m.width, m.height = 120, 20
+		if !strings.Contains(m.View(), "Ctrl+Alt+P") {
+			t.Errorf("View() missing full 10-char shortcut, got:\n%s", m.View())
+		}
+	})
+
+	t.Run("clamps to maximum for pathological input", func(t *testing.T) {
+		core := append(sampleCore(), action.Action{
+			ID: "core:huge", Kind: action.KindCore, Label: "huge", Shortcut: strings.Repeat("A", 30),
+		})
+		m := NewPaletteModel(core, nil, "", "")
+		if m.shortcutColWidth != maxShortcutColWidth {
+			t.Errorf("shortcutColWidth = %d, want %d", m.shortcutColWidth, maxShortcutColWidth)
+		}
+	})
+
+	t.Run("fits three-modifier hint without truncation", func(t *testing.T) {
+		// Widest realistic FormatKeyHint output: "Shift+Ctrl+Alt+P" (16 runes).
+		// The maxShortcutColWidth bound must accommodate it verbatim.
+		hint := "Shift+Ctrl+Alt+P"
+		core := append(sampleCore(), action.Action{
+			ID: "core:tri-mod", Kind: action.KindCore, Label: "tri-mod", Shortcut: hint,
+		})
+		m := NewPaletteModel(core, nil, "", "")
+		if m.shortcutColWidth != len(hint) {
+			t.Errorf("shortcutColWidth = %d, want %d", m.shortcutColWidth, len(hint))
+		}
+		m.width, m.height = 120, 20
+		if !strings.Contains(m.View(), hint) {
+			t.Errorf("View() missing full 3-modifier hint %q, got:\n%s", hint, m.View())
+		}
+	})
+}
+
 func TestPaletteModel_EscQuits(t *testing.T) {
 	m := NewPaletteModel(sampleCore(), samplePlugins(), "", "")
 
