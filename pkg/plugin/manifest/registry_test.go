@@ -336,26 +336,21 @@ func TestNewClient_RequiresCacheDir(t *testing.T) {
 	}
 }
 
-func TestRegistryDocument_Lookup(t *testing.T) {
+func TestRegistryDocument_Find(t *testing.T) {
 	doc := &RegistryDocument{
 		SchemaVersion: CurrentSchemaVersion,
 		Plugins: []RegistryEntry{
 			{Name: "foo", Repo: "acme/foo", LatestVersion: "1.2.3"},
 		},
 	}
-	owner, version, err := doc.Lookup("foo")
-	if err != nil {
-		t.Fatalf("lookup foo: %v", err)
+	if entry := doc.Find("foo"); entry == nil || entry.Repo != "acme/foo" || entry.LatestVersion != "1.2.3" {
+		t.Fatalf("find foo: got %+v want repo=acme/foo latest=1.2.3", entry)
 	}
-	if owner != "acme/foo" || version != "1.2.3" {
-		t.Fatalf("foo lookup: got (%q, %q) want (acme/foo, 1.2.3)", owner, version)
+	if entry := doc.Find("missing"); entry != nil {
+		t.Fatalf("find missing should return nil, got %+v", entry)
 	}
-	owner, version, err = doc.Lookup("missing")
-	if err != nil {
-		t.Fatalf("lookup missing: %v", err)
-	}
-	if owner != "" || version != "" {
-		t.Fatalf("missing lookup should return empty pair, got (%q, %q)", owner, version)
+	if entry := (*RegistryDocument)(nil).Find("foo"); entry != nil {
+		t.Fatalf("find on nil doc should return nil, got %+v", entry)
 	}
 }
 

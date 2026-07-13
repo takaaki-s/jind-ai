@@ -65,6 +65,9 @@ type RegistryVersion struct {
 }
 
 // Find returns the entry matching name, or nil if the name is unregistered.
+// Callers that need to satisfy RegistryLookup wrap this in a small adapter
+// at the call site — the projection to (repo, latestVersion) is a
+// validation-side concern, not a shared data-type concern.
 func (d *RegistryDocument) Find(name string) *RegistryEntry {
 	if d == nil {
 		return nil
@@ -75,17 +78,6 @@ func (d *RegistryDocument) Find(name string) *RegistryEntry {
 		}
 	}
 	return nil
-}
-
-// Lookup satisfies RegistryLookup by scanning the in-memory document. A
-// miss is not an error — the contract returns ("", "", nil) so validation
-// rules #9 and #10 treat it as "name is free".
-func (d *RegistryDocument) Lookup(name string) (string, string, error) {
-	e := d.Find(name)
-	if e == nil {
-		return "", "", nil
-	}
-	return e.Repo, e.LatestVersion, nil
 }
 
 // ClientConfig configures Client. Zero values apply sensible defaults except
@@ -107,10 +99,7 @@ type ClientConfig struct {
 	Now func() time.Time
 }
 
-// Client fetches and caches the registry document. One Client instance is
-// meant to be shared across a single CLI invocation (ls-remote and install
-// pass the same instance) so they observe the same cache slice; this
-// prevents "the version I saw is not the version that got installed".
+// Client fetches and caches the registry document.
 type Client struct {
 	url        string
 	cacheDir   string
@@ -187,7 +176,8 @@ type LoadResult struct {
 func (c *Client) Load(ctx context.Context, opts LoadOptions) (*RegistryDocument, LoadResult, error) {
 	cached, meta, cacheErr := c.readCache()
 
-	if !opts.Refresh && cacheErr == nil && !c.isExpired(meta) {
+	stale := meta.FetchedAt.IsZero() || c.now().Sub(meta.FetchedAt) > c.ttl
+	if !opts.Refresh && cacheErr == nil && !stale {
 		return cached, LoadResult{Outcome: OutcomeCacheHit}, nil
 	}
 
@@ -226,13 +216,6 @@ type cacheMetadata struct {
 	FetchedAt    time.Time `json:"fetched_at"`
 }
 
-func (c *Client) isExpired(meta cacheMetadata) bool {
-	if meta.FetchedAt.IsZero() {
-		return true
-	}
-	return c.now().Sub(meta.FetchedAt) > c.ttl
-}
-
 func (c *Client) readCache() (*RegistryDocument, cacheMetadata, error) {
 	body, err := os.ReadFile(filepath.Join(c.cacheDir, cacheDocFilename))
 	if err != nil {
@@ -242,27 +225,16 @@ func (c *Client) readCache() (*RegistryDocument, cacheMetadata, error) {
 	if err != nil {
 		return nil, cacheMetadata{}, err
 	}
-	metaBytes, err := os.ReadFile(filepath.Join(c.cacheDir, cacheMetaFilename))
-	if err != nil {
-		return doc, cacheMetadata{}, nil
-	}
 	var meta cacheMetadata
-	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		return doc, cacheMetadata{}, nil
+	if metaBytes, mErr := os.ReadFile(filepath.Join(c.cacheDir, cacheMetaFilename)); mErr == nil {
+		_ = json.Unmarshal(metaBytes, &meta)
 	}
 	return doc, meta, nil
 }
 
-func (c *Client) writeCache(body []byte, meta cacheMetadata) error {
-	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
-		return err
-	}
-	if err := writeAtomic(filepath.Join(c.cacheDir, cacheDocFilename), body, 0o644); err != nil {
-		return err
-	}
-	return c.writeMetadata(meta)
-}
-
+// writeMetadata ensures the cache dir exists and persists meta. Also the
+// prerequisite for writeCache — the doc write assumes the dir is already
+// ensured, so writeCache calls this first.
 func (c *Client) writeMetadata(meta cacheMetadata) error {
 	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
 		return err
@@ -272,6 +244,13 @@ func (c *Client) writeMetadata(meta cacheMetadata) error {
 		return err
 	}
 	return writeAtomic(filepath.Join(c.cacheDir, cacheMetaFilename), metaBytes, 0o644)
+}
+
+func (c *Client) writeCache(body []byte, meta cacheMetadata) error {
+	if err := c.writeMetadata(meta); err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(c.cacheDir, cacheDocFilename), body, 0o644)
 }
 
 func (c *Client) fetch(ctx context.Context, meta cacheMetadata) (body []byte, etag, lastMod string, status int, err error) {
