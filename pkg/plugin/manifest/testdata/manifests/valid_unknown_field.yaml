@@ -1,0 +1,13 @@
+schema_version: 1
+name: hello-plugin
+version: 0.1.0
+description: Has a future field that we should ignore with a WARN
+jin: ">=0.7.0"
+future_field: not-yet-known
+install:
+  source:
+    build:
+      - go build
+    entrypoint: ./bin/hello
+on:
+  - status_changed

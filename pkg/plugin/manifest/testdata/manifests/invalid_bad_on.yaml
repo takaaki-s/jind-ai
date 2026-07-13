@@ -1,0 +1,12 @@
+schema_version: 1
+name: hello-plugin
+version: 0.1.0
+description: Invalid on matcher
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build
+    entrypoint: ./bin/hello
+on:
+  - file_changed

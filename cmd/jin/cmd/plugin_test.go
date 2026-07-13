@@ -9,7 +9,18 @@ import (
 	"testing"
 )
 
-const pluginTestManifest = "name: notifier\napi_version: 1\nrun: ./notify.sh\non:\n  - status_changed\n"
+const pluginTestManifest = `schema_version: 1
+name: notifier
+version: 0.1.0
+description: end-to-end plugin CLI fixture
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./notify.sh
+on:
+  - status_changed
+`
 
 // runPluginGit runs a git subcommand in dir with a hermetic environment (no
 // global/system config, no credential prompts) so the fixture behaves the same
@@ -36,7 +47,7 @@ func initPluginRepo(t *testing.T) string {
 	runPluginGit(t, dir, "init", "-b", "main")
 	runPluginGit(t, dir, "config", "user.email", "test@example.com")
 	runPluginGit(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "jin-plugin.yaml"), []byte(pluginTestManifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "jind-ai-plugin.yaml"), []byte(pluginTestManifest), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	runPluginGit(t, dir, "add", ".")

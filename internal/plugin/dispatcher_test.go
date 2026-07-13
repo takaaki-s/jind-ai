@@ -9,17 +9,18 @@ import (
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 // installTestPlugin writes a plugin directory with the given manifest and
 // registers it in the lock file, mirroring what `jin plugin install` does.
-func installTestPlugin(t *testing.T, pluginsDir, stateDir, name, manifest string) {
+func installTestPlugin(t *testing.T, pluginsDir, stateDir, name, body string) {
 	t.Helper()
 	dir := filepath.Join(pluginsDir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ManifestFilename), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := LoadLock(stateDir)
@@ -82,19 +83,47 @@ func countLines(path string) int {
 	return n
 }
 
-const dumpManifest = `name: dumper
-api_version: 1
-on: ["status_changed:idle"]
-run: echo "$JIN_PLUGIN_DEPTH" >> out.txt
+// dumpManifestFor renders a runtime manifest that prepares the plugin dir so
+// the dispatcher will exec its entrypoint. The entrypoint is a bash script
+// (chmod +x set below via the plugin dir setup) that writes JIN_PLUGIN_DEPTH
+// to out.txt.
+const dumpManifest = `schema_version: 1
+name: dumper
+version: 0.1.0
+description: dumps depth
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: /bin/bash
+on:
+  - status_changed:idle
+`
+
+// Because the runtime dispatcher execs the entrypoint via `bash -c`, we can
+// point entrypoint at a shell fragment when the fixture wants one. Below,
+// `entrypoint: bash -c 'echo ...'` uses that fact.
+
+const dumpEntrypointRuntime = `schema_version: 1
+name: dumper
+version: 0.1.0
+description: dumps depth
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: bash -c 'echo "$JIN_PLUGIN_DEPTH" >> out.txt'
+on:
+  - status_changed:idle
 `
 
 func idleEvent() Event {
-	return Event{Name: EventStatusChanged, SessionID: "sess-1", Status: "idle", PrevStatus: "thinking"}
+	return Event{Name: manifest.EventStatusChanged, SessionID: "sess-1", Status: "idle", PrevStatus: "thinking"}
 }
 
 func TestPublishFiresMatchingPlugin(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
 	d.Publish(idleEvent())
 
@@ -113,9 +142,9 @@ func TestPublishFiresMatchingPlugin(t *testing.T) {
 
 func TestPublishSkipsNonMatchingEvent(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
-	d.Publish(Event{Name: EventStatusChanged, SessionID: "sess-1", Status: "thinking"})
+	d.Publish(Event{Name: manifest.EventStatusChanged, SessionID: "sess-1", Status: "thinking"})
 
 	time.Sleep(300 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(pluginsDir, "dumper", "out.txt")); err == nil {
@@ -125,7 +154,7 @@ func TestPublishSkipsNonMatchingEvent(t *testing.T) {
 
 func TestPublishDebouncesSameEvent(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
 	d.Publish(idleEvent())
 	d.Publish(idleEvent())
@@ -138,7 +167,7 @@ func TestPublishDebouncesSameEvent(t *testing.T) {
 
 func TestPublishSkipsDisabledPlugin(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{Disabled: []string{"dumper"}})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
 	d.Publish(idleEvent())
 
@@ -149,11 +178,16 @@ func TestPublishSkipsDisabledPlugin(t *testing.T) {
 }
 
 func TestPublishSkipsIncompatibleAndWarnsOnce(t *testing.T) {
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
+	incompat := strings.Replace(dumpEntrypointRuntime, `jin: ">=0.0.0"`, `jin: ">=99.0.0"`, 1)
+
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", strings.Replace(dumpManifest, "api_version: 1", "api_version: 999", 1))
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", incompat)
 
 	d.Publish(idleEvent())
-	d.Publish(Event{Name: EventStatusChanged, SessionID: "sess-2", Status: "idle"})
+	d.Publish(Event{Name: manifest.EventStatusChanged, SessionID: "sess-2", Status: "idle"})
 
 	time.Sleep(300 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(pluginsDir, "dumper", "out.txt")); err == nil {
@@ -169,7 +203,7 @@ func TestPublishSkipsIncompatibleAndWarnsOnce(t *testing.T) {
 
 func TestRunActionBypassesMatcherAndDebounce(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
 	ev := Event{Name: "action", SessionID: "sess-1", Status: "idle"}
 	if err := d.RunAction("dumper", ev, 0, ActionContext{}); err != nil {
@@ -185,10 +219,16 @@ func TestRunActionBypassesMatcherAndDebounce(t *testing.T) {
 	}
 }
 
-const callerDumpManifest = `name: callerdump
-api_version: 1
+const callerDumpManifest = `schema_version: 1
+name: callerdump
+version: 0.1.0
+description: dumps caller context
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: bash -c 'echo "sock=${JIN_CALLER_TMUX_SOCKET-unset} pane=${JIN_CALLER_TMUX_PANE-unset} sid=$JIN_SESSION_ID" >> out.txt'
 on: []
-run: echo "sock=${JIN_CALLER_TMUX_SOCKET-unset} pane=${JIN_CALLER_TMUX_PANE-unset} sid=$JIN_SESSION_ID" >> out.txt
 `
 
 // A global action (empty session fields) must still run, carrying the caller's
@@ -248,7 +288,7 @@ func TestPassDebouncePrunesExpiredEntries(t *testing.T) {
 
 func TestRunActionRejectsDepthLimit(t *testing.T) {
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
-	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpManifest)
+	installTestPlugin(t, pluginsDir, stateDir, "dumper", dumpEntrypointRuntime)
 
 	err := d.RunAction("dumper", idleEvent(), 1, ActionContext{})
 	if err == nil || !strings.Contains(err.Error(), "depth limit") {
@@ -257,9 +297,15 @@ func TestRunActionRejectsDepthLimit(t *testing.T) {
 }
 
 func TestRunActionErrors(t *testing.T) {
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
 	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{Disabled: []string{"off"}})
-	installTestPlugin(t, pluginsDir, stateDir, "off", strings.Replace(dumpManifest, "name: dumper", "name: off", 1))
-	installTestPlugin(t, pluginsDir, stateDir, "old", strings.Replace(strings.Replace(dumpManifest, "name: dumper", "name: old", 1), "api_version: 1", "api_version: 999", 1))
+	off := strings.Replace(dumpEntrypointRuntime, "name: dumper", "name: off", 1)
+	old := strings.Replace(strings.Replace(dumpEntrypointRuntime, "name: dumper", "name: old", 1),
+		`jin: ">=0.0.0"`, `jin: ">=99.0.0"`, 1)
+	installTestPlugin(t, pluginsDir, stateDir, "off", off)
+	installTestPlugin(t, pluginsDir, stateDir, "old", old)
 
 	if err := d.RunAction("missing", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Errorf("missing plugin: %v, want not installed", err)
@@ -290,8 +336,8 @@ func TestDispatcher_CallsPopupResolver_WithManifestPopup(t *testing.T) {
 	stateDir := t.TempDir()
 
 	var gotName string
-	var gotPopup *PopupConfig
-	resolver := func(name string, popup *PopupConfig) (string, string) {
+	var gotPopup *manifest.PopupConfig
+	resolver := func(name string, popup *manifest.PopupConfig) (string, string) {
 		gotName = name
 		gotPopup = popup
 		return "42%", "24%"
@@ -301,15 +347,22 @@ func TestDispatcher_CallsPopupResolver_WithManifestPopup(t *testing.T) {
 	d := NewDispatcher(reg, pluginsDir, stateDir, "/tmp/test.sock", 500*time.Millisecond, resolver)
 
 	envDump := filepath.Join(pluginsDir, "envcap", "env.txt")
-	manifest := fmt.Sprintf(`name: envcap
-api_version: 1
-on: ["status_changed:idle"]
-run: env | grep JIN_PLUGIN_POPUP > %s
+	body := fmt.Sprintf(`schema_version: 1
+name: envcap
+version: 0.1.0
+description: capture popup env
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: bash -c 'env | grep JIN_PLUGIN_POPUP > %s'
+on:
+  - status_changed:idle
 popup:
   width: 40
   height: 20
 `, envDump)
-	installTestPlugin(t, pluginsDir, stateDir, "envcap", manifest)
+	installTestPlugin(t, pluginsDir, stateDir, "envcap", body)
 
 	d.Publish(idleEvent())
 
@@ -334,3 +387,7 @@ popup:
 		t.Errorf("plugin env missing JIN_PLUGIN_POPUP_HEIGHT=24%%; env:\n%s", env)
 	}
 }
+
+// Silence unused variable warning for the pure-entrypoint dumpManifest
+// variant kept for reference; the runtime variant is used above.
+var _ = dumpManifest

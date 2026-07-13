@@ -1,0 +1,12 @@
+schema_version: 1
+name: Hello_Plugin
+version: 0.1.0
+description: Name has uppercase and underscore
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build
+    entrypoint: ./bin/hello
+on:
+  - status_changed

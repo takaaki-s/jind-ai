@@ -1,0 +1,19 @@
+schema_version: 1
+name: notifier
+version: 0.3.1
+description: Desktop notifications for jin sessions
+license: MIT
+homepage: https://github.com/foo/notifier
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build -o bin/notifier ./cmd/notifier
+    entrypoint: ./bin/notifier
+on:
+  - status_changed
+  - status_changed:permission
+timeout: 45s
+popup:
+  width: 40
+  height: 20

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/takaaki-s/jind-ai/internal/plugin"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 // mockDispatcher records published events synchronously so tests can assert
@@ -43,8 +44,8 @@ func TestManager_HandleHookEvent_PublishesStatusChanged(t *testing.T) {
 		t.Fatalf("published %d events, want 1", len(events))
 	}
 	ev := events[0]
-	if ev.Name != plugin.EventStatusChanged {
-		t.Errorf("Name = %q, want %q", ev.Name, plugin.EventStatusChanged)
+	if ev.Name != manifest.EventStatusChanged {
+		t.Errorf("Name = %q, want %q", ev.Name, manifest.EventStatusChanged)
 	}
 	if ev.SessionID != sess.ID {
 		t.Errorf("SessionID = %q, want %q", ev.SessionID, sess.ID)

@@ -487,27 +487,43 @@ jind-ai では、セッションのステータス変化に反応して、ある
 
 どちらのエントリーポイントも同じ `run:` コマンドを同じ環境で実行します。違いはトリガーだけです。
 
-### マニフェスト（`jin-plugin.yaml`）
+### マニフェスト（`jind-ai-plugin.yaml`）
 
-このファイルをプラグインディレクトリのルートに配置します:
+このファイルをプラグインディレクトリのルートに配置します。ランタイム（ディスパッチャー）と publish 時（レジストリクローラー）が同じマニフェストを読みます。単一ファイル、単一の真実です。
 
 ```yaml
+schema_version: 1
 name: notifier
-api_version: 1
+version: 0.1.0
+description: Desktop notifications for jin sessions
+license: MIT
+homepage: https://github.com/foo/notifier
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build -o bin/notifier ./cmd/notifier
+    entrypoint: ./bin/notifier
 on: ["status_changed:idle", "status_changed:permission"]
-run: ./notify.sh                 # プラグイン自身のディレクトリからの相対パス
-build: go build -o bin/plugin .  # 省略可。install/update 時に一度だけ実行
-timeout: 30s                     # 省略可。デフォルト 30s
+timeout: 30s
 ```
 
 | フィールド | 必須 | 説明 |
 |-----------|------|------|
-| `name` | あり | `[a-z0-9][a-z0-9-]*`。jind-ai がインストールするディレクトリ名と一致している必要があります |
-| `api_version` | あり | 範囲ではなく単一の整数 — [API 互換性](#api-互換性) を参照 |
+| `schema_version` | あり | マニフェスト世代。現行は `1`。破壊的変更時のみ bump |
+| `name` | あり | `[a-z][a-z0-9-]{1,63}`。レジストリ内で unique。jind-ai がインストールするディレクトリ名と一致 |
+| `version` | あり | プラグイン自身の semver（`X.Y.Z`。pre-release / build metadata 可） |
+| `description` | あり | `jin plugin ls-remote` の検索結果に表示される一行説明 |
+| `license` / `homepage` | なし | 任意メタデータ。レジストリエントリに載る |
+| `jin` | あり | jin バイナリに対する semver 制約（`">=0.7.0"`、`"^0.7"`、`">=0.7 <0.9"`）。install 時と毎 dispatch 時にチェック |
+| `install.source.build` | 条件付き | ビルドコマンド配列（各要素が独立の `bash -c`。要素をまたぐパイプは不可） — [言語別ガイド](#言語別ガイド) を参照。`install.source` 使用時は必須 |
+| `install.source.entrypoint` | 条件付き | ディスパッチャーが毎イベント実行するパス（プラグインディレクトリ相対）。`install.source` 使用時は必須 |
+| `install.release_asset.pattern` | 条件付き | `install.source` の代替。最新 GitHub Release から prebuilt asset をダウンロード。プレースホルダ: `{os}` / `{arch}` |
 | `on` | なし | `status_changed` または `status_changed:<status>` マッチャーのリスト。空または省略時は action 専用 |
-| `run` | あり | プラグインディレクトリを cwd として `bash -c` 経由で実行されるシェルコマンド |
-| `build` | なし | install/update 時に一度だけ実行されるシェルコマンド（dispatch 時には実行されない） — [言語別ガイド](#言語別ガイド) を参照 |
 | `timeout` | なし | 期間文字列（`"30s"`、`"5m"`）。デフォルト `30s` |
+| `popup.width` / `popup.height` | なし | `jin pane popup --here` のサイズヒント（1–100、%） |
+
+`install.source` と `install.release_asset` は排他です。
 
 `config.yaml` はプラグインの有効/無効切り替えと dispatch タイミングの調整（下記）のみを行います — マニフェストのフィールドを重複して持つことはありません。
 
@@ -525,7 +541,6 @@ timeout: 30s                     # 省略可。デフォルト 30s
 | `JIN_WORKDIR` | セッションの作業ディレクトリ |
 | `JIN_TMUX_PANE_ID` | tmux ペイン ID（判明している場合） |
 | `JIN_NOTIFY_KIND` | この遷移の通知種別: `task-complete`、`error`、`permission`。通知を伴わない遷移では空 |
-| `JIN_PLUGIN_API_VERSION` | このプラグインが宣言した `api_version` |
 | `JIN_PLUGIN_DEPTH` | チェーンの深さ — [制約](#制約) を参照 |
 | `JIN_SOCKET` | デーモンソケットのパス。プラグインが呼び出す `jin` CLI はこれを自動的に読み取ります |
 | `JIN_BIN` | デーモン自身の `jin` バイナリの絶対パス。PATH 上の `jin` は新しいサブコマンドを持たない古いインストールである可能性があるため、素の `jin` より `"${JIN_BIN:-jin}"` を優先してください |
@@ -548,7 +563,7 @@ jin pane capture "$JIN_SESSION_ID"
 jin pane send-keys "$JIN_SESSION_ID" <keys>
 ```
 
-**互換性の契約**: 見覚えのない環境変数・JSON フィールド・CLI フラグはエラーではなく無視すべきものとして扱ってください。jind-ai はバージョンを上げずにこのサーフェスへ追加することはあっても、同一 `api_version` 内で削除・改名することはありません。
+**互換性の契約**: 見覚えのない環境変数・JSON フィールド・CLI フラグはエラーではなく無視すべきものとして扱ってください。jind-ai は同一 `schema_version` 内でこのサーフェスへ追加することはあっても、削除・改名することはありません。破壊的削除は `schema_version` の bump（pre-1.0 では jin の minor リリース）でのみ発生します。
 
 ### インストール / 更新 / 削除 / 一覧
 
@@ -562,20 +577,20 @@ jin plugin install --link ./my-plugin
 
 jin plugin update <name>
 jin plugin remove <name>
-jin plugin list          # NAME / API / STATE / SOURCE; --json for scripting
+jin plugin list          # NAME / VERSION / STATE / SOURCE; --json for scripting
 ```
 
-git からの install/update では、何かに触れる前にマニフェスト（`name`、`on`、`run`、`build`）と解決したコミット SHA を表示し、確認を求めます（`--yes` でスキップ可）。承認されたコミット SHA は `plugins.lock.yaml` に記録されるため、以降の `install`/`update` が確認時と異なるコミットへ黙って進むことはありません。`--link` したプラグインはこの確認をスキップします — ローカルパスをリンクすること自体が信頼の意思表示であり、jind-ai はリンクされたプラグインに対して `build:` を実行しません。
+git からの install/update では、何かに触れる前にマニフェスト（`name`、`version`、`on`、`entrypoint`、`build`）と解決したコミット SHA を表示し、確認を求めます（`--yes` でスキップ可）。承認されたコミット SHA は `plugins.lock.yaml` に記録されるため、以降の `install`/`update` が確認時と異なるコミットへ黙って進むことはありません。`--link` したプラグインはこの確認をスキップします — ローカルパスをリンクすること自体が信頼の意思表示であり、jind-ai はリンクされたプラグインに対してビルドを実行しません。
 
 ### 言語別ガイド
 
-- **Shell / 単一ファイル** — clone してそのまま実行できます。`build:` は不要です。
-- **Node.js / TypeScript** — `dist/`（esbuild 等）にバンドルしてコミットしてください。ランタイムでの依存解決（bun/deno）も動作しますが、dispatch は fail-open のため初回 dispatch 時のネットワーク取得が黙って失敗することがあります — 事前ビルド済みバンドルの方が予測可能です。
-- **Go / Rust などのコンパイル言語** — `build:` で install/update 時にコンパイルし、ユーザーのプラットフォーム/アーキテクチャに合わせたバイナリを生成してください（`go.sum` / `Cargo.lock` は再現性のために有用です）。`build:` は install/update ごとに宣言済みの単一コマンドとして一度だけ実行されます。jind-ai は依存解決やツールチェーンの検出を代行しないため、必要なものはプラグイン自身の README に明記してください。非ゼロ終了した場合 install/update はアトミックに失敗し（中途半端な状態は残りません）、出力は `~/.local/state/jind-ai/plugin-logs/<name>-build.log` に保存されます。jind-ai はデフォルトでビルド環境に `npm_config_ignore_scripts=true` を注入します（サプライチェーン対策で、自分の `build:` コマンド内で上書き可能）。ビルド自体はサンドボックス化されておらず、ユーザー自身の権限で実行されます。
+- **Shell / 単一ファイル** — `install.source.build` を 1 要素にしてスクリプトをコピー / `chmod +x` する程度で済みます。`entrypoint` はそのスクリプトを指します。
+- **Node.js / TypeScript** — `dist/`（esbuild 等）にバンドルするビルドステップを 1 つ書いてください。ランタイム依存解決（bun/deno）も動作しますが、dispatch は fail-open のため初回 dispatch 時のネットワーク取得が黙って失敗することがあります — 事前ビルド済みバンドルの方が予測可能です。
+- **Go / Rust などのコンパイル言語** — `install.source.build` にビルド手順を宣言してください。各要素は独立プロセスとして実行され（要素をまたぐパイプは不可）、ユーザーのプラットフォーム/アーキテクチャに合わせたバイナリを生成できます（`go.sum` / `Cargo.lock` は再現性のために有用）。ビルドは install/update ごとに一度だけ実行されます。jind-ai は依存解決やツールチェーンの検出を代行しないため、必要なものはプラグイン自身の README に明記してください。非ゼロ終了した場合 install/update はアトミックに失敗し（中途半端な状態は残りません）、出力は `~/.local/state/jind-ai/plugin-logs/<name>-build.log` に保存されます。jind-ai はデフォルトでビルド環境に `npm_config_ignore_scripts=true` を注入します（サプライチェーン対策で、自分のビルドステップ内で上書き可能）。ビルド自体はサンドボックス化されておらず、ユーザー自身の権限で実行されます。
 
 ### 制約
 
-- **永続プロセスは不可。** jind-ai はイベント/アクションごとにプラグインを起動し、終了後は破棄します。長時間稼働するデーモンを `run:` に組み込まないでください。常駐プロセスが必要な場合は自分で起動し（手動、または systemd user unit として）、プラグイン自体はそこへの薄いクライアント（例: `curl`）にとどめてください。
+- **永続プロセスは不可。** jind-ai はイベント/アクションごとにプラグインを起動し、終了後は破棄します。長時間稼働するデーモンを `entrypoint` に組み込まないでください。常駐プロセスが必要な場合は自分で起動し（手動、または systemd user unit として）、プラグイン自体はそこへの薄いクライアント（例: `curl`）にとどめてください。
 - **ポップアップは `JIN_*` 環境変数を継承しません。** `jin pane popup` / `jin pane split` は tmux が新規に spawn したプロセスでコマンドを実行するため、ポップアップに必要なデータはコマンドライン引数として渡してください（またはコマンド文字列内の env 代入プレフィックスとして。例: `jin pane popup "$JIN_SESSION_ID" -- "JIN_BIN=$JIN_BIN inner.sh --id $JIN_SESSION_ID"`）。
 - **Fail-open。** エラー・タイムアウト・ハングしたプラグインがセッションのステータスパイプラインをブロックすることはありません — ログに記録され、パイプラインは処理を続行します。タイムアウトのデフォルトは 30s（マニフェストの `timeout:`）。
 - **ループの残存リスク。** jind-ai は同一の (plugin, session, event) の短時間内での繰り返し dispatch をデバウンスし（デフォルト 3s、下記の `plugins.debounce`）、プラグインが別のプラグイン実行を 1 ホップを超えて連鎖させることを拒否します（`JIN_PLUGIN_DEPTH`）。ただしどちらも *遅い* ピンポン（例: プラグインが送信したプロンプトへの応答が数秒後に同じプラグインを再トリガーする）は捕捉できません — これを避けるのはプラグイン作者の責任です。
@@ -590,9 +605,11 @@ plugins:
   debounce: 3          # 秒。ディスパッチのデバウンス窓（デフォルト 3）
 ```
 
-### API 互換性
+### 互換性
 
-プラグインは単一の `api_version` 整数を宣言します。jind-ai は `[min, current]` のウィンドウをサポートします（現行 v1 では両方とも `1`）。チェックは install/update 時（fail-closed — ウィンドウ外のプラグインは何も書き込まれる前に拒否されます）と、dispatch のたびに再度行われます（fail-open — 互換性のないインストール済みプラグインはスキップされ、一度だけログに記録され、`jin plugin list` で `incompatible` と表示されます。`jin plugin run` は `jin plugin update <name>` を促します）。
+プラグインは `jin:` に jin バイナリの semver 制約（例: `">=0.7.0"`、`"^0.7"`）を宣言します。チェックは install/update 時（fail-closed — 範囲外のプラグインは何も書き込まれる前に拒否されます）と、dispatch のたびに再度行われます（fail-open — 互換性のないインストール済みプラグインはスキップされ、一度だけログに記録され、`jin plugin list` で `incompatible` と表示されます。`jin plugin run` は `jin plugin update <name>` を促します）。開発ビルド（`jin --version` が `dev` や未 stamp を返す場合）は制約を無条件で満たしたものとして扱われるため、ローカルでのプラグイン作業を阻害しません。
+
+`schema_version` フィールドは `jin` とは直交する概念で、マニフェスト世代を識別します。jind-ai は `[min, current]` のウィンドウで schema をサポートし、現行は両方とも `1` です。将来 bump が始まっても 2 世代前までは受け付けます。
 
 ### プラグインのデバッグ
 

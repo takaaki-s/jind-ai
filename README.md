@@ -563,27 +563,45 @@ it runs and what environment it gets.
 Both entry points run the same `run:` command with the same environment;
 only the trigger differs.
 
-### Manifest (`jin-plugin.yaml`)
+### Manifest (`jind-ai-plugin.yaml`)
 
-Place this file at the root of the plugin directory:
+Place this file at the root of the plugin directory. The same manifest is
+read at runtime (dispatcher) and at publish time (registry crawler); one
+file, one source of truth.
 
 ```yaml
+schema_version: 1
 name: notifier
-api_version: 1
+version: 0.1.0
+description: Desktop notifications for jin sessions
+license: MIT
+homepage: https://github.com/foo/notifier
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build -o bin/notifier ./cmd/notifier
+    entrypoint: ./bin/notifier
 on: ["status_changed:idle", "status_changed:permission"]
-run: ./notify.sh                 # relative to the plugin's own directory
-build: go build -o bin/plugin .  # optional; runs once, at install/update only
-timeout: 30s                     # optional; default 30s
+timeout: 30s
 ```
 
 | Field | Required | Description |
 |-------|----------|--------------|
-| `name` | Yes | `[a-z0-9][a-z0-9-]*`; must match the directory name jind-ai installs it under |
-| `api_version` | Yes | A single integer, not a range — see [API compatibility](#api-compatibility) |
+| `schema_version` | Yes | Manifest generation. Currently `1`. Bumped only on breaking schema changes |
+| `name` | Yes | `[a-z][a-z0-9-]{1,63}`; unique in the registry; must match the directory name jind-ai installs it under |
+| `version` | Yes | Plugin's own semver (`X.Y.Z`); pre-release/build metadata allowed |
+| `description` | Yes | One-liner shown in `jin plugin ls-remote` search results |
+| `license` / `homepage` | No | Optional metadata carried into the registry entry |
+| `jin` | Yes | Semver constraint on the jin binary (`">=0.7.0"`, `"^0.7"`, `">=0.7 <0.9"`). Checked at install and at every dispatch |
+| `install.source.build` | Conditional | Ordered list of build commands (each element runs in its own `bash -c`, no piping across elements) — see [Language-specific guidance](#language-specific-guidance). Required when `install.source` is used |
+| `install.source.entrypoint` | Conditional | Path (relative to the plugin dir) the dispatcher executes on every event. Required when `install.source` is used |
+| `install.release_asset.pattern` | Conditional | Alternative to `install.source`. Downloads a prebuilt asset from the latest GitHub Release. Placeholders: `{os}`, `{arch}` |
 | `on` | No | List of `status_changed` or `status_changed:<status>` matchers. Empty or omitted = action-only |
-| `run` | Yes | Shell command, run via `bash -c` with the plugin directory as cwd |
-| `build` | No | Shell command run once at install/update time (never at dispatch) — see [Language-specific guidance](#language-specific-guidance) |
 | `timeout` | No | Duration string (`"30s"`, `"5m"`); default `30s` |
+| `popup.width` / `popup.height` | No | Manifest hint for `jin pane popup --here` size (1–100, percent of terminal) |
+
+`install.source` and `install.release_asset` are mutually exclusive.
 
 `config.yaml` only enables/disables plugins and tunes dispatch timing (below) — it never duplicates manifest fields.
 
@@ -601,7 +619,6 @@ Environment variables:
 | `JIN_WORKDIR` | Session's working directory |
 | `JIN_TMUX_PANE_ID` | tmux pane ID, if known |
 | `JIN_NOTIFY_KIND` | Notification kind for this transition: `task-complete`, `error`, `permission`, or empty when the transition triggers no notification |
-| `JIN_PLUGIN_API_VERSION` | The `api_version` this plugin declared |
 | `JIN_PLUGIN_DEPTH` | Chain depth — see [Constraints](#constraints) |
 | `JIN_SOCKET` | Daemon socket path; the `jin` CLI a plugin invokes picks this up automatically |
 | `JIN_BIN` | Absolute path of the daemon's own `jin` binary. Prefer `"${JIN_BIN:-jin}"` over a bare `jin` — a `jin` found on PATH may be an older install that lacks newer subcommands |
@@ -627,8 +644,8 @@ jin pane send-keys "$JIN_SESSION_ID" <keys>
 
 **Compatibility contract**: treat any environment variable, JSON field, or CLI
 flag you don't recognize as something to ignore, not an error. jind-ai only
-adds to this surface without a version bump; it never removes or renames
-within an `api_version`.
+adds to this surface within a `schema_version`; breaking removals happen
+across a `schema_version` bump (or, pre-1.0, across a minor jin release).
 
 ### Install / update / remove / list
 
@@ -642,11 +659,12 @@ jin plugin install --link ./my-plugin
 
 jin plugin update <name>
 jin plugin remove <name>
-jin plugin list          # NAME / API / STATE / SOURCE; --json for scripting
+jin plugin list          # NAME / VERSION / STATE / SOURCE; --json for scripting
 ```
 
-A git install/update shows the manifest (`name`, `on`, `run`, `build`) and the
-commit SHA it resolved to, and asks for confirmation (`--yes` to skip) before
+A git install/update shows the manifest (`name`, `version`, `on`,
+`entrypoint`, `build`) and the commit SHA it resolved to, and asks for
+confirmation (`--yes` to skip) before
 touching anything; the approved commit SHA is recorded in
 `plugins.lock.yaml`, so a later `install`/`update` never silently lands on a
 different commit than the one you saw. A `--link`ed plugin skips this —
@@ -655,29 +673,31 @@ linking a local path is itself the trust decision, and jind-ai never runs
 
 ### Language-specific guidance
 
-- **Shell / single file** — clone-and-run, no `build:` needed.
-- **Node.js / TypeScript** — bundle to `dist/` (esbuild etc.) and commit the
-  bundle; resolving dependencies at runtime (bun/deno) works too, but that
+- **Shell / single file** — a one-element `install.source.build` that copies
+  or `chmod +x`s the script, with `entrypoint` pointing at it.
+- **Node.js / TypeScript** — bundle to `dist/` (esbuild etc.) as one build
+  step; resolving dependencies at runtime (bun/deno) works too, but that
   first-dispatch network fetch can fail silently since dispatch is fail-open
   — a pre-built bundle is more predictable.
-- **Go / Rust / other compiled languages** — use `build:` to compile on
-  install/update so the binary matches the user's platform/arch (and
-  `go.sum` / `Cargo.lock` give reproducibility). `build:` runs exactly once
-  per install/update as a single declared command; jind-ai does not resolve
-  dependencies or detect a toolchain for you — document what's required in
-  your plugin's own README. A non-zero exit fails the install/update
-  atomically (nothing is left half-installed), with output kept at
+- **Go / Rust / other compiled languages** — declare a build sequence under
+  `install.source.build`; each element runs as its own process (no shell
+  piping between elements) so the binary matches the user's platform/arch
+  (and `go.sum` / `Cargo.lock` give reproducibility). Builds run once per
+  install/update; jind-ai does not resolve dependencies or detect a
+  toolchain for you — document what's required in your plugin's own README.
+  A non-zero exit fails the install/update atomically (nothing is left
+  half-installed), with output kept at
   `~/.local/state/jind-ai/plugin-logs/<name>-build.log`. jind-ai injects
   `npm_config_ignore_scripts=true` into the build environment by default (a
-  supply-chain guard you can override inside your own `build:` command); the
+  supply-chain guard you can override inside your own build step); the
   build itself runs with your own user privileges — it is not sandboxed.
 
 ### Constraints
 
 - **No persistent processes.** jind-ai runs a plugin per event/action and
-  tears it down; don't build a long-running daemon into `run:`. If you need
-  one, run it yourself (manually, or as a systemd user unit) and keep the
-  plugin a thin per-event client to it (e.g. `curl`).
+  tears it down; don't build a long-running daemon into `entrypoint`. If you
+  need one, run it yourself (manually, or as a systemd user unit) and keep
+  the plugin a thin per-event client to it (e.g. `curl`).
 - **Popups don't inherit `JIN_*` env vars.** `jin pane popup` / `jin pane
   split` run their command in a process tmux spawns fresh — pass any data
   the popup needs as arguments on its command line (or as env-assignment
@@ -704,14 +724,21 @@ plugins:
   debounce: 3          # seconds, dispatch debounce window (default 3)
 ```
 
-### API compatibility
+### Compatibility
 
-Plugins declare a single `api_version` integer; jind-ai supports a window
-`[min, current]` (v1 today: both are `1`). Checked at install/update
-(fail-closed — a plugin outside the window is rejected before anything is
-written) and again at every dispatch (fail-open — an incompatible installed
-plugin is skipped, logged once, and shown as `incompatible` in `jin plugin
-list`, with `jin plugin run` pointing you at `jin plugin update <name>`).
+Plugins declare a semver constraint on the jin binary via `jin:` (e.g.
+`">=0.7.0"`, `"^0.7"`). Checked at install/update (fail-closed — a plugin
+outside the range is rejected before anything is written) and again at
+every dispatch (fail-open — an incompatible installed plugin is skipped,
+logged once, and shown as `incompatible` in `jin plugin list`, with `jin
+plugin run` pointing you at `jin plugin update <name>`). Development builds
+(`jin --version` reporting `dev` or an unstamped value) satisfy every
+constraint so local plugin work is unblocked.
+
+The `schema_version` field is orthogonal to `jin`: it identifies the
+manifest generation. jind-ai supports schema versions in a window
+`[min, current]`, currently both `1`, and older schemas will be honoured up
+to two generations back once we start bumping.
 
 ### Debugging a plugin
 

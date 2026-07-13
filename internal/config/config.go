@@ -706,8 +706,8 @@ func (m *Manager) GetPopupSize(name string) (width, height string) {
 
 // GetPluginPopupSize resolves a plugin popup's size using the priority chain:
 //  1. user config popups.plugins[pluginName]
-//  2. manifest (caller converts plugin.PopupConfig → PopupSizeConfig to
-//     avoid an import cycle from internal/plugin into internal/config)
+//  2. manifest (caller converts manifest.PopupConfig → PopupSizeConfig to
+//     avoid an import cycle from pkg/plugin/manifest into internal/config)
 //  3. user config popups.plugin_default
 //  4. hardcoded DefaultPopupSizes["plugin_default"]
 //

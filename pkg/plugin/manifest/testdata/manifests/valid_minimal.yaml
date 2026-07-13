@@ -1,0 +1,12 @@
+schema_version: 1
+name: hello-plugin
+version: 0.1.0
+description: A test plugin
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build -o bin/hello ./cmd/hello
+    entrypoint: ./bin/hello
+on:
+  - status_changed

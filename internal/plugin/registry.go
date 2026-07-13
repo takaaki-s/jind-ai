@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 // PluginState classifies an installed plugin at dispatch time: whether it will
@@ -15,14 +16,14 @@ import (
 type PluginState int
 
 const (
-	// StateEnabled means the manifest loads, its api_version is in range, and
-	// config permits it — the plugin will receive events.
+	// StateEnabled means the manifest loads, its jin compat range is
+	// satisfied, and config permits it — the plugin will receive events.
 	StateEnabled PluginState = iota
 	// StateDisabled means config turned the plugin off (plugins.enabled=false or
 	// the name appears in plugins.disabled). The plugin is otherwise healthy.
 	StateDisabled
-	// StateIncompatible means the manifest loads but its api_version is outside
-	// the window this jin build supports.
+	// StateIncompatible means the manifest loads but the plugin's jin compat
+	// range does not include this jin build.
 	StateIncompatible
 	// StateBroken means the manifest is missing or fails to load/validate — most
 	// often the plugin directory is gone.
@@ -50,7 +51,7 @@ func (s PluginState) String() string {
 // StateBroken or StateIncompatible and is nil otherwise.
 type Entry struct {
 	Name     string
-	Manifest *Manifest
+	Manifest *manifest.Manifest
 	Lock     LockEntry
 	State    PluginState
 	Err      error
@@ -119,7 +120,7 @@ func (r *Registry) Runnable() ([]Entry, error) {
 func (r *Registry) classify(name string, le LockEntry) Entry {
 	e := Entry{Name: name, Lock: le}
 
-	m, err := LoadManifest(filepath.Join(r.pluginsDir, name))
+	m, err := loadManifest(filepath.Join(r.pluginsDir, name))
 	if err != nil {
 		e.State = StateBroken
 		e.Err = err
@@ -127,7 +128,7 @@ func (r *Registry) classify(name string, le LockEntry) Entry {
 	}
 	e.Manifest = m
 
-	if err := CheckAPIVersion(m.APIVersion); err != nil {
+	if err := checkJinCompat(m); err != nil {
 		e.State = StateIncompatible
 		e.Err = err
 		return e

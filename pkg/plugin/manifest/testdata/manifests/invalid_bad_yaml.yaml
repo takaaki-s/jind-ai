@@ -1,0 +1,3 @@
+schema_version: 1
+name: hello-plugin
+version: [this: is not a scalar

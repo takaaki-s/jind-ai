@@ -19,6 +19,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/tmux"
 	"github.com/takaaki-s/jind-ai/internal/transcript"
 	"github.com/takaaki-s/jind-ai/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 var debugLog = debug.NewLogger("daemon-debug.log")
@@ -1420,7 +1421,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 
 	if pluginDisp != nil && updOK && oldStatus != newStatus {
 		pluginDisp.Publish(plugin.Event{
-			Name:       plugin.EventStatusChanged,
+			Name:       manifest.EventStatusChanged,
 			SessionID:  sessionID,
 			Status:     string(newStatus),
 			PrevStatus: string(oldStatus),

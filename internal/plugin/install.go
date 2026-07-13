@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 // Link installs the plugin at srcDir by symlinking it into pluginsDir and
@@ -26,19 +27,19 @@ import (
 //
 // The manifest's declared name — not srcDir's basename — decides the install
 // path, because a linked plugin is authoritative about its own name. Link is
-// fail-closed: an unloadable manifest or an api_version outside this jin's
-// window aborts before anything is written.
-func Link(srcDir, pluginsDir, stateDir string) (*Manifest, error) {
+// fail-closed: an unloadable manifest or a jin compat mismatch aborts before
+// anything is written.
+func Link(srcDir, pluginsDir, stateDir string) (*manifest.Manifest, error) {
 	absSrc, err := filepath.Abs(srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source dir: %w", err)
 	}
 
-	m, err := LoadManifest(absSrc)
+	m, err := loadManifest(absSrc)
 	if err != nil {
 		return nil, err
 	}
-	if err := CheckAPIVersion(m.APIVersion); err != nil {
+	if err := checkJinCompat(m); err != nil {
 		return nil, err
 	}
 
@@ -91,7 +92,7 @@ func Remove(name, pluginsDir, stateDir string) error {
 	// name must never smuggle path separators or ".." out of pluginsDir.
 	// Locked names already passed manifest validation; enforce the same
 	// grammar for everything.
-	if !namePattern.MatchString(name) {
+	if !manifest.NamePattern.MatchString(name) {
 		return fmt.Errorf("invalid plugin name %q", name)
 	}
 	lock, err := LoadLock(stateDir)
@@ -177,14 +178,14 @@ type InstallPlan struct {
 	pluginsDir string
 	stateDir   string
 	staging    string
-	manifest   *Manifest
+	manifest   *manifest.Manifest
 	commitSHA  string
 	prevCommit string // update only: the SHA being replaced
 	isUpdate   bool
 }
 
 // Manifest returns the loaded, validated manifest of the staged plugin.
-func (p *InstallPlan) Manifest() *Manifest { return p.manifest }
+func (p *InstallPlan) Manifest() *manifest.Manifest { return p.manifest }
 
 // CommitSHA returns the commit that was staged (the tip of Ref, or of the
 // default branch when Ref is empty).
@@ -195,7 +196,7 @@ func (p *InstallPlan) CommitSHA() string { return p.commitSHA }
 func (p *InstallPlan) PrevCommitSHA() string { return p.prevCommit }
 
 // Fetch clones src into a staging directory under pluginsDir, validates its
-// manifest (fail-closed on an incompatible api_version), and rejects the install
+// manifest (fail-closed on a jin compat mismatch), and rejects the install
 // if the plugin's declared name is already installed. On any failure the staging
 // directory is removed so a failed fetch leaves no clutter.
 func Fetch(src Source, pluginsDir, stateDir string) (*InstallPlan, error) {
@@ -257,15 +258,16 @@ func FetchUpdate(name, pluginsDir, stateDir string) (*InstallPlan, error) {
 	}, nil
 }
 
-// Commit builds the staged plugin (when the manifest declares build), places it
-// at its final path atomically, and records the lock entry. A build failure or a
-// placement failure discards the staging directory and, for an update, leaves
-// the current version untouched. buildTimeout bounds the build step.
+// Commit builds the staged plugin (when the manifest declares install.source.build),
+// places it at its final path atomically, and records the lock entry. A build
+// failure or a placement failure discards the staging directory and, for an
+// update, leaves the current version untouched. buildTimeout bounds the whole
+// build sequence.
 func (p *InstallPlan) Commit(buildTimeout time.Duration) error {
 	dest := filepath.Join(p.pluginsDir, p.manifest.Name)
 
-	if p.manifest.Build != "" {
-		if err := runBuild(p.staging, p.stateDir, p.manifest.Name, p.manifest.Build, buildTimeout); err != nil {
+	if cmds := p.manifest.BuildCommands(); len(cmds) > 0 {
+		if err := runBuilds(p.staging, p.stateDir, p.manifest.Name, cmds, buildTimeout); err != nil {
 			p.Abort()
 			return err
 		}
@@ -331,9 +333,10 @@ func (p *InstallPlan) Abort() {
 }
 
 // fetchToStaging clones src into a fresh staging dir under pluginsDir, checks out
-// Ref when set, loads and api-checks the manifest, and reads the HEAD commit. Any
-// failure removes the staging dir so callers never see a partial clone.
-func fetchToStaging(src Source, pluginsDir string) (staging string, m *Manifest, sha string, err error) {
+// Ref when set, loads and jin-compat-checks the manifest, and reads the HEAD
+// commit. Any failure removes the staging dir so callers never see a partial
+// clone.
+func fetchToStaging(src Source, pluginsDir string) (staging string, m *manifest.Manifest, sha string, err error) {
 	if err = os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return "", nil, "", fmt.Errorf("mkdir plugins dir: %w", err)
 	}
@@ -354,22 +357,26 @@ func fetchToStaging(src Source, pluginsDir string) (staging string, m *Manifest,
 			return
 		}
 	}
-	if m, err = LoadManifest(staging); err != nil {
+	if m, err = loadManifest(staging); err != nil {
 		return
 	}
-	if err = CheckAPIVersion(m.APIVersion); err != nil {
+	if err = checkJinCompat(m); err != nil {
 		return
 	}
 	sha, err = gitHeadSHA(staging)
 	return
 }
 
-// runBuild runs the manifest's build command with `bash -c` in the staging dir.
-// The environment is the curated base plus npm_config_ignore_scripts=true, a
-// supply-chain guard the author can override inside their own build command.
-// Output is truncated into <stateDir>/plugin-logs/<name>-build.log and teed to
-// the caller's stderr so an interactive install shows build progress.
-func runBuild(stagingDir, stateDir, name, build string, timeout time.Duration) error {
+// runBuilds runs each of the manifest's install.source.build commands via
+// `bash -c` in the staging dir, in order. buildTimeout bounds the entire
+// sequence so a wedged step cannot outlive the caller-supplied window. Each
+// step gets its own process group so an escalated SIGKILL sweeps grandchildren.
+// The environment is the curated base plus npm_config_ignore_scripts=true,
+// a supply-chain guard the author can override inside their own build command.
+// Output from every step is truncated into
+// <stateDir>/plugin-logs/<name>-build.log and teed to stderr so an interactive
+// install shows build progress.
+func runBuilds(stagingDir, stateDir, name string, cmds []string, timeout time.Duration) error {
 	logPath := filepath.Join(stateDir, "plugin-logs", name+"-build.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir plugin log dir: %w", err)
@@ -381,31 +388,34 @@ func runBuild(stagingDir, stateDir, name, build string, timeout time.Duration) e
 	defer logFile.Close()
 
 	out := io.MultiWriter(logFile, os.Stderr)
-
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", build)
-	cmd.Dir = stagingDir
-	cmd.Env = append(curatedEnv(), "npm_config_ignore_scripts=true")
-	cmd.Stdout = out
-	cmd.Stderr = out
-	setProcessGroupKill(cmd)
+	for i, cmdStr := range cmds {
+		fmt.Fprintf(out, "\n--- build step %d/%d: %s ---\n", i+1, len(cmds), cmdStr)
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start build: %w", err)
-	}
-	runErr := cmd.Wait()
+		cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+		cmd.Dir = stagingDir
+		cmd.Env = append(curatedEnv(), "npm_config_ignore_scripts=true")
+		cmd.Stdout = out
+		cmd.Stderr = out
+		setProcessGroupKill(cmd)
 
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("build timed out after %s (log: %s)", timeout, logPath)
-	}
-	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			return fmt.Errorf("build failed: exit status %d (log: %s)", exitErr.ExitCode(), logPath)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("start build step %q: %w", cmdStr, err)
 		}
-		return fmt.Errorf("run build: %w (log: %s)", runErr, logPath)
+		runErr := cmd.Wait()
+
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("build timed out after %s (log: %s)", timeout, logPath)
+		}
+		if runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				return fmt.Errorf("build step %q failed: exit status %d (log: %s)", cmdStr, exitErr.ExitCode(), logPath)
+			}
+			return fmt.Errorf("run build step %q: %w (log: %s)", cmdStr, runErr, logPath)
+		}
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/paths"
 	"github.com/takaaki-s/jind-ai/internal/plugin"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 var pluginCmd = &cobra.Command{
@@ -25,8 +26,8 @@ var pluginCmd = &cobra.Command{
 	Long: `Install, remove, update, and list jin plugins.
 
 Plugins are user-installed programs that react to session events. Each lives in
-its own directory with a jin-plugin.yaml manifest and is recorded in the plugin
-lock file.`,
+its own directory with a jind-ai-plugin.yaml manifest and is recorded in the
+plugin lock file.`,
 }
 
 var pluginInstallCmd = &cobra.Command{
@@ -147,7 +148,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(out, "name: %s\n", m.Name)
 		fmt.Fprintf(out, "on: %s\n", strings.Join(m.On, ", "))
-		fmt.Fprintf(out, "run: %s\n", m.Run)
+		fmt.Fprintf(out, "entrypoint: %s\n", m.Entrypoint())
 		fmt.Fprintln(out, "linked")
 		return nil
 	}
@@ -178,8 +179,8 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if m.Build != "" {
-		fmt.Fprintf(out, "Running build: %s\n", m.Build)
+	if cmds := m.BuildCommands(); len(cmds) > 0 {
+		fmt.Fprintf(out, "Running build: %s\n", strings.Join(cmds, " && "))
 	}
 	if err := plan.Commit(buildTimeout); err != nil {
 		return err
@@ -222,8 +223,8 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if m.Build != "" {
-		fmt.Fprintf(out, "Running build: %s\n", m.Build)
+	if cmds := m.BuildCommands(); len(cmds) > 0 {
+		fmt.Fprintf(out, "Running build: %s\n", strings.Join(cmds, " && "))
 	}
 	if err := plan.Commit(buildTimeout); err != nil {
 		return err
@@ -243,14 +244,17 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 
 // printPluginPlan renders the confirmation block shared by install and update.
 // source is the raw install argument (install) or the locked source (update).
-func printPluginPlan(out io.Writer, m *plugin.Manifest, source, commitSHA string) {
-	fmt.Fprintf(out, "Plugin: %s (api %d)\n", m.Name, m.APIVersion)
+func printPluginPlan(out io.Writer, m *manifest.Manifest, source, commitSHA string) {
+	fmt.Fprintf(out, "Plugin: %s v%s\n", m.Name, m.Version)
 	fmt.Fprintf(out, "Source: %s\n", source)
 	fmt.Fprintf(out, "Commit: %s\n", shortSHA(commitSHA))
+	if m.Jin != "" {
+		fmt.Fprintf(out, "Jin:    %s\n", m.Jin)
+	}
 	fmt.Fprintf(out, "Events: %s\n", strings.Join(m.On, ", "))
-	fmt.Fprintf(out, "Run:    %s\n", m.Run)
-	if m.Build != "" {
-		fmt.Fprintf(out, "Build:  %s\n", m.Build)
+	fmt.Fprintf(out, "Entry:  %s\n", m.Entrypoint())
+	if cmds := m.BuildCommands(); len(cmds) > 0 {
+		fmt.Fprintf(out, "Build:  %s\n", strings.Join(cmds, " && "))
 	}
 }
 
@@ -309,14 +313,15 @@ func completePluginNames(cmd *cobra.Command, args []string, toComplete string) (
 // itself is not JSON-friendly (State is an int enum, Err is an interface), so
 // the CLI projects it onto stable field names.
 type pluginListItem struct {
-	Name       string `json:"name"`
-	APIVersion int    `json:"api_version"`
-	State      string `json:"state"`
-	Linked     bool   `json:"linked"`
-	Source     string `json:"source"`
-	Ref        string `json:"ref,omitempty"`
-	Commit     string `json:"commit,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Name          string `json:"name"`
+	Version       string `json:"version,omitempty"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	State         string `json:"state"`
+	Linked        bool   `json:"linked"`
+	Source        string `json:"source"`
+	Ref           string `json:"ref,omitempty"`
+	Commit        string `json:"commit,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 func runPluginList(cmd *cobra.Command, args []string) error {
@@ -338,7 +343,8 @@ func runPluginList(cmd *cobra.Command, args []string) error {
 				Commit: e.Lock.Commit,
 			}
 			if e.Manifest != nil {
-				item.APIVersion = e.Manifest.APIVersion
+				item.Version = e.Manifest.Version
+				item.SchemaVersion = e.Manifest.SchemaVersion
 			}
 			if e.Err != nil {
 				item.Error = e.Err.Error()
@@ -354,11 +360,11 @@ func runPluginList(cmd *cobra.Command, args []string) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tAPI\tSTATE\tSOURCE")
+	fmt.Fprintln(tw, "NAME\tVERSION\tSTATE\tSOURCE")
 	for _, e := range entries {
-		api := "-"
-		if e.Manifest != nil {
-			api = strconv.Itoa(e.Manifest.APIVersion)
+		version := "-"
+		if e.Manifest != nil && e.Manifest.Version != "" {
+			version = e.Manifest.Version
 		}
 		state := e.State.String()
 		if e.Lock.Linked {
@@ -367,7 +373,7 @@ func runPluginList(cmd *cobra.Command, args []string) error {
 		if e.Err != nil {
 			state += ": " + truncateStr(e.Err.Error(), 60)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, api, state, e.Lock.Source)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, version, state, e.Lock.Source)
 	}
 	return tw.Flush()
 }

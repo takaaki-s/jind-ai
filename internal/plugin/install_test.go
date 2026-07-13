@@ -7,11 +7,37 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
-const validSource = "name: notifier\napi_version: 1\nrun: ./notify.sh\non:\n  - status_changed\n"
+const validSource = `schema_version: 1
+name: notifier
+version: 0.1.0
+description: notifier test fixture
+jin: ">=0.0.0"
+install:
+  source:
+    build:
+      - "true"
+    entrypoint: ./notify.sh
+on:
+  - status_changed
+`
 
 const testBuildTimeout = 30 * time.Second
+
+// writeManifest writes content as the plugin manifest into a fresh temp dir.
+// Runtime tests use this for the linked-install path so they can hand Link a
+// self-contained directory.
+func writeManifest(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(content), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return dir
+}
 
 // lockHas reports whether stateDir's lock currently records name.
 func lockHas(t *testing.T, stateDir, name string) bool {
@@ -75,7 +101,16 @@ func TestLink_Success(t *testing.T) {
 }
 
 func TestLink_RejectsInvalidManifest(t *testing.T) {
-	src := writeManifest(t, "api_version: 1\nrun: ./run.sh\n") // name missing
+	// name missing
+	src := writeManifest(t, `schema_version: 1
+version: 0.1.0
+description: no name
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	if _, err := Link(src, pluginsDir, stateDir); err == nil {
@@ -86,15 +121,32 @@ func TestLink_RejectsInvalidManifest(t *testing.T) {
 	}
 }
 
-func TestLink_RejectsIncompatibleAPIVersion(t *testing.T) {
-	src := writeManifest(t, "name: notifier\napi_version: 999\nrun: ./run.sh\non:\n  - status_changed\n")
+func TestLink_RejectsIncompatibleJinRange(t *testing.T) {
+	// Impossible constraint against any real jin version; dev builds skip
+	// the check via CheckJinCompat, so pin an explicit Version to force
+	// the incompatibility path.
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
+	src := writeManifest(t, `schema_version: 1
+name: notifier
+version: 0.1.0
+description: needs jin 99+
+jin: ">=99.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	if _, err := Link(src, pluginsDir, stateDir); err == nil {
-		t.Fatal("Link with api_version 999: want error, got nil")
+		t.Fatal("Link with unsatisfied jin range: want error, got nil")
 	}
 	if _, err := os.Lstat(filepath.Join(pluginsDir, "notifier")); !os.IsNotExist(err) {
-		t.Error("Link must not create a symlink when api_version is incompatible")
+		t.Error("Link must not create a symlink when jin range is unsatisfied")
 	}
 }
 
@@ -124,7 +176,7 @@ func TestRemove_LinkedKeepsSource(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(pluginsDir, "notifier")); !os.IsNotExist(err) {
 		t.Error("symlink should be removed")
 	}
-	if _, err := os.Stat(filepath.Join(src, ManifestFilename)); err != nil {
+	if _, err := os.Stat(filepath.Join(src, manifest.Filename)); err != nil {
 		t.Errorf("removing a linked plugin must not touch the source tree: %v", err)
 	}
 	if lockHas(t, stateDir, "notifier") {
@@ -140,7 +192,7 @@ func TestRemove_NonLinkedDirRemoved(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ManifestFilename), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	lock, _ := LoadLock(stateDir)
@@ -237,7 +289,7 @@ func TestRemove_OrphanSymlinkKeepsSource(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(pluginsDir, "orphan")); err == nil {
 		t.Error("orphan symlink should be removed")
 	}
-	if _, err := os.Stat(filepath.Join(src, ManifestFilename)); err != nil {
+	if _, err := os.Stat(filepath.Join(src, manifest.Filename)); err != nil {
 		t.Errorf("link source must survive orphan removal: %v", err)
 	}
 }
@@ -306,7 +358,7 @@ func initRepo(t *testing.T, body string) string {
 	runGit(t, dir, "init", "-b", "main")
 	runGit(t, dir, "config", "user.email", "test@example.com")
 	runGit(t, dir, "config", "user.name", "Test")
-	writeInto(t, filepath.Join(dir, ManifestFilename), body)
+	writeInto(t, filepath.Join(dir, manifest.Filename), body)
 	runGit(t, dir, "add", ".")
 	runGit(t, dir, "commit", "-m", "initial")
 	return dir
@@ -372,7 +424,7 @@ func TestFetchCommit_Success(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(pluginsDir, "notifier", ManifestFilename)); err != nil {
+	if _, err := os.Stat(filepath.Join(pluginsDir, "notifier", manifest.Filename)); err != nil {
 		t.Errorf("plugin not placed: %v", err)
 	}
 	assertNoScratch(t, pluginsDir)
@@ -414,7 +466,16 @@ func TestFetch_CheckoutTag(t *testing.T) {
 }
 
 func TestFetch_RejectsInvalidManifest(t *testing.T) {
-	repo := initRepo(t, "api_version: 1\nrun: ./run.sh\n") // name missing
+	// name missing
+	repo := initRepo(t, `schema_version: 1
+version: 0.1.0
+description: no name
+jin: ">=0.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	if _, err := Fetch(fileSource(t, repo, ""), pluginsDir, stateDir); err == nil {
@@ -423,12 +484,26 @@ func TestFetch_RejectsInvalidManifest(t *testing.T) {
 	assertNoScratch(t, pluginsDir)
 }
 
-func TestFetch_RejectsIncompatibleAPIVersion(t *testing.T) {
-	repo := initRepo(t, "name: notifier\napi_version: 999\nrun: ./run.sh\non:\n  - status_changed\n")
+func TestFetch_RejectsIncompatibleJinRange(t *testing.T) {
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
+	repo := initRepo(t, `schema_version: 1
+name: notifier
+version: 0.1.0
+description: needs jin 99
+jin: ">=99.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	if _, err := Fetch(fileSource(t, repo, ""), pluginsDir, stateDir); err == nil {
-		t.Fatal("Fetch with api_version 999: want error, got nil")
+		t.Fatal("Fetch with unsatisfied jin range: want error, got nil")
 	}
 	if _, err := os.Lstat(filepath.Join(pluginsDir, "notifier")); !os.IsNotExist(err) {
 		t.Error("incompatible plugin must not be placed")
@@ -454,7 +529,19 @@ func TestFetch_RejectsDoubleInstall(t *testing.T) {
 }
 
 func TestCommit_RunsBuild(t *testing.T) {
-	repo := initRepo(t, "name: notifier\napi_version: 1\nrun: ./run.sh\nbuild: echo built > artifact.txt\non:\n  - status_changed\n")
+	repo := initRepo(t, `schema_version: 1
+name: notifier
+version: 0.1.0
+description: build artifact
+jin: ">=0.0.0"
+install:
+  source:
+    build:
+      - echo built > artifact.txt
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	plan, err := Fetch(fileSource(t, repo, ""), pluginsDir, stateDir)
@@ -473,7 +560,19 @@ func TestCommit_RunsBuild(t *testing.T) {
 }
 
 func TestCommit_BuildFailureRollsBack(t *testing.T) {
-	repo := initRepo(t, "name: notifier\napi_version: 1\nrun: ./run.sh\nbuild: exit 1\non:\n  - status_changed\n")
+	repo := initRepo(t, `schema_version: 1
+name: notifier
+version: 0.1.0
+description: build fails
+jin: ">=0.0.0"
+install:
+  source:
+    build:
+      - exit 1
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	plan, err := Fetch(fileSource(t, repo, ""), pluginsDir, stateDir)
@@ -493,7 +592,19 @@ func TestCommit_BuildFailureRollsBack(t *testing.T) {
 }
 
 func TestCommit_BuildEnvInjectsIgnoreScripts(t *testing.T) {
-	repo := initRepo(t, "name: notifier\napi_version: 1\nrun: ./run.sh\nbuild: printenv npm_config_ignore_scripts > env.txt\non:\n  - status_changed\n")
+	repo := initRepo(t, `schema_version: 1
+name: notifier
+version: 0.1.0
+description: env injection
+jin: ">=0.0.0"
+install:
+  source:
+    build:
+      - printenv npm_config_ignore_scripts > env.txt
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 
 	plan, err := Fetch(fileSource(t, repo, ""), pluginsDir, stateDir)
@@ -566,22 +677,37 @@ func TestFetchUpdate_RejectsIncompatibleNewVersion(t *testing.T) {
 	}
 	installedSHA := plan.CommitSHA()
 
-	writeInto(t, filepath.Join(repo, ManifestFilename),
-		"name: notifier\napi_version: 999\nrun: ./run.sh\non:\n  - status_changed\n")
+	// Second commit bumps jin range to something no realistic build can
+	// satisfy so FetchUpdate's compat check hard-fails.
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
+	writeInto(t, filepath.Join(repo, manifest.Filename), `schema_version: 1
+name: notifier
+version: 0.2.0
+description: bump
+jin: ">=99.0.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`)
 	runGit(t, repo, "add", ".")
-	runGit(t, repo, "commit", "-m", "bump api")
+	runGit(t, repo, "commit", "-m", "bump jin")
 
 	if _, err := FetchUpdate("notifier", pluginsDir, stateDir); err == nil {
-		t.Fatal("FetchUpdate to api 999: want error, got nil")
+		t.Fatal("FetchUpdate with unsatisfied jin range: want error, got nil")
 	}
 	assertNoScratch(t, pluginsDir)
 
-	m, err := LoadManifest(filepath.Join(pluginsDir, "notifier"))
+	m, _, err := manifest.LoadFile(filepath.Join(pluginsDir, "notifier"))
 	if err != nil {
 		t.Fatalf("existing plugin unreadable after failed update: %v", err)
 	}
-	if m.APIVersion != 1 {
-		t.Errorf("installed api_version = %d, want 1 (update must not touch current version)", m.APIVersion)
+	if m.Version != "0.1.0" {
+		t.Errorf("installed version = %q, want unchanged 0.1.0", m.Version)
 	}
 	lock, _ := LoadLock(stateDir)
 	if entry, _ := lock.Get("notifier"); entry.Commit != installedSHA {

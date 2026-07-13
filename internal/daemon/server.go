@@ -22,6 +22,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/tmux"
 	"github.com/takaaki-s/jind-ai/internal/transcript"
 	"github.com/takaaki-s/jind-ai/internal/worktreehook"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 // agentResolverAdapter wraps agent.Lookup so it satisfies session.AgentResolver
@@ -105,10 +106,10 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	pluginReg := plugin.NewRegistry(paths.Plugins(), stateDir, pluginCfg)
 	pluginDisp := plugin.NewDispatcher(pluginReg, paths.Plugins(), stateDir, socketPath,
 		time.Duration(pluginCfg.Debounce)*time.Second,
-		func(pluginName string, manifest *plugin.PopupConfig) (string, string) {
+		func(pluginName string, m *manifest.PopupConfig) (string, string) {
 			var cfgManifest *config.PopupSizeConfig
-			if manifest != nil {
-				cfgManifest = &config.PopupSizeConfig{Width: manifest.Width, Height: manifest.Height}
+			if m != nil {
+				cfgManifest = &config.PopupSizeConfig{Width: m.Width, Height: m.Height}
 			}
 			return configMgr.GetPluginPopupSize(pluginName, cfgManifest)
 		})

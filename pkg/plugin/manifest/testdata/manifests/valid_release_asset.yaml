@@ -1,0 +1,16 @@
+schema_version: 1
+name: hello-plugin
+version: 0.1.0
+description: Prebuilt release asset variant
+license: MIT
+homepage: https://github.com/foo/hello-plugin
+jin: ">=0.7.0"
+install:
+  release_asset:
+    pattern: "hello-{os}-{arch}"
+on:
+  - status_changed:permission
+timeout: 45s
+popup:
+  width: 60
+  height: 40

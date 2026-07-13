@@ -9,18 +9,31 @@ import (
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
-// writePluginDir creates <pluginsDir>/<name> with a valid jin-plugin.yaml
-// declaring the given api_version.
-func writePluginDir(t *testing.T, pluginsDir, name string, apiVersion int) {
+// writePluginDir creates <pluginsDir>/<name> with a valid manifest declaring
+// the given jin compat range. name is inlined into the YAML so the registry
+// sees the same name from disk that the caller expects.
+func writePluginDir(t *testing.T, pluginsDir, name, jinRange string) {
 	t.Helper()
 	dir := filepath.Join(pluginsDir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir plugin dir: %v", err)
 	}
-	content := fmt.Sprintf("name: %s\napi_version: %d\nrun: ./run.sh\non:\n  - status_changed\n", name, apiVersion)
-	if err := os.WriteFile(filepath.Join(dir, ManifestFilename), []byte(content), 0o644); err != nil {
+	content := fmt.Sprintf(`schema_version: 1
+name: %s
+version: 0.1.0
+description: test fixture
+jin: %q
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./run.sh
+on:
+  - status_changed
+`, name, jinRange)
+	if err := os.WriteFile(filepath.Join(dir, manifest.Filename), []byte(content), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 }
@@ -45,7 +58,7 @@ func enabledConfig() config.PluginsConfig {
 
 func TestRegistry_LoadEnabled(t *testing.T) {
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "notifier", 1)
+	writePluginDir(t, pluginsDir, "notifier", ">=0.0.0")
 	lockPlugin(t, stateDir, "notifier")
 
 	entries, err := NewRegistry(pluginsDir, stateDir, enabledConfig()).Load()
@@ -99,9 +112,12 @@ func TestRegistry_MissingManifestIsBroken(t *testing.T) {
 	}
 }
 
-func TestRegistry_IncompatibleAPIVersion(t *testing.T) {
+func TestRegistry_IncompatibleJinRange(t *testing.T) {
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "notifier", 999)
+	writePluginDir(t, pluginsDir, "notifier", ">=99.0.0")
 	lockPlugin(t, stateDir, "notifier")
 
 	entries, err := NewRegistry(pluginsDir, stateDir, enabledConfig()).Load()
@@ -122,7 +138,7 @@ func TestRegistry_IncompatibleAPIVersion(t *testing.T) {
 
 func TestRegistry_DisabledByName(t *testing.T) {
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "notifier", 1)
+	writePluginDir(t, pluginsDir, "notifier", ">=0.0.0")
 	lockPlugin(t, stateDir, "notifier")
 
 	tru := true
@@ -138,8 +154,8 @@ func TestRegistry_DisabledByName(t *testing.T) {
 
 func TestRegistry_GloballyDisabled(t *testing.T) {
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "alpha", 1)
-	writePluginDir(t, pluginsDir, "beta", 1)
+	writePluginDir(t, pluginsDir, "alpha", ">=0.0.0")
+	writePluginDir(t, pluginsDir, "beta", ">=0.0.0")
 	lockPlugin(t, stateDir, "alpha")
 	lockPlugin(t, stateDir, "beta")
 
@@ -157,8 +173,8 @@ func TestRegistry_GloballyDisabled(t *testing.T) {
 
 func TestRegistry_UnlockedDirIgnored(t *testing.T) {
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "locked", 1)
-	writePluginDir(t, pluginsDir, "unlocked", 1) // on disk but never installed via lock
+	writePluginDir(t, pluginsDir, "locked", ">=0.0.0")
+	writePluginDir(t, pluginsDir, "unlocked", ">=0.0.0") // on disk but never installed via lock
 	lockPlugin(t, stateDir, "locked")
 
 	entries, err := NewRegistry(pluginsDir, stateDir, enabledConfig()).Load()
@@ -193,10 +209,13 @@ func TestRegistry_MissingDirIsBroken(t *testing.T) {
 }
 
 func TestRegistry_RunnableOnlyEnabled(t *testing.T) {
+	restore := setJinVersionForTest(t, "0.5.0")
+	defer restore()
+
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
-	writePluginDir(t, pluginsDir, "good", 1)
-	writePluginDir(t, pluginsDir, "old", 999) // incompatible
-	writePluginDir(t, pluginsDir, "off", 1)   // disabled by config
+	writePluginDir(t, pluginsDir, "good", ">=0.0.0")
+	writePluginDir(t, pluginsDir, "old", ">=99.0.0") // incompatible
+	writePluginDir(t, pluginsDir, "off", ">=0.0.0")  // disabled by config
 	if err := os.MkdirAll(filepath.Join(pluginsDir, "bad"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err) // broken: dir without manifest
 	}
@@ -221,7 +240,7 @@ func TestRegistry_RunnableOnlyEnabled(t *testing.T) {
 func TestRegistry_SortedByName(t *testing.T) {
 	pluginsDir, stateDir := t.TempDir(), t.TempDir()
 	for _, n := range []string{"gamma", "alpha", "beta"} {
-		writePluginDir(t, pluginsDir, n, 1)
+		writePluginDir(t, pluginsDir, n, ">=0.0.0")
 		lockPlugin(t, stateDir, n)
 	}
 

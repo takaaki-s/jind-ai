@@ -1,0 +1,13 @@
+schema_version: 1
+name: hello-plugin
+version: 0.1.0
+description: Popup out of range
+jin: ">=0.7.0"
+install:
+  source:
+    build:
+      - go build
+    entrypoint: ./bin/hello
+popup:
+  width: 200
+  height: -5

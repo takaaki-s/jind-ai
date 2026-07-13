@@ -96,7 +96,6 @@ type ExecOptions struct {
 	Run         string
 	Env         Event
 	Caller      ActionContext
-	APIVersion  int
 	Depth       int
 	SocketPath  string
 	LogPath     string
@@ -210,7 +209,6 @@ func buildEnv(opts ExecOptions) []string {
 		"JIN_WORKDIR="+opts.Env.WorkDir,
 		"JIN_TMUX_PANE_ID="+opts.Env.TmuxPaneID,
 		"JIN_NOTIFY_KIND="+opts.Env.NotifyKind,
-		"JIN_PLUGIN_API_VERSION="+strconv.Itoa(opts.APIVersion),
 		"JIN_PLUGIN_DEPTH="+strconv.Itoa(opts.Depth),
 		"JIN_SOCKET="+opts.SocketPath,
 	)

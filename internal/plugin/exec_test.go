@@ -42,7 +42,6 @@ func TestExecPlugin_Success(t *testing.T) {
 		PluginDir:  pluginDir,
 		Run:        run,
 		Env:        sampleEvent(),
-		APIVersion: 1,
 		Depth:      0,
 		SocketPath: "/run/jin.sock",
 		LogPath:    logPath,
@@ -67,7 +66,6 @@ func TestExecPlugin_Success(t *testing.T) {
 		"JIN_WORKDIR=/tmp/fake-work",
 		"JIN_TMUX_PANE_ID=%3",
 		"JIN_NOTIFY_KIND=task-complete",
-		"JIN_PLUGIN_API_VERSION=1",
 		"JIN_PLUGIN_DEPTH=0",
 		"JIN_SOCKET=/run/jin.sock",
 	}
@@ -75,6 +73,11 @@ func TestExecPlugin_Success(t *testing.T) {
 		if !strings.Contains(env, want) {
 			t.Errorf("env missing %q; env:\n%s", want, env)
 		}
+	}
+	// The unified manifest dropped the plugin-facing api_version concept;
+	// make sure the env var is not re-introduced by accident.
+	if strings.Contains(env, "JIN_PLUGIN_API_VERSION") {
+		t.Errorf("JIN_PLUGIN_API_VERSION should not be exported anymore; env:\n%s", env)
 	}
 	// JIN_BIN carries os.Executable() of the dispatching process — here the
 	// test binary — so assert presence and non-emptiness, not an exact path.
@@ -247,7 +250,6 @@ func TestLogPath(t *testing.T) {
 func TestBuildEnv_ExportsPopupSize_WhenSet(t *testing.T) {
 	env := buildEnv(ExecOptions{
 		Env:         sampleEvent(),
-		APIVersion:  1,
 		SocketPath:  "/run/jin.sock",
 		PopupWidth:  "40%",
 		PopupHeight: "20%",
@@ -264,7 +266,6 @@ func TestBuildEnv_ExportsPopupSize_WhenSet(t *testing.T) {
 func TestBuildEnv_OmitsPopupSize_WhenEmpty(t *testing.T) {
 	env := buildEnv(ExecOptions{
 		Env:        sampleEvent(),
-		APIVersion: 1,
 		SocketPath: "/run/jin.sock",
 	})
 	joined := strings.Join(env, "\n")
@@ -279,7 +280,6 @@ func TestBuildEnv_OmitsPopupSize_WhenEmpty(t *testing.T) {
 func TestBuildEnv_OmitsWidthOnlyWhenHeightUnset(t *testing.T) {
 	env := buildEnv(ExecOptions{
 		Env:        sampleEvent(),
-		APIVersion: 1,
 		SocketPath: "/run/jin.sock",
 		PopupWidth: "40%",
 	})

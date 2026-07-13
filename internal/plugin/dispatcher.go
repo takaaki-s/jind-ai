@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/debug"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
 var pluginLog = debug.NewLogger("plugin-debug.log")
@@ -34,7 +35,7 @@ const debouncePruneThreshold = 128
 // explicit size" and the caller of `jin pane popup --here` falls through to
 // tmux's built-in default. The resolver takes precedence in the order:
 // user config > manifest declaration > global plugin default > hardcoded.
-type PopupSizeResolver func(pluginName string, manifest *PopupConfig) (width, height string)
+type PopupSizeResolver func(pluginName string, m *manifest.PopupConfig) (width, height string)
 
 // EventDispatcher fans events out to installed plugins. Publish never blocks:
 // registry reads and plugin processes run on background goroutines, and every
@@ -62,7 +63,7 @@ func NewDispatcher(registry *Registry, pluginsDir, stateDir, socketPath string, 
 		debounce = DefaultDebounce
 	}
 	if popupResolver == nil {
-		popupResolver = func(string, *PopupConfig) (string, string) { return "", "" }
+		popupResolver = func(string, *manifest.PopupConfig) (string, string) { return "", "" }
 	}
 	return &EventDispatcher{
 		registry:      registry,
@@ -148,10 +149,9 @@ func (d *EventDispatcher) run(e Entry, ev Event, depth int, actx ActionContext) 
 
 	err := ExecPlugin(ctx, ExecOptions{
 		PluginDir:   filepath.Join(d.pluginsDir, e.Name),
-		Run:         e.Manifest.Run,
+		Run:         e.Manifest.Entrypoint(),
 		Env:         ev,
 		Caller:      actx,
-		APIVersion:  e.Manifest.APIVersion,
 		Depth:       depth,
 		SocketPath:  d.socketPath,
 		LogPath:     LogPath(d.stateDir, e.Name),
@@ -164,9 +164,9 @@ func (d *EventDispatcher) run(e Entry, ev Event, depth int, actx ActionContext) 
 	}
 }
 
-func (d *EventDispatcher) matches(m *Manifest, ev Event) bool {
+func (d *EventDispatcher) matches(m *manifest.Manifest, ev Event) bool {
 	for _, matcher := range m.On {
-		if MatcherMatches(matcher, ev.Name, ev.Status) {
+		if manifest.MatcherMatches(matcher, ev.Name, ev.Status) {
 			return true
 		}
 	}

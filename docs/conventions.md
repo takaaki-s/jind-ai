@@ -71,25 +71,32 @@ If a new package needs debug logging, duplicate the same pattern.
 ## Plugin Manifest (popup declaration)
 
 A plugin author can declare a preferred popup size for its `jin pane popup
---here` calls in `jin-plugin.yaml`:
+--here` calls in `jind-ai-plugin.yaml`:
 
 ```yaml
+schema_version: 1
 name: my-notifier
-api_version: 1
+version: 0.1.0
+description: ...
+jin: ">=0.7.0"
+install:
+  source:
+    build: ["true"]
+    entrypoint: ./notifier.sh
 on: [status_changed]
-run: notifier.sh
 popup:                # optional; percent int 1-100
   width: 40
   height: 20
 ```
 
-Both fields are optional (unset means "no preference — dispatcher falls
-through to the plugin_default"). Out-of-range values (e.g. `width: 150`)
-are rejected by `Manifest.Validate` and land the plugin in
-`StateBroken`. Users can override the manifest per-plugin in their own
-config under `popups.plugins.<name>` — that path takes precedence over
-the manifest. See [architecture.md](architecture.md#popup-size-resolution)
-for the full resolution chain.
+Both `popup` fields are optional (unset means "no preference — dispatcher
+falls through to the plugin_default"). Out-of-range values (e.g.
+`width: 150`) are rejected by `pkg/plugin/manifest.Check` and land the
+plugin in `StateBroken`. Users can override the manifest per-plugin in
+their own config under `popups.plugins.<name>` — that path takes
+precedence over the manifest. See
+[architecture.md](architecture.md#popup-size-resolution) for the full
+resolution chain.
 
 ## Testing
 

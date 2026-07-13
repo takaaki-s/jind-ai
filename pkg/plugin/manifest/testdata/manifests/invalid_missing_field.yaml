@@ -1,0 +1,8 @@
+schema_version: 1
+name: hello-plugin
+description: Missing version and jin
+install:
+  source:
+    build:
+      - go build
+    entrypoint: ./bin/hello
