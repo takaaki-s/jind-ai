@@ -82,15 +82,17 @@ func loadRegistryDocument(url string, refresh bool) (*manifest.RegistryDocument,
 }
 
 // filterRegistryEntries returns entries whose name or description contains
-// search (case-insensitive). Always returns a non-nil slice so `--json` emits
-// `[]` rather than `null` when nothing matches.
+// search (case-insensitive). Callers may sort the result in place. Always
+// returns a non-nil slice so `--json` emits `[]` rather than `null`.
 func filterRegistryEntries(entries []manifest.RegistryEntry, search string) []manifest.RegistryEntry {
-	out := make([]manifest.RegistryEntry, 0, len(entries))
 	if search == "" {
-		out = append(out, entries...)
-		return out
+		if entries == nil {
+			return []manifest.RegistryEntry{}
+		}
+		return entries
 	}
 	q := strings.ToLower(search)
+	out := make([]manifest.RegistryEntry, 0, len(entries))
 	for _, e := range entries {
 		if strings.Contains(strings.ToLower(e.Name), q) || strings.Contains(strings.ToLower(e.Description), q) {
 			out = append(out, e)
@@ -101,12 +103,12 @@ func filterRegistryEntries(entries []manifest.RegistryEntry, search string) []ma
 
 func sortRegistryEntries(entries []manifest.RegistryEntry, key string) {
 	if key == "updated" {
-		sort.SliceStable(entries, func(i, j int) bool {
+		sort.Slice(entries, func(i, j int) bool {
 			return entries[i].UpdatedAt.After(entries[j].UpdatedAt)
 		})
 		return
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
+	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name < entries[j].Name
 	})
 }

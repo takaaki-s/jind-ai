@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/takaaki-s/jind-ai/internal/exitcode"
-	"github.com/takaaki-s/jind-ai/internal/paths"
 	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
 
@@ -177,16 +176,7 @@ func (a registryLookupAdapter) Lookup(name string) (owner string, latestVersion 
 }
 
 func loadRegistryLookup(url string) (manifest.RegistryLookup, error) {
-	client, err := manifest.NewClient(manifest.ClientConfig{
-		URL:      url,
-		CacheDir: filepath.Join(paths.State(), "registry"),
-	})
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	doc, _, err := client.Load(ctx, manifest.LoadOptions{})
+	doc, _, err := loadRegistryDocument(url, false)
 	if err != nil {
 		return nil, err
 	}
