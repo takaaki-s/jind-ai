@@ -34,7 +34,7 @@ jin session new --agent codex --workdir ~/repos/myrepo
 - **アタッチ/デタッチ**: セッション間を素早く切り替え（`Ctrl+]` でデタッチ）
 - **リアルタイム状態追跡**: 作業ディレクトリ・ブランチ・最新メッセージをリアルタイム表示
 - **セッションフィルタ・ページング**: `M-f`（Alt+f、旧: `/`）でファジー検索ポップアップを起動、セッション名・ディレクトリ・ブランチ・フリート・エージェント種別を横断検索
-- **プラグイン**: セッションの状態変化やオンデマンドで独自のシェルスクリプトを実行可能。例: `jin plugin install github.com/takaaki-s/jind-ai-notifier` でデスクトップ通知を有効化
+- **プラグイン**: セッションの状態変化やオンデマンドで独自のシェルスクリプトを実行可能。例: `jin plugin install jind-ai-notifier` でデスクトップ通知を有効化（レジストリ名指定。git URL やローカル `--link` パスにも対応）
 
 ## インストール
 
@@ -44,7 +44,7 @@ jin session new --agent codex --workdir ~/repos/myrepo
 
 ```bash
 # 例: Linux amd64
-curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.1.0_linux_amd64.tar.gz
+curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.7.0_linux_amd64.tar.gz
 tar xzf jind-ai.tar.gz
 sudo mv jin /usr/local/bin/
 ```
@@ -480,6 +480,8 @@ hook が非ゼロ終了またはタイムアウトすると、worktree とブラ
 
 jind-ai では、セッションのステータス変化に反応して、あるいはオンデマンドで、任意のシェル実行可能なプラグインを実行できます。プラグインはマニフェストとエントリーポイントのスクリプトを持つディレクトリです。jind-ai はスクリプトが何をするかには関与せず、いつ実行されどんな環境を受け取るかだけを管理します。
 
+コミュニティプラグインは [plugin registry](docs/plugin-registry.md) から発見できます。`jin plugin ls-remote` で一覧、`jin plugin install <name>` でレジストリ名指定インストール（コミット SHA ピン + 同意画面付き）が可能です。詳細な discover / install / publish フロー、pre-1.0 破壊的変更ポリシーは [docs/plugin-registry.md](docs/plugin-registry.md) を参照してください。
+
 ### 2 通りの実行方式
 
 - **Event listener（イベントリスナー）** — マニフェストの `on:` マッチャー経由で `status_changed` を購読します。通知、ロギング、CI トリガーなど、非対話的な用途に向いています。注意: イベントはステータスが実際に変化した時のみ発火します。ステータス遷移を伴わない通知（既に idle の状態での再停止など）は dispatch されません。
@@ -568,16 +570,26 @@ jin pane send-keys "$JIN_SESSION_ID" <keys>
 ### インストール / 更新 / 削除 / 一覧
 
 ```bash
-# From a git source (github.com/, gitlab.com/, self-hosted, ssh URLs, ...)
-jin plugin install github.com/owner/repo          # default branch
-jin plugin install github.com/owner/repo@v1.2.0   # pinned to a tag/branch/SHA
+# レジストリから (docs/plugin-registry.md 参照)
+jin plugin ls-remote                              # レジストリのプラグイン一覧
+jin plugin install jind-ai-notifier               # latest_version、レジストリ経由で SHA ピン
+jin plugin install jind-ai-notifier -v 0.2.0      # 特定バージョンを指定
+jin plugin install jind-ai-notifier --force       # jin 互換範囲外でも強制インストール
 
-# From a local directory, symlinked in place (development)
+# git ソースから (github.com/、gitlab.com/、self-hosted、ssh URL ...)
+jin plugin install github.com/owner/repo          # default branch
+jin plugin install github.com/owner/repo@v1.2.0   # tag / branch / SHA でピン
+
+# ローカルディレクトリから（開発時、symlink）
 jin plugin install --link ./my-plugin
 
 jin plugin update <name>
 jin plugin remove <name>
 jin plugin list          # NAME / VERSION / STATE / SOURCE; --json for scripting
+
+# マニフェストの validate — レジストリクローラーと同じチェック
+jin plugin validate                               # デフォルトはカレントディレクトリ
+jin plugin validate --github-actions              # ::error / ::warning annotation 形式で出力
 ```
 
 git からの install/update では、何かに触れる前にマニフェスト（`name`、`version`、`on`、`entrypoint`、`build`）と解決したコミット SHA を表示し、確認を求めます（`--yes` でスキップ可）。承認されたコミット SHA は `plugins.lock.yaml` に記録されるため、以降の `install`/`update` が確認時と異なるコミットへ黙って進むことはありません。`--link` したプラグインはこの確認をスキップします — ローカルパスをリンクすること自体が信頼の意思表示であり、jind-ai はリンクされたプラグインに対してビルドを実行しません。

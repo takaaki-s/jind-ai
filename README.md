@@ -40,7 +40,7 @@ jin ui --agent codex   # transient default; ends when TUI exits
 - **Attach/Detach**: Quickly switch between sessions (`Ctrl+]` to detach)
 - **Real-time status tracking**: Live display of working directory, branch, and latest message
 - **Session filter & Paging**: `/` opens a fuzzy-search popup over session name, directory, branch, fleet, and agent kind
-- **Plugins**: Run your own shell-executable plugins on session status changes or on demand — for example, desktop notifications via `jin plugin install github.com/takaaki-s/jind-ai-notifier`
+- **Plugins**: Run your own shell-executable plugins on session status changes or on demand — for example, desktop notifications via `jin plugin install jind-ai-notifier` (registry name; git URLs and local `--link` paths are also supported)
 
 ## Installation
 
@@ -50,7 +50,7 @@ Download the binary for your OS/architecture from the [Releases page](https://gi
 
 ```bash
 # Example: Linux amd64
-curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.1.0_linux_amd64.tar.gz
+curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.7.0_linux_amd64.tar.gz
 tar xzf jind-ai.tar.gz
 sudo mv jin /usr/local/bin/
 ```
@@ -545,6 +545,12 @@ status changes, or on demand. A plugin is a directory with a manifest and an
 entry-point script; jind-ai never inspects what the script does, only when
 it runs and what environment it gets.
 
+Community plugins are discoverable through the [plugin registry](docs/plugin-registry.md):
+`jin plugin ls-remote` lists them, `jin plugin install <name>` installs one
+by registry name with a commit-pinned consent screen. See
+[docs/plugin-registry.md](docs/plugin-registry.md) for the full discover /
+install / publish flow and the pre-1.0 break policy.
+
 ### Two ways a plugin runs
 
 - **Event listener** — subscribes to `status_changed` via the manifest's
@@ -650,6 +656,12 @@ across a `schema_version` bump (or, pre-1.0, across a minor jin release).
 ### Install / update / remove / list
 
 ```bash
+# From the plugin registry (see docs/plugin-registry.md)
+jin plugin ls-remote                              # list plugins in the registry
+jin plugin install jind-ai-notifier               # latest_version, SHA-pinned via registry
+jin plugin install jind-ai-notifier -v 0.2.0      # pin a specific version
+jin plugin install jind-ai-notifier --force       # override an unsatisfied jin compat range
+
 # From a git source (github.com/, gitlab.com/, self-hosted, ssh URLs, ...)
 jin plugin install github.com/owner/repo          # default branch
 jin plugin install github.com/owner/repo@v1.2.0   # pinned to a tag/branch/SHA
@@ -660,6 +672,10 @@ jin plugin install --link ./my-plugin
 jin plugin update <name>
 jin plugin remove <name>
 jin plugin list          # NAME / VERSION / STATE / SOURCE; --json for scripting
+
+# Validate a manifest — same checks the registry crawler runs
+jin plugin validate                               # defaults to .
+jin plugin validate --github-actions              # emit ::error / ::warning annotations
 ```
 
 A git install/update shows the manifest (`name`, `version`, `on`,
