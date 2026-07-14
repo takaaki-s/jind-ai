@@ -18,7 +18,7 @@ func makeDoc() *manifest.RegistryDocument {
 		Plugins: []manifest.RegistryEntry{
 			{
 				Name:          "jind-ai-notifier",
-				Repo:          "github.com/foo/jind-ai-notifier",
+				Repo:          "foo/jind-ai-notifier",
 				JinCompat:     ">=0.7.0",
 				LatestVersion: "0.2.0",
 				Versions: []manifest.RegistryVersion{
@@ -28,7 +28,7 @@ func makeDoc() *manifest.RegistryDocument {
 			},
 			{
 				Name:          "empty-plugin",
-				Repo:          "github.com/foo/empty-plugin",
+				Repo:          "foo/empty-plugin",
 				JinCompat:     ">=0.7.0",
 				LatestVersion: "",
 			},

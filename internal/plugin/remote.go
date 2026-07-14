@@ -9,6 +9,7 @@ package plugin
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
 )
@@ -23,20 +24,18 @@ type RemoteResolution struct {
 }
 
 // Source returns the Source that, passed to Fetch, will clone the resolved
-// repo at the resolved SHA. The registry normally records Repo as
-// "github.com/owner/name" but is tolerant of full URLs (mirrors, forks,
-// file:// fixtures) — the URL-shape rules already live in ParseSource, so
-// we round-trip through it to keep the two callers of that grammar in sync.
+// repo at the resolved SHA. Registry entries record Repo as bare
+// "owner/name" (the crawler's GitHub FullName), and the MVP registry is
+// GitHub-only, so bare entries are treated as github.com/<repo>. Entries
+// carrying a URL scheme (file://, http://…) are passed through unchanged so
+// integration tests and future mirrors do not need a live GitHub.
 func (r RemoteResolution) Source() Source {
-	src, err := ParseSource(r.Entry.Repo + "@" + r.Version.SHA)
-	if err != nil {
-		// ParseSource only rejects an empty repo, which the registry
-		// crawler cannot emit — a Manifest without name/repo never lands
-		// in registry.json. A zero Source here would confuse Fetch, so
-		// fall back to the historical hand-built shape.
-		return Source{Raw: r.Entry.Repo + "@" + r.Version.SHA, CloneURL: r.Entry.Repo, Ref: r.Version.SHA}
+	raw := r.Entry.Repo + "@" + r.Version.SHA
+	cloneURL := r.Entry.Repo
+	if !strings.Contains(cloneURL, "://") {
+		cloneURL = "https://github.com/" + cloneURL
 	}
-	return src
+	return Source{Raw: raw, CloneURL: cloneURL, Ref: r.Version.SHA}
 }
 
 // ResolveRemote looks up name in doc and picks a version. An empty versionPin
