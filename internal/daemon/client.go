@@ -310,11 +310,29 @@ func (c *Client) PanePopup(id, cmd, title, width, height string) error {
 	return nil
 }
 
-// PaneSplit splits the session's pane and runs cmd in the new pane. An empty
-// cmd just opens a shell in the new pane.
-func (c *Client) PaneSplit(id, cmd string, horizontal bool, percent int) error {
-	data, _ := json.Marshal(PaneSplitRequest{ID: id, Cmd: cmd, Horizontal: horizontal, Percent: percent})
+// PaneSplit splits the session's pane per req and returns the new pane's ID —
+// or, for a named slot that already exists, the reused pane's ID. An empty
+// req.Cmd just opens a shell in the new pane.
+func (c *Client) PaneSplit(req PaneSplitRequest) (string, error) {
+	data, _ := json.Marshal(req)
 	resp, err := c.send(Request{Action: "pane-split", Data: data})
+	if err != nil {
+		return "", err
+	}
+	if !resp.Success {
+		return "", errors.New(resp.Error)
+	}
+	var out PaneSplitResponse
+	if err := json.Unmarshal(resp.Data, &out); err != nil {
+		return "", err
+	}
+	return out.PaneID, nil
+}
+
+// PaneClose kills the named-slot pane created by PaneSplit with a name.
+func (c *Client) PaneClose(id, name string) error {
+	data, _ := json.Marshal(PaneCloseRequest{ID: id, Name: name})
+	resp, err := c.send(Request{Action: "pane-close", Data: data})
 	if err != nil {
 		return err
 	}

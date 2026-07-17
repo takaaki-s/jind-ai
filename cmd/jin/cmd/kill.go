@@ -27,6 +27,7 @@ type actionResult struct {
 	Success     bool   `json:"success"`
 	ID          string `json:"id"`
 	Description string `json:"description"`
+	PaneID      string `json:"pane_id,omitempty"`
 }
 
 var killCmd = &cobra.Command{

@@ -47,6 +47,7 @@ type Manager struct {
 	gitClient      *git.Client
 	agentResolver  AgentResolver // resolves AgentKind → Agent adapter (owns Layer C enhancer via Description())
 	mu             sync.RWMutex
+	paneSlotMu     sync.Mutex // serializes named-slot pane operations (find-then-split is check-then-act; see PaneSplit/PaneClose)
 	stateDir       string
 	tmuxSocketName string // "" ⇒ tmux.SocketName; tests set an isolated name so ensureTmuxClient does not touch the shared "jin" server
 }
@@ -740,16 +741,61 @@ func (m *Manager) PanePopup(id, cmd, title, width, height string) error {
 	})
 }
 
-// PaneSplit splits the session's pane and runs cmd in the new pane.
-func (m *Manager) PaneSplit(id, cmd string, horizontal bool, percent int) error {
+// PaneSplit splits the session's pane in its working directory and returns
+// the new pane's ID. With name set the split becomes idempotent: when a pane
+// with that name already exists in the session's window, no new pane is
+// created — the existing pane is returned as-is (noop), respawned with
+// opts.Cmd (respawn), or reported as an error (error), per ifExists.
+// The caller (daemon handler) validates name/ifExists/opts; the manager
+// trusts them and only injects the session's working directory.
+func (m *Manager) PaneSplit(id, name, ifExists string, opts tmux.SplitOptions) (string, error) {
+	if m.tmuxClient == nil {
+		return "", fmt.Errorf("tmux is not available")
+	}
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return "", fmt.Errorf("session not found: %s", id)
+	}
+	target, err := paneTargetLocked(sess)
+	opts.Dir = sess.WorkDir
+	m.mu.RUnlock()
+	if err != nil {
+		return "", err
+	}
+
+	// Named-slot idempotency is check-then-act inside EnsureNamedPane, and the
+	// daemon handles connections concurrently — serialize so two simultaneous
+	// splits of the same slot cannot both miss the find and split twice.
+	if name != "" {
+		m.paneSlotMu.Lock()
+		defer m.paneSlotMu.Unlock()
+	}
+	return tmux.EnsureNamedPane(m.tmuxClient, target, name, ifExists, opts)
+}
+
+// PaneClose kills the pane named name in the session's window. It refuses to
+// kill the session's agent pane even if that pane somehow carries the name.
+func (m *Manager) PaneClose(id, name string) error {
 	if m.tmuxClient == nil {
 		return fmt.Errorf("tmux is not available")
 	}
-	target, err := m.PaneTarget(id)
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return fmt.Errorf("session not found: %s", id)
+	}
+	target, err := paneTargetLocked(sess)
+	agentPane := sess.TmuxPaneID
+	m.mu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return m.tmuxClient.SplitWindow(target, horizontal, percent, cmd)
+	m.paneSlotMu.Lock()
+	defer m.paneSlotMu.Unlock()
+	return tmux.CloseNamedPane(m.tmuxClient, target, name, agentPane)
 }
 
 // PaneCapture returns the visible contents of the session's pane.

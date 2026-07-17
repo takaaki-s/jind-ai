@@ -3,6 +3,8 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -31,7 +33,61 @@ const (
 	// PaneKeepTag is a custom pane option that marks managed panes (CC, TUI).
 	// Panes with this tag are preserved on exit; untagged panes are auto-killed.
 	PaneKeepTag = "@jin-keep"
+
+	// PaneNameOption is a custom pane option holding a named-slot pane's name
+	// (see SplitPane + FindPaneByName). Named slots make plugin-driven splits
+	// idempotent: split --name reuses the existing pane instead of stacking a
+	// new one on every invocation.
+	PaneNameOption = "@jin-pane-name"
 )
+
+// IfExists policies for named-slot splits: what to do when a pane with the
+// requested name already exists in the target window.
+const (
+	IfExistsNoop    = "noop"    // reuse the existing pane as-is (default)
+	IfExistsRespawn = "respawn" // respawn the existing pane with the new command
+	IfExistsError   = "error"   // fail instead of reusing
+)
+
+// ValidateIfExists checks an if-exists policy value. Empty means IfExistsNoop.
+func ValidateIfExists(v string) error {
+	switch v {
+	case "", IfExistsNoop, IfExistsRespawn, IfExistsError:
+		return nil
+	}
+	return fmt.Errorf("invalid if-exists %q (want noop, respawn or error)", v)
+}
+
+// ValidateSlotOptions is the composed validator both the CLI and the daemon
+// handler run on a named-slot split. Keeping it in one place also keeps the
+// error text (which the user sees) identical across both entry points.
+func ValidateSlotOptions(name, ifExists string, opts SplitOptions) error {
+	if err := opts.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateIfExists(ifExists); err != nil {
+		return err
+	}
+	if ifExists != "" && name == "" {
+		return fmt.Errorf("--if-exists requires --name")
+	}
+	if name != "" {
+		return ValidatePaneName(name)
+	}
+	return nil
+}
+
+// paneNameRe restricts named-slot pane names to a shell- and tmux-format-safe
+// subset: an alphanumeric first character, then up to 63 of [a-zA-Z0-9._-].
+var paneNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+
+// ValidatePaneName checks a named-slot pane name (the PaneNameOption value).
+func ValidatePaneName(name string) error {
+	if !paneNameRe.MatchString(name) {
+		return fmt.Errorf("invalid pane name %q (want an alphanumeric first character, then up to 63 of letters, digits, '.', '_' or '-')", name)
+	}
+	return nil
+}
 
 // SocketPathFromEnv extracts the server socket path from a $TMUX value, whose
 // format is "<socket-path>,<pid>,<session-index>". It returns "" for an empty
@@ -298,22 +354,175 @@ func (c *Client) RespawnPane(target, shellCmd string) error {
 
 // --- Pane management ---
 
-// SplitWindow splits a window into panes.
-// horizontal=true creates a left-right split.
-// percent is the size of the new pane (e.g., 75 for 75%).
-// shellCmd is the command to run in the new pane.
-func (c *Client) SplitWindow(target string, horizontal bool, percent int, shellCmd string) error {
-	args := []string{"split-window", "-t", target}
-	if horizontal {
+// SplitOptions configures a SplitPane call, mirroring tmux split-window's
+// vocabulary rather than inventing a new one.
+type SplitOptions struct {
+	Direction string // where the new pane opens: "down" (empty = down), "up", "left", "right"
+	Size      string // new pane size: "30%" (percent) or "15" (lines/columns); empty = tmux default
+	Full      bool   // span the full window width/height (-f)
+	NoFocus   bool   // keep focus on the current pane (-d)
+	Dir       string // working directory for the new pane (-c); empty = tmux default
+	Cmd       string // command to run in the new pane; empty = shell
+}
+
+// Validate checks Direction and Size. Percent sizes are limited to 1-99;
+// line/column sizes must be positive integers.
+func (o SplitOptions) Validate() error {
+	switch o.Direction {
+	case "", "down", "up", "left", "right":
+	default:
+		return fmt.Errorf("invalid direction %q (want down, up, left or right)", o.Direction)
+	}
+	if o.Size == "" {
+		return nil
+	}
+	if pct, ok := strings.CutSuffix(o.Size, "%"); ok {
+		if n, err := strconv.Atoi(pct); err == nil && n >= 1 && n <= 99 {
+			return nil
+		}
+	} else if n, err := strconv.Atoi(o.Size); err == nil && n >= 1 {
+		return nil
+	}
+	return fmt.Errorf("invalid size %q (want a percentage like \"30%%\" or a line count like \"15\")", o.Size)
+}
+
+// buildSplitArgs translates SplitOptions into split-window arguments. Kept as
+// a pure function so the flag translation is unit-testable without tmux.
+func buildSplitArgs(target string, o SplitOptions) []string {
+	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}
+	switch o.Direction {
+	case "up":
+		args = append(args, "-v", "-b")
+	case "right":
 		args = append(args, "-h")
+	case "left":
+		args = append(args, "-h", "-b")
+	default: // "", "down"
+		args = append(args, "-v")
 	}
-	if percent > 0 {
-		args = append(args, "-l", fmt.Sprintf("%d%%", percent))
+	if o.Full {
+		args = append(args, "-f")
 	}
-	if shellCmd != "" {
-		args = append(args, shellCmd)
+	if o.NoFocus {
+		args = append(args, "-d")
 	}
-	return c.runSilent(args...)
+	if o.Size != "" {
+		args = append(args, "-l", o.Size)
+	}
+	if o.Dir != "" {
+		args = append(args, "-c", o.Dir)
+	}
+	if o.Cmd != "" {
+		args = append(args, o.Cmd)
+	}
+	return args
+}
+
+// SplitPane splits the target pane per opts and returns the new pane's ID
+// (via split-window -P -F "#{pane_id}"). Trusts opts — callers reaching this
+// layer (daemon handler + CLI) have already run Validate at the trust
+// boundary.
+func (c *Client) SplitPane(target string, opts SplitOptions) (string, error) {
+	return c.run(buildSplitArgs(target, opts)...)
+}
+
+// matchPaneByName scans list-panes output ("<pane_id> <name>" per line, name
+// possibly empty) for an exact name match. Pure helper for FindPaneByName.
+func matchPaneByName(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if id, got, _ := strings.Cut(line, " "); id != "" && got == name {
+			return id
+		}
+	}
+	return ""
+}
+
+// FindPaneByName returns the pane in target's window whose PaneNameOption
+// equals name, or "" when no such pane exists. target may be a pane ID or a
+// window target; tmux resolves either to the containing window.
+func (c *Client) FindPaneByName(target, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("pane name is required")
+	}
+	out, err := c.run("list-panes", "-t", target, "-F", "#{pane_id} #{"+PaneNameOption+"}")
+	if err != nil {
+		return "", err
+	}
+	return matchPaneByName(out, name), nil
+}
+
+// PaneSlotOps is the subset of pane operations EnsureNamedPane needs. Both
+// Runner and *Client satisfy it.
+type PaneSlotOps interface {
+	FindPaneByName(target, name string) (string, error)
+	SplitPane(target string, opts SplitOptions) (string, error)
+	SetPaneOption(target, option, value string) error
+	RespawnPane(target, cmd string) error
+	KillPane(target string) error
+}
+
+// EnsureNamedPane runs the named-slot split procedure shared by the daemon
+// path (session.Manager.PaneSplit) and the CLI --here path: when a pane named
+// name already exists in target's window, apply the ifExists policy
+// (IfExistsNoop/Respawn/Error); otherwise split target per opts and tag the
+// new pane with name. An empty name degrades to a plain split. The
+// find-then-split sequence is check-then-act: callers that need idempotency
+// under concurrent invocations serialize calls themselves (session.Manager
+// holds a lock; --here is unarbitrated).
+func EnsureNamedPane(ops PaneSlotOps, target, name, ifExists string, opts SplitOptions) (string, error) {
+	if ifExists == "" {
+		ifExists = IfExistsNoop
+	}
+	if name != "" {
+		existing, err := ops.FindPaneByName(target, name)
+		if err != nil {
+			return "", err
+		}
+		if existing != "" {
+			switch ifExists {
+			case IfExistsRespawn:
+				if err := ops.RespawnPane(existing, opts.Cmd); err != nil {
+					return "", err
+				}
+				return existing, nil
+			case IfExistsError:
+				return "", fmt.Errorf("pane %q already exists", name)
+			default: // IfExistsNoop
+				return existing, nil
+			}
+		}
+	}
+	newID, err := ops.SplitPane(target, opts)
+	if err != nil {
+		return "", err
+	}
+	if name != "" {
+		if err := ops.SetPaneOption(newID, PaneNameOption, name); err != nil {
+			// An unnamed leftover pane would break the slot's idempotency for
+			// good (never found, split again every time), so tear it down.
+			_ = ops.KillPane(newID)
+			return "", fmt.Errorf("pane %s created but naming failed (pane removed): %w", newID, err)
+		}
+	}
+	return newID, nil
+}
+
+// CloseNamedPane is EnsureNamedPane's teardown mirror: find the named pane in
+// target's window and kill it, refusing to touch protected (empty = no
+// protected pane). Callers keep the "which pane is off-limits" decision
+// (session's agent pane / --here's anchor pane) at their own layer.
+func CloseNamedPane(ops PaneSlotOps, target, name, protected string) error {
+	paneID, err := ops.FindPaneByName(target, name)
+	if err != nil {
+		return err
+	}
+	if paneID == "" {
+		return fmt.Errorf("no pane named %q", name)
+	}
+	if protected != "" && paneID == protected {
+		return fmt.Errorf("refusing to kill protected pane %s", paneID)
+	}
+	return ops.KillPane(paneID)
 }
 
 // SwapPane swaps two panes.

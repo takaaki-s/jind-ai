@@ -365,7 +365,7 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd, agentFlag string) error {
 
 	// Create right pane (75%) for session display.
 	// Split using window target (not pane index) to avoid pane-base-index issues.
-	_ = tc.SplitWindow(windowTarget, true, 75, tmux.PlaceholderCmd)
+	_, _ = tc.SplitPane(windowTarget, tmux.SplitOptions{Direction: "right", Size: "75%", Cmd: tmux.PlaceholderCmd})
 
 	// After split, the new pane (display) is the active pane. Get its ID.
 	displayPaneID, _ := tc.GetPaneID(windowTarget)

@@ -21,6 +21,12 @@ type mockTmuxRunner struct {
 	panePaths map[string]string // target -> current path (GetPaneCurrentPath return value)
 	captured  map[string]string // target -> content (CapturePane return value)
 
+	// splitPaneIDs overrides the pane ID SplitPane returns for a given
+	// target; unset targets get "%99". namedPanes maps a slot name to the
+	// pane ID FindPaneByName reports ("" / unset = not found).
+	splitPaneIDs map[string]string
+	namedPanes   map[string]string
+
 	// capturedSequence overrides captured for tests that need CapturePane
 	// to return different values on successive calls (send-verify retry
 	// scenarios). If set, entries are consumed in order and the final
@@ -59,6 +65,8 @@ func newMockTmuxRunner() *mockTmuxRunner {
 		paneIDs:            make(map[string]string),
 		panePaths:          make(map[string]string),
 		captured:           make(map[string]string),
+		splitPaneIDs:       make(map[string]string),
+		namedPanes:         make(map[string]string),
 		capturedSequence:   make(map[string][]string),
 		capturedIdx:        make(map[string]int),
 		captureErr:         make(map[string]error),
@@ -148,8 +156,21 @@ func (m *mockTmuxRunner) DisplayPopup(opts tmux.DisplayPopupOptions) error {
 	return nil
 }
 
-func (m *mockTmuxRunner) SplitWindow(target string, horizontal bool, percent int, shellCmd string) error {
-	m.record("SplitWindow", target, shellCmd)
+func (m *mockTmuxRunner) SplitPane(target string, opts tmux.SplitOptions) (string, error) {
+	m.record("SplitPane", target, opts.Cmd, opts.Direction, opts.Size, opts.Dir)
+	if id, ok := m.splitPaneIDs[target]; ok {
+		return id, nil
+	}
+	return "%99", nil
+}
+
+func (m *mockTmuxRunner) FindPaneByName(target, name string) (string, error) {
+	m.record("FindPaneByName", target, name)
+	return m.namedPanes[name], nil
+}
+
+func (m *mockTmuxRunner) SetPaneOption(target, option, value string) error {
+	m.record("SetPaneOption", target, option, value)
 	return nil
 }
 

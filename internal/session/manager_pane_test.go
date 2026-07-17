@@ -2,6 +2,8 @@ package session
 
 import (
 	"testing"
+
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // paneTestSession creates a stopped session and sets its tmux fields under the
@@ -127,11 +129,140 @@ func TestManager_PaneSplit_DelegatesToTmux(t *testing.T) {
 	mgr, mock, _ := newTestManager(t)
 	sess := paneTestSession(t, mgr, "/tmp/pane-split", "%13", "sess-split")
 
-	if err := mgr.PaneSplit(sess.ID, "top", true, 30); err != nil {
+	paneID, err := mgr.PaneSplit(sess.ID, "", "", tmux.SplitOptions{Cmd: "top", Direction: "right", Size: "30%"})
+	if err != nil {
 		t.Fatalf("PaneSplit failed: %v", err)
 	}
-	if !mock.hasCalledWith("SplitWindow", "%13") {
-		t.Error("expected SplitWindow to be called with pane target")
+	if paneID != "%99" {
+		t.Errorf("PaneSplit pane ID = %q, want %q", paneID, "%99")
+	}
+
+	var found bool
+	for _, c := range mock.calls {
+		if c.method != "SplitPane" {
+			continue
+		}
+		found = true
+		if c.args[0] != "%13" {
+			t.Errorf("SplitPane target = %q, want %q", c.args[0], "%13")
+		}
+		if c.args[2] != "right" || c.args[3] != "30%" {
+			t.Errorf("SplitPane direction/size = %q/%q, want right/30%%", c.args[2], c.args[3])
+		}
+		if c.args[4] != "/tmp/pane-split" {
+			t.Errorf("SplitPane dir = %q, want session workdir %q", c.args[4], "/tmp/pane-split")
+		}
+	}
+	if !found {
+		t.Error("expected SplitPane to be called")
+	}
+}
+
+func TestManager_PaneSplit_NamedFirstTime(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-named", "%13", "sess-named")
+
+	paneID, err := mgr.PaneSplit(sess.ID, "demo", "", tmux.SplitOptions{Cmd: "top"})
+	if err != nil {
+		t.Fatalf("PaneSplit failed: %v", err)
+	}
+	if paneID != "%99" {
+		t.Errorf("pane ID = %q, want %q", paneID, "%99")
+	}
+	if !mock.hasCalledWith("SplitPane", "%13") {
+		t.Error("expected SplitPane for a not-yet-existing named pane")
+	}
+	var named bool
+	for _, c := range mock.calls {
+		if c.method == "SetPaneOption" && c.args[0] == "%99" && c.args[2] == "demo" {
+			named = true
+		}
+	}
+	if !named {
+		t.Error("expected SetPaneOption to tag the new pane with the slot name")
+	}
+}
+
+func TestManager_PaneSplit_NamedExisting_Noop(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-noop", "%13", "sess-noop")
+	mock.namedPanes["demo"] = "%50"
+
+	paneID, err := mgr.PaneSplit(sess.ID, "demo", "", tmux.SplitOptions{Cmd: "top"})
+	if err != nil {
+		t.Fatalf("PaneSplit failed: %v", err)
+	}
+	if paneID != "%50" {
+		t.Errorf("pane ID = %q, want existing pane %q", paneID, "%50")
+	}
+	if mock.hasCalledWith("SplitPane", "%13") {
+		t.Error("noop must not split when the named pane already exists")
+	}
+}
+
+func TestManager_PaneSplit_NamedExisting_Respawn(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-respawn", "%13", "sess-respawn")
+	mock.namedPanes["demo"] = "%50"
+
+	paneID, err := mgr.PaneSplit(sess.ID, "demo", "respawn", tmux.SplitOptions{Cmd: "htop"})
+	if err != nil {
+		t.Fatalf("PaneSplit failed: %v", err)
+	}
+	if paneID != "%50" {
+		t.Errorf("pane ID = %q, want existing pane %q", paneID, "%50")
+	}
+	if !mock.hasCalledWith("RespawnPane", "%50") {
+		t.Error("expected RespawnPane on the existing named pane")
+	}
+	if mock.hasCalledWith("SplitPane", "%13") {
+		t.Error("respawn must not split when the named pane already exists")
+	}
+}
+
+func TestManager_PaneSplit_NamedExisting_Error(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-err", "%13", "sess-err")
+	mock.namedPanes["demo"] = "%50"
+
+	if _, err := mgr.PaneSplit(sess.ID, "demo", "error", tmux.SplitOptions{}); err == nil {
+		t.Fatal("expected error for if-exists=error on an existing named pane")
+	}
+}
+
+func TestManager_PaneClose_KillsNamedPane(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-close", "%13", "sess-close")
+	mock.namedPanes["demo"] = "%50"
+
+	if err := mgr.PaneClose(sess.ID, "demo"); err != nil {
+		t.Fatalf("PaneClose failed: %v", err)
+	}
+	if !mock.hasCalledWith("KillPane", "%50") {
+		t.Error("expected KillPane on the named pane")
+	}
+}
+
+func TestManager_PaneClose_NotFound(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-close-nf", "%13", "sess-close-nf")
+
+	err := mgr.PaneClose(sess.ID, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for an unknown pane name")
+	}
+}
+
+func TestManager_PaneClose_RefusesAgentPane(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	sess := paneTestSession(t, mgr, "/tmp/pane-close-agent", "%13", "sess-close-agent")
+	mock.namedPanes["demo"] = "%13" // same pane as the session's agent pane
+
+	if err := mgr.PaneClose(sess.ID, "demo"); err == nil {
+		t.Fatal("expected refusal to kill the session's agent pane")
+	}
+	if mock.hasCalledWith("KillPane", "%13") {
+		t.Error("KillPane must not be called on the agent pane")
 	}
 }
 
@@ -143,8 +274,11 @@ func TestManager_Pane_TmuxUnavailable(t *testing.T) {
 	if err := mgr.PanePopup(sess.ID, "cmd", "", "", ""); err == nil {
 		t.Error("PanePopup: expected error when tmux is nil")
 	}
-	if err := mgr.PaneSplit(sess.ID, "cmd", false, 50); err == nil {
+	if _, err := mgr.PaneSplit(sess.ID, "", "", tmux.SplitOptions{Cmd: "cmd"}); err == nil {
 		t.Error("PaneSplit: expected error when tmux is nil")
+	}
+	if err := mgr.PaneClose(sess.ID, "demo"); err == nil {
+		t.Error("PaneClose: expected error when tmux is nil")
 	}
 	if _, err := mgr.PaneCapture(sess.ID, false); err == nil {
 		t.Error("PaneCapture: expected error when tmux is nil")

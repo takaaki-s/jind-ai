@@ -229,6 +229,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handlePanePopup(req.Data)
 	case "pane-split":
 		return s.handlePaneSplit(req.Data)
+	case "pane-close":
+		return s.handlePaneClose(req.Data)
 	case "pane-capture":
 		return s.handlePaneCapture(req.Data)
 	case "pane-send-keys":
@@ -691,12 +693,23 @@ func (s *Server) handlePanePopup(data json.RawMessage) Response {
 }
 
 // PaneSplitRequest is the request payload for the "pane-split" action. Cmd is
-// optional: an empty split just opens a shell in the new pane.
+// optional: an empty split just opens a shell in the new pane. Name enables
+// the idempotent named-slot path; IfExists picks the policy when the named
+// pane already exists (noop/respawn/error, empty = noop).
 type PaneSplitRequest struct {
-	ID         string `json:"id"`
-	Cmd        string `json:"cmd,omitempty"`
-	Horizontal bool   `json:"horizontal,omitempty"`
-	Percent    int    `json:"percent,omitempty"`
+	ID        string `json:"id"`
+	Cmd       string `json:"cmd,omitempty"`
+	Direction string `json:"direction,omitempty"` // down (default), up, left, right
+	Size      string `json:"size,omitempty"`      // "30%" or "15"
+	Full      bool   `json:"full,omitempty"`
+	NoFocus   bool   `json:"no_focus,omitempty"`
+	Name      string `json:"name,omitempty"`
+	IfExists  string `json:"if_exists,omitempty"`
+}
+
+// PaneSplitResponse is the response payload for the "pane-split" action.
+type PaneSplitResponse struct {
+	PaneID string `json:"pane_id"`
 }
 
 func (s *Server) handlePaneSplit(data json.RawMessage) Response {
@@ -707,7 +720,46 @@ func (s *Server) handlePaneSplit(data json.RawMessage) Response {
 	if req.ID == "" {
 		return Response{Success: false, Error: "id is required"}
 	}
-	if err := s.manager.PaneSplit(req.ID, req.Cmd, req.Horizontal, req.Percent); err != nil {
+	opts := tmux.SplitOptions{
+		Direction: req.Direction,
+		Size:      req.Size,
+		Full:      req.Full,
+		NoFocus:   req.NoFocus,
+		Cmd:       req.Cmd,
+	}
+	if err := tmux.ValidateSlotOptions(req.Name, req.IfExists, opts); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	paneID, err := s.manager.PaneSplit(req.ID, req.Name, req.IfExists, opts)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	respData, _ := json.Marshal(PaneSplitResponse{PaneID: paneID})
+	return Response{Success: true, Data: respData}
+}
+
+// PaneCloseRequest is the request payload for the "pane-close" action: kill
+// the pane created by a named-slot split ("pane-split" with name).
+type PaneCloseRequest struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (s *Server) handlePaneClose(data json.RawMessage) Response {
+	var req PaneCloseRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+	if req.Name == "" {
+		return Response{Success: false, Error: "name is required"}
+	}
+	if err := tmux.ValidatePaneName(req.Name); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if err := s.manager.PaneClose(req.ID, req.Name); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
 	return Response{Success: true}

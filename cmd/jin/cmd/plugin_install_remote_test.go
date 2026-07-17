@@ -277,4 +277,3 @@ func TestPluginInstallGitSourcePathStillWorks(t *testing.T) {
 		t.Errorf("git-URL path failed to place plugin at %s: %v", dest, err)
 	}
 }
-

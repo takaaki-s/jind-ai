@@ -40,7 +40,8 @@ type Response struct {
 | `set-description` | `SetDescriptionRequest` | Update session description (empty resets to auto-generated) |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
-| `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane |
+| `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
+| `pane-close` | `PaneCloseRequest` | Close a named-slot pane created by `pane-split` with `name` |
 | `pane-capture` | `PaneCaptureRequest` | Capture the visible contents of a session's pane |
 | `pane-send-keys` | `PaneSendKeysRequest` | Send keys to a session's pane (literal text or tmux key names) |
 | `plugin-run` | `PluginRunRequest` | Run a plugin on demand for a session (bypasses matcher/debounce; async) |
@@ -138,12 +139,35 @@ type PanePopupRequest struct {
 }
 
 // PaneSplitRequest splits the session's pane. Cmd is optional; an empty split
-// just opens a shell in the new pane.
+// just opens a shell in the new pane. Name enables the idempotent named-slot
+// path; IfExists picks the policy when the named pane already exists
+// (noop/respawn/error, empty = noop).
+//
+// Breaking change: Horizontal/Percent (bool/int) are gone, replaced by
+// Direction/Size below. The CLI and daemon are built together, so upgrading
+// requires restarting the daemon (`jin daemon stop` then relaunch) — an old
+// daemon does not understand the new fields.
 type PaneSplitRequest struct {
-    ID         string `json:"id"`
-    Cmd        string `json:"cmd,omitempty"`
-    Horizontal bool   `json:"horizontal,omitempty"` // true = left-right split
-    Percent    int    `json:"percent,omitempty"`    // size of the new pane, e.g. 30 for 30%
+    ID        string `json:"id"`
+    Cmd       string `json:"cmd,omitempty"`
+    Direction string `json:"direction,omitempty"` // down (default), up, left, right
+    Size      string `json:"size,omitempty"`      // "30%" or "15"
+    Full      bool   `json:"full,omitempty"`      // span the full window width/height
+    NoFocus   bool   `json:"no_focus,omitempty"`  // keep focus on the current pane
+    Name      string `json:"name,omitempty"`      // named-slot identifier (see FindPaneByName)
+    IfExists  string `json:"if_exists,omitempty"` // noop (default), respawn or error
+}
+
+// PaneSplitResponse is the response payload for the "pane-split" action.
+type PaneSplitResponse struct {
+    PaneID string `json:"pane_id"`
+}
+
+// PaneCloseRequest closes the named-slot pane created by a "pane-split" call
+// with the same Name in the same session.
+type PaneCloseRequest struct {
+    ID   string `json:"id"`
+    Name string `json:"name"`
 }
 
 // PaneCaptureRequest captures the visible contents of the session's pane.

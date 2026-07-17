@@ -699,6 +699,26 @@ jin pane capture "$JIN_SESSION_ID"
 jin pane send-keys "$JIN_SESSION_ID" <keys>
 ```
 
+`jin pane split` takes a "named slot": `--name` makes the split idempotent —
+a repeated call with the same name reuses the existing pane instead of
+stacking a new one each time an event fires — and `--no-focus` keeps focus on
+the session's own pane while it does. This is the pattern for an
+event-driven plugin that opens a side pane (a monitor, a log tail, ...)
+without spawning a new one on every invocation:
+
+```bash
+jin pane split "$JIN_SESSION_ID" --name monitor --no-focus --direction right --size 30% -- <cmd>
+jin pane split "$JIN_SESSION_ID" --name monitor --no-focus --if-exists respawn --direction right --size 30% -- <cmd>  # restart it instead of leaving the old process running
+jin pane close "$JIN_SESSION_ID" --name monitor         # tear it down
+jin pane split --here --name monitor --no-focus -- <cmd> # same, over the caller's own pane instead of a session's
+```
+
+`--if-exists` defaults to `noop` (reuse the pane as-is); `error` fails
+instead of reusing, for callers that want to detect the slot is already
+taken. The daemon serializes named-slot calls; `--here` runs without that
+arbitration, so concurrent calls for the same slot name are not guaranteed
+idempotent.
+
 **Compatibility contract**: treat any environment variable, JSON field, or CLI
 flag you don't recognize as something to ignore, not an error. jind-ai only
 adds to this surface within a `schema_version`; breaking removals happen
