@@ -5,7 +5,12 @@
 // path.
 package action
 
-import "github.com/takaaki-s/jind-ai/internal/plugin"
+import (
+	"strings"
+
+	"github.com/takaaki-s/jind-ai/internal/plugin"
+	"github.com/takaaki-s/jind-ai/pkg/plugin/manifest"
+)
 
 // Kind classifies an Action's origin. Core actions are built into the TUI;
 // Plugin actions come from installed plugin manifests.
@@ -18,7 +23,7 @@ const (
 
 // Action is one palette row.
 type Action struct {
-	ID           string // "core:new" | "plugin:notifier-slack"
+	ID           string // "core:new" | "plugin:notifier:send-dm"
 	Kind         Kind
 	Label        string // display + search text
 	Description  string // optional secondary search text
@@ -40,9 +45,36 @@ const (
 )
 
 const (
-	CoreIDPrefix   = "core:"
+	CoreIDPrefix = "core:"
+	// PluginIDPrefix marks a plugin-contributed action ID. The full format
+	// is three segments — "plugin:<name>:<action>" (see PluginActionID) —
+	// so the prefix alone only classifies the ID's origin; use
+	// ParsePluginActionID to extract the parts.
 	PluginIDPrefix = "plugin:"
 )
+
+// PluginActionID builds the palette ID for one plugin action:
+// "plugin:<name>:<action>".
+func PluginActionID(pluginName, actionID string) string {
+	return PluginIDPrefix + pluginName + ":" + actionID
+}
+
+// ParsePluginActionID splits a three-segment plugin action ID back into its
+// plugin name and action ID. ok is false for anything else — a non-plugin
+// ID, a legacy two-segment "plugin:<name>" ID, or empty segments — so
+// callers can drop stale IDs (e.g. from a tmux env var written by an older
+// binary) instead of dispatching them.
+func ParsePluginActionID(id string) (pluginName, actionID string, ok bool) {
+	rest, found := strings.CutPrefix(id, PluginIDPrefix)
+	if !found {
+		return "", "", false
+	}
+	pluginName, actionID, found = strings.Cut(rest, ":")
+	if !found || pluginName == "" || actionID == "" {
+		return "", "", false
+	}
+	return pluginName, actionID, true
+}
 
 // KeyBindings is a narrow subset of config.KeybindingsConfig used to resolve
 // Shortcut. Kept as an internal struct so this package does not import
@@ -73,31 +105,51 @@ func CoreActions(kb KeyBindings) []Action {
 	}
 }
 
-// PluginActions maps enabled plugin entries to palette actions. Callers pass
-// the result of Registry.Runnable, which already filters to StateEnabled
-// entries. Description (when the manifest declares one) rides along so the
-// palette fuzzy haystack treats plugin rows like core rows. pluginKeys maps
-// plugin name to the same key list passed to tmux bind-key (the `.Keys` field
-// of each entry returned by config.Manager.GetPluginKeybindings — callers
-// flatten the map themselves). When a plugin has one or more keys, the first
-// is formatted via FormatKeyHint and shown in the Shortcut column — the same
-// `first(keys)` convention CoreActions uses. A nil / empty pluginKeys map
-// produces plugin rows with empty Shortcut.
-func PluginActions(entries []plugin.Entry, pluginKeys map[string][]string) []Action {
+// PluginActions fans enabled plugin entries out to one palette row per
+// declared action. Callers pass the result of Registry.Runnable, which
+// already filters to StateEnabled entries; entries without a manifest (or
+// with no actions — e.g. release_asset installs) contribute no rows.
+// Description (when the manifest declares one) rides along so the palette
+// fuzzy haystack treats plugin rows like core rows. pluginKeys maps plugin
+// name → action ID → tmux keys (the shape returned by
+// config.Manager.GetPluginKeybindings). When an action has one or more keys,
+// the first is formatted via FormatKeyHint and shown in the Shortcut column —
+// the same `first(keys)` convention CoreActions uses. A nil / empty
+// pluginKeys map produces rows with empty Shortcut.
+func PluginActions(entries []plugin.Entry, pluginKeys map[string]map[string][]string) []Action {
 	out := make([]Action, 0, len(entries))
 	for _, e := range entries {
-		a := Action{
-			ID:    PluginIDPrefix + e.Name,
-			Kind:  KindPlugin,
-			Label: e.Name,
+		if e.Manifest == nil {
+			continue
 		}
-		if e.Manifest != nil {
-			a.Description = e.Manifest.Description
+		for i, act := range e.Manifest.Actions {
+			a := Action{
+				ID:          PluginActionID(e.Name, act.ID),
+				Kind:        KindPlugin,
+				Label:       pluginActionLabel(e.Name, i == 0, act),
+				Description: e.Manifest.Description,
+			}
+			if keys := pluginKeys[e.Name][act.ID]; len(keys) > 0 {
+				a.Shortcut = FormatKeyHint(keys[0])
+			}
+			out = append(out, a)
 		}
-		if keys := pluginKeys[e.Name]; len(keys) > 0 {
-			a.Shortcut = FormatKeyHint(keys[0])
-		}
-		out = append(out, a)
 	}
 	return out
+}
+
+// pluginActionLabel decides a plugin action's palette label:
+//   - the default action (Actions[0]) with ID "default" shows the bare
+//     plugin name — v1 manifests normalize to exactly that shape, so
+//     single-action plugins keep their pre-multi-action look;
+//   - a non-empty Label is shown with the plugin name as prefix;
+//   - otherwise the label is "<plugin>:<action>".
+func pluginActionLabel(pluginName string, isDefault bool, act manifest.Action) string {
+	if isDefault && act.ID == "default" {
+		return pluginName
+	}
+	if act.Label != "" {
+		return pluginName + ": " + act.Label
+	}
+	return pluginName + ":" + act.ID
 }

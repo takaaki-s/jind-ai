@@ -26,16 +26,28 @@ func ValidateDetachKey(key string) error {
 		key, strings.Join(supportedDetachKeys, ", "))
 }
 
-// PluginKeybinding is the per-plugin subset of KeybindingsConfig. Kept as a
-// struct (not a bare []string) so future per-binding options (e.g. whether
-// to pass the cursor session, arg templates) can be added without a
+// PluginActionKeybinding is the per-action subset of a plugin's keybindings.
+// Kept as a struct (not a bare []string) so future per-binding options (e.g.
+// whether to pass the cursor session, arg templates) can be added without a
 // breaking schema flip.
-type PluginKeybinding struct {
+type PluginActionKeybinding struct {
 	// Keys is tmux bind-key notation, e.g. []string{"M-n"}. Must be
 	// modifier-prefixed so bare-letter input in the display pane still
 	// reaches the agent (same constraint as ActionPanel/TogglePane).
-	// nil or empty ⇒ no binding for this plugin.
+	// nil or empty ⇒ no binding for this action.
 	Keys []string `mapstructure:"keys,omitempty"`
+}
+
+// PluginKeybindings groups one plugin's keybindings by action ID
+// (YAML: keybindings.plugins.<name>.actions.<id>.keys). This replaced the
+// pre-0.8 shape that put `keys` directly under the plugin name; the old
+// shape is detected at load time and dropped with a warning (see
+// dropDeprecatedPluginKeybindings).
+type PluginKeybindings struct {
+	// Actions maps action ID (as declared in the plugin manifest; "default"
+	// for v1 single-action plugins) to its keybinding. Absent / empty map
+	// ⇒ no bindings for this plugin.
+	Actions map[string]PluginActionKeybinding `mapstructure:"actions,omitempty"`
 }
 
 // KeybindingsConfig represents keybinding settings
@@ -76,11 +88,11 @@ type KeybindingsConfig struct {
 	// (no bind-key is issued).
 	ActionPanel []string `mapstructure:"action_panel,omitempty"`
 
-	// Outer tmux (jin-mgr) — per-plugin action triggers.
-	// Key: plugin name (matches `name:` in jin-plugin.yaml).
+	// Outer tmux (jin-mgr) — per-plugin-action triggers.
+	// Key: plugin name (matches `name:` in jind-ai-plugin.yaml).
 	// Absent map / empty map ⇒ no per-plugin bindings (no default).
-	// Each PluginKeybinding.Keys is passed straight to tmux bind-key.
-	Plugins map[string]PluginKeybinding `mapstructure:"plugins,omitempty"`
+	// Each PluginActionKeybinding.Keys is passed straight to tmux bind-key.
+	Plugins map[string]PluginKeybindings `mapstructure:"plugins,omitempty"`
 }
 
 // WorktreeConfig represents settings for the git-worktree session option.
@@ -136,7 +148,7 @@ type Manager struct {
 	mu       sync.RWMutex
 	config   *Config
 	filePath string
-	warned   map[string]bool // warn-once keys for popup-size resolution; guarded by mu (Lock).
+	warned   map[string]bool // warn-once keys (popup-size resolution, deprecated config shapes); guarded by mu (Lock).
 }
 
 // NewManager creates a new configuration manager
@@ -276,10 +288,41 @@ func (m *Manager) load() error {
 	if err := m.v.Unmarshal(cfg); err != nil {
 		return err
 	}
+	m.dropDeprecatedPluginKeybindings(cfg)
 
 	cfg.Env = loadEnvFromFile(m.filePath)
 	m.config = cfg
 	return nil
+}
+
+// dropDeprecatedPluginKeybindings detects plugins still configured with the
+// pre-0.8 shape — `keys` directly under keybindings.plugins.<name> instead
+// of nested under `actions.<id>` — and drops their bindings from cfg. The
+// new struct doesn't declare a `keys` field, so viper's Unmarshal silently
+// ignores it; only the raw viper data reveals the old shape. Each affected
+// plugin gets one warning per Manager lifetime (stderr via log; the daemon's
+// debug log captures the same stream) telling the user to rewrite the entry.
+// Must be called with m.mu held (writes m.warned directly).
+func (m *Manager) dropDeprecatedPluginKeybindings(cfg *Config) {
+	raw, ok := m.v.Get("keybindings.plugins").(map[string]interface{})
+	if !ok {
+		return
+	}
+	for name, v := range raw {
+		entry, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasKeys := entry["keys"]; !hasKeys {
+			continue
+		}
+		delete(cfg.Keybindings.Plugins, name)
+		m.warnOnceLocked(
+			"keybindings.plugins."+name+".v1shape",
+			"plugin keybindings config: %s uses deprecated v1 shape (map[plugin]{keys}); rewrite as map[plugin]{actions.<id>.keys}. binding ignored.",
+			name,
+		)
+	}
 }
 
 // loadEnvFromFile reads the "env" map from the YAML file directly,
@@ -299,23 +342,9 @@ func loadEnvFromFile(filePath string) map[string]string {
 	return raw.Env
 }
 
-// Reload re-reads the configuration file
+// Reload re-reads the configuration file.
 func (m *Manager) Reload() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if err := m.v.ReadInConfig(); err != nil {
-		return err
-	}
-
-	cfg := &Config{}
-	if err := m.v.Unmarshal(cfg); err != nil {
-		return err
-	}
-
-	cfg.Env = loadEnvFromFile(m.filePath)
-	m.config = cfg
-	return nil
+	return m.load()
 }
 
 // Save writes the configuration to file.
@@ -692,25 +721,37 @@ func (m *Manager) GetActionPanelKeys() []string {
 	return normalizeTmuxKeys(m.config.Keybindings.ActionPanel)
 }
 
-// GetPluginKeybindings returns the per-plugin outer-tmux bindings. Returns
-// a fresh copy (never the internal map, never nil) so callers can iterate
-// or mutate without touching Manager state — same defensive-copy policy as
-// GetEnv (see :372). Semantics per plugin:
-//   - key absent from map ⇒ no binding
-//   - Keys nil / empty ⇒ no binding (symmetry with core "empty disables")
+// GetPluginKeybindings returns the per-plugin-action outer-tmux bindings as
+// plugin name → action ID → tmux keys. Returns a fresh copy (never the
+// internal maps, never nil) so callers can iterate or mutate without
+// touching Manager state — same defensive-copy policy as GetEnv. Semantics:
+//   - plugin absent from map ⇒ no bindings (plugins whose actions all
+//     filtered down to empty Keys are omitted entirely)
+//   - action absent / Keys nil / empty ⇒ that action has no binding
 //   - Keys non-empty ⇒ each string is passed straight to tmux bind-key
-func (m *Manager) GetPluginKeybindings() map[string]PluginKeybinding {
+//
+// Plugins whose config still uses the deprecated pre-0.8 shape were already
+// dropped at load time (see dropDeprecatedPluginKeybindings) and never
+// appear here.
+func (m *Manager) GetPluginKeybindings() map[string]map[string][]string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	src := m.config.Keybindings.Plugins
-	out := make(map[string]PluginKeybinding, len(src))
+	out := make(map[string]map[string][]string, len(src))
 	for name, kb := range src {
-		var keys []string
-		if len(kb.Keys) > 0 {
-			keys = normalizeTmuxKeys(append([]string(nil), kb.Keys...))
+		actions := make(map[string][]string, len(kb.Actions))
+		for actionID, akb := range kb.Actions {
+			if len(akb.Keys) == 0 {
+				continue
+			}
+			// normalizeTmuxKeys allocates a fresh slice for non-empty input,
+			// so this is already a defensive copy.
+			actions[actionID] = normalizeTmuxKeys(akb.Keys)
 		}
-		out[name] = PluginKeybinding{Keys: keys}
+		if len(actions) > 0 {
+			out[name] = actions
+		}
 	}
 	return out
 }
@@ -855,13 +896,20 @@ func (m *Manager) pickPopupDim(tiers []popupTier, dim string, fallback int) int 
 // lifetime. Uses mu (write lock) to guard warned; safe to call concurrently.
 func (m *Manager) warnPopupOnce(key, format string, args ...any) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.warnOnceLocked(key, format, args...)
+}
+
+// warnOnceLocked is the lock-free core of the warn-once mechanism, shared by
+// warnPopupOnce and dropDeprecatedPluginKeybindings. Must be called with
+// m.mu held (write lock).
+func (m *Manager) warnOnceLocked(key, format string, args ...any) {
 	if m.warned == nil {
 		m.warned = make(map[string]bool)
 	}
-	seen := m.warned[key]
-	m.warned[key] = true
-	m.mu.Unlock()
-	if !seen {
-		log.Printf(format, args...)
+	if m.warned[key] {
+		return
 	}
+	m.warned[key] = true
+	log.Printf(format, args...)
 }

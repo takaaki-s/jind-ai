@@ -150,12 +150,20 @@ func TestApplyActionPanelBinding_ExplicitEmpty(t *testing.T) {
 // can exercise bind-key issuance without a fixture plugin tree.
 
 // wantNotifierBind returns the expected fakeBinder.calls row for a bind
-// issued by applyPluginActionBindings against the `notifier` plugin at
-// the given key, with selfBin `/usr/local/bin/jin`. Centralizing the
-// run-shell format keeps every plugin-binding test in lockstep when the
+// issued by applyPluginActionBindings against the `notifier` plugin's given
+// action at the given key, with selfBin `/usr/local/bin/jin`. Centralizing
+// the run-shell format keeps every plugin-binding test in lockstep when the
 // shell string changes (e.g., adding output redirects).
-func wantNotifierBind(key string) []string {
-	return []string{key, "run-shell", "-b", "'/usr/local/bin/jin' plugin run notifier >/dev/null 2>&1"}
+func wantNotifierBind(key, actionID string) []string {
+	return []string{key, "run-shell", "-b", "'/usr/local/bin/jin' plugin run notifier " + actionID + " >/dev/null 2>&1"}
+}
+
+// notifierYAML builds a config.yaml fragment binding one action of the
+// notifier plugin in the current (actions-nested) shape — e.g.
+// notifierYAML("default", `["M-n"]`). Multi-action configs are inlined at
+// their single call site instead.
+func notifierYAML(actionID, keys string) string {
+	return fmt.Sprintf("keybindings:\n  plugins:\n    notifier:\n      actions:\n        %s: { keys: %s }\n", actionID, keys)
 }
 
 // pluginSet is a shorthand for building fake installedPluginSetFn results.
@@ -193,7 +201,7 @@ func TestApplyPluginActionBindings_NilConfigMgrIsNoOp(t *testing.T) {
 
 func TestApplyPluginActionBindings_EmptySelfBinIsNoOp(t *testing.T) {
 	fb := &fakeBinder{}
-	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"M-n\"] }\n"
+	yaml := notifierYAML("default", `["M-n"]`)
 	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "", pluginSet("notifier"))
 	if len(fb.calls) != 0 {
 		t.Errorf("expected 0 BindKey calls, got %d: %v", len(fb.calls), fb.calls)
@@ -211,9 +219,9 @@ func TestApplyPluginActionBindings_EmptyBindingsIsNoOp(t *testing.T) {
 
 func TestApplyPluginActionBindings_IssuesRunShell(t *testing.T) {
 	fb := &fakeBinder{}
-	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"M-n\"] }\n"
+	yaml := notifierYAML("send-dm", `["M-d"]`)
 	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
-	want := [][]string{wantNotifierBind("M-n")}
+	want := [][]string{wantNotifierBind("M-d", "send-dm")}
 	if !reflect.DeepEqual(fb.calls, want) {
 		t.Errorf("BindKey calls mismatch\n got: %v\nwant: %v", fb.calls, want)
 	}
@@ -221,7 +229,7 @@ func TestApplyPluginActionBindings_IssuesRunShell(t *testing.T) {
 
 func TestApplyPluginActionBindings_SkipsUninstalled(t *testing.T) {
 	fb := &fakeBinder{}
-	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"M-n\"] }\n"
+	yaml := notifierYAML("default", `["M-n"]`)
 	// installed set is empty → notifier is not present → skip.
 	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet())
 	if len(fb.calls) != 0 {
@@ -231,24 +239,61 @@ func TestApplyPluginActionBindings_SkipsUninstalled(t *testing.T) {
 
 func TestApplyPluginActionBindings_EmptyKeyIsSkipped(t *testing.T) {
 	fb := &fakeBinder{}
-	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"\", \"M-n\"] }\n"
+	yaml := notifierYAML("default", `["", "M-n"]`)
 	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
-	want := [][]string{wantNotifierBind("M-n")}
+	want := [][]string{wantNotifierBind("M-n", "default")}
 	if !reflect.DeepEqual(fb.calls, want) {
 		t.Errorf("BindKey calls mismatch\n got: %v\nwant: %v", fb.calls, want)
 	}
 }
 
-func TestApplyPluginActionBindings_MultipleKeysPerPlugin(t *testing.T) {
+func TestApplyPluginActionBindings_MultipleKeysPerAction(t *testing.T) {
 	fb := &fakeBinder{}
-	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"M-n\", \"M-!\"] }\n"
+	yaml := notifierYAML("default", `["M-n", "M-!"]`)
 	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
 	want := [][]string{
-		wantNotifierBind("M-n"),
-		wantNotifierBind("M-!"),
+		wantNotifierBind("M-n", "default"),
+		wantNotifierBind("M-!", "default"),
 	}
 	if !reflect.DeepEqual(fb.calls, want) {
 		t.Errorf("BindKey calls mismatch\n got: %v\nwant: %v", fb.calls, want)
+	}
+}
+
+func TestApplyPluginActionBindings_MultipleActionsWithMultipleKeys(t *testing.T) {
+	fb := &fakeBinder{}
+	yaml := `keybindings:
+  plugins:
+    notifier:
+      actions:
+        default: { keys: ["M-n", "M-!"] }
+        send-dm: { keys: ["M-d", "M-D"] }
+`
+	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
+	// Actions are iterated in sorted order so the bind sequence is stable.
+	want := [][]string{
+		wantNotifierBind("M-n", "default"),
+		wantNotifierBind("M-!", "default"),
+		wantNotifierBind("M-d", "send-dm"),
+		wantNotifierBind("M-D", "send-dm"),
+	}
+	if !reflect.DeepEqual(fb.calls, want) {
+		t.Errorf("BindKey calls mismatch\n got: %v\nwant: %v", fb.calls, want)
+	}
+}
+
+func TestApplyPluginActionBindings_DeprecatedV1ShapeIsIgnored(t *testing.T) {
+	// The warning itself is config-layer behavior covered by
+	// TestPluginKeybindings_DeprecatedV1Shape_WarnsAndDrops; here the muted
+	// log just keeps test output quiet. What matters at this layer: no
+	// bind-key is issued and — critically — startup does not crash.
+	withMutedLog(t)
+	fb := &fakeBinder{}
+	// Pre-0.8 shape: keys directly under the plugin name.
+	yaml := "keybindings:\n  plugins:\n    notifier: { keys: [\"M-n\"] }\n"
+	applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
+	if len(fb.calls) != 0 {
+		t.Errorf("expected 0 BindKey calls for deprecated v1 shape, got %d: %v", len(fb.calls), fb.calls)
 	}
 }
 
@@ -270,7 +315,7 @@ func TestApplyPluginActionBindings_LogsCollisionWithCoreKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := withMutedLog(t)
 			fb := &fakeBinder{}
-			yaml := fmt.Sprintf("keybindings:\n  plugins:\n    notifier: { keys: [\"%s\"] }\n", tc.yamlKey)
+			yaml := notifierYAML("default", fmt.Sprintf(`["%s"]`, tc.yamlKey))
 			applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
 
 			if !strings.Contains(buf.String(), "collides with "+tc.wantTag) {
@@ -301,9 +346,9 @@ func TestApplyPluginActionBindings_NormalizesPlusNotation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.yamlKey, func(t *testing.T) {
 			fb := &fakeBinder{}
-			yaml := fmt.Sprintf("keybindings:\n  plugins:\n    notifier: { keys: [\"%s\"] }\n", tc.yamlKey)
+			yaml := notifierYAML("default", fmt.Sprintf(`["%s"]`, tc.yamlKey))
 			applyPluginActionBindings(fb, mgrWithYAML(t, yaml), "/usr/local/bin/jin", pluginSet("notifier"))
-			want := [][]string{wantNotifierBind(tc.wantKey)}
+			want := [][]string{wantNotifierBind(tc.wantKey, "default")}
 			if !reflect.DeepEqual(fb.calls, want) {
 				t.Errorf("BindKey calls mismatch\n got: %v\nwant: %v", fb.calls, want)
 			}

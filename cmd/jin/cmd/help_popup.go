@@ -30,18 +30,7 @@ var helpPopupCmd = &cobra.Command{
 			if sfk := configMgr.GetSessionFilterKeys(); len(sfk) > 0 {
 				sessionFilterHint = action.FormatKeyHint(sfk[0])
 			}
-			for name, kb := range configMgr.GetPluginKeybindings() {
-				if len(kb.Keys) == 0 {
-					continue
-				}
-				pluginHints = append(pluginHints, tui.PluginBindingHint{
-					KeyHint: action.FormatKeyHint(kb.Keys[0]),
-					Name:    name,
-				})
-			}
-			sort.Slice(pluginHints, func(i, j int) bool {
-				return pluginHints[i].Name < pluginHints[j].Name
-			})
+			pluginHints = pluginBindingHints(configMgr.GetPluginKeybindings())
 		} else {
 			keybindings = config.DefaultKeybindings()
 			detachKeyHint = "Ctrl+]"
@@ -57,4 +46,29 @@ var helpPopupCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(helpPopupCmd)
+}
+
+// pluginBindingHints flattens the plugin → action → keys map returned by
+// config.Manager.GetPluginKeybindings into one help line per bound action,
+// sorted by name for stable display. The default action renders as
+// "<plugin> / default" — the action ID stays visible so the help view and
+// the config file speak the same vocabulary. Actions with no keys are
+// omitted; only the first key is shown (same convention as the palette).
+func pluginBindingHints(bindings map[string]map[string][]string) []tui.PluginBindingHint {
+	var hints []tui.PluginBindingHint
+	for name, actions := range bindings {
+		for actionID, keys := range actions {
+			if len(keys) == 0 {
+				continue
+			}
+			hints = append(hints, tui.PluginBindingHint{
+				KeyHint: action.FormatKeyHint(keys[0]),
+				Name:    name + " / " + actionID,
+			})
+		}
+	}
+	sort.Slice(hints, func(i, j int) bool {
+		return hints[i].Name < hints[j].Name
+	})
+	return hints
 }

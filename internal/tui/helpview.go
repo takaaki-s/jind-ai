@@ -8,12 +8,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// PluginBindingHint is a single plugin-shortcut line displayed in the help
-// popup's Plugins section. Callers pre-format KeyHint via
+// PluginBindingHint is a single plugin-action-shortcut line displayed in the
+// help popup's Plugins section. Callers pre-format KeyHint via
 // action.FormatKeyHint — the help popup itself is presentation-only.
 type PluginBindingHint struct {
 	KeyHint string // e.g. "Alt+N" (already formatted for display)
-	Name    string // plugin name
+	Name    string // plugin + action, e.g. "notifier / send-dm"
 }
 
 // HelpModel is a standalone Bubble Tea model for displaying keyboard shortcuts.

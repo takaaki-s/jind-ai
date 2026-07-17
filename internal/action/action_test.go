@@ -91,28 +91,108 @@ func TestCoreActions_NeedsSession(t *testing.T) {
 	}
 }
 
-func TestPluginActions_Basic(t *testing.T) {
+// singleActionManifest mirrors what manifest normalize() synthesizes for a
+// v1 manifest: one action with ID "default" and Label = plugin name.
+func singleActionManifest(name, desc string) *manifest.Manifest {
+	return &manifest.Manifest{
+		Description: desc,
+		Actions: []manifest.Action{
+			{ID: "default", Label: name, Entrypoint: "bin/run"},
+		},
+	}
+}
+
+func TestPluginActionID_RoundTrip(t *testing.T) {
+	id := PluginActionID("notifier", "send-dm")
+	if id != "plugin:notifier:send-dm" {
+		t.Fatalf("PluginActionID = %q, want plugin:notifier:send-dm", id)
+	}
+	name, actionID, ok := ParsePluginActionID(id)
+	if !ok || name != "notifier" || actionID != "send-dm" {
+		t.Errorf("ParsePluginActionID(%q) = (%q, %q, %v), want (notifier, send-dm, true)", id, name, actionID, ok)
+	}
+}
+
+func TestParsePluginActionID_Invalid(t *testing.T) {
+	cases := []string{
+		"core:new",         // non-plugin ID
+		"plugin:notifier",  // legacy two-segment ID
+		"plugin::send-dm",  // empty plugin name
+		"plugin:notifier:", // empty action ID
+		"plugin:",          // prefix only
+		"",                 // empty
+		"notifier:send-dm", // missing prefix
+	}
+	for _, id := range cases {
+		if name, actionID, ok := ParsePluginActionID(id); ok {
+			t.Errorf("ParsePluginActionID(%q) = (%q, %q, true), want ok=false", id, name, actionID)
+		}
+	}
+}
+
+func TestPluginActions_FanOut(t *testing.T) {
 	entries := []plugin.Entry{
-		{Name: "notifier-slack"},
-		{Name: "vscode-open"},
+		{Name: "notifier", Manifest: &manifest.Manifest{
+			Description: "slack notifications",
+			Actions: []manifest.Action{
+				{ID: "default", Label: "notifier", Entrypoint: "bin/notify"},
+				{ID: "send-dm", Entrypoint: "bin/send-dm"},
+			},
+		}},
 	}
 
 	actions := PluginActions(entries, nil)
-	if len(actions) != len(entries) {
-		t.Fatalf("len(actions) = %d, want %d", len(actions), len(entries))
+	if len(actions) != 2 {
+		t.Fatalf("len(actions) = %d, want 2 (one row per action)", len(actions))
 	}
+	wantIDs := []string{"plugin:notifier:default", "plugin:notifier:send-dm"}
 	for i, a := range actions {
+		if a.ID != wantIDs[i] {
+			t.Errorf("actions[%d].ID = %q, want %q", i, a.ID, wantIDs[i])
+		}
 		if a.Kind != KindPlugin {
 			t.Errorf("actions[%d].Kind = %v, want KindPlugin", i, a.Kind)
 		}
-		if a.Label != entries[i].Name {
-			t.Errorf("actions[%d].Label = %q, want %q", i, a.Label, entries[i].Name)
+		if a.Description != "slack notifications" {
+			t.Errorf("actions[%d].Description = %q, want manifest description", i, a.Description)
 		}
-		if want := PluginIDPrefix + entries[i].Name; a.ID != want {
-			t.Errorf("actions[%d].ID = %q, want %q", i, a.ID, want)
-		}
-		if a.Shortcut != "" {
-			t.Errorf("actions[%d].Shortcut = %q, want empty (nil pluginKeys)", i, a.Shortcut)
+	}
+}
+
+func TestPluginActions_LabelRules(t *testing.T) {
+	entries := []plugin.Entry{
+		{Name: "notifier", Manifest: &manifest.Manifest{
+			Actions: []manifest.Action{
+				// Default action with ID "default" (v1 normalize shape):
+				// bare plugin name, even though Label is set.
+				{ID: "default", Label: "notifier", Entrypoint: "bin/a"},
+				// Non-empty label → plugin-name prefix + label.
+				{ID: "send-dm", Label: "Send DM", Entrypoint: "bin/b"},
+				// Empty label → plugin:action.
+				{ID: "purge-cache", Entrypoint: "bin/c"},
+			},
+		}},
+		{Name: "deploy", Manifest: &manifest.Manifest{
+			Actions: []manifest.Action{
+				// Default action with a non-"default" ID keeps the normal rules.
+				{ID: "staging", Entrypoint: "bin/d"},
+			},
+		}},
+	}
+
+	want := []string{
+		"notifier",
+		"notifier: Send DM",
+		"notifier:purge-cache",
+		"deploy:staging",
+	}
+	actions := PluginActions(entries, nil)
+	if len(actions) != len(want) {
+		t.Fatalf("len(actions) = %d, want %d", len(actions), len(want))
+	}
+	for i, a := range actions {
+		if a.Label != want[i] {
+			t.Errorf("actions[%d].Label = %q, want %q", i, a.Label, want[i])
 		}
 	}
 }
@@ -124,49 +204,73 @@ func TestPluginActions_Empty(t *testing.T) {
 	}
 }
 
-func TestPluginActions_DescriptionFromManifest(t *testing.T) {
+func TestPluginActions_SkipsEntriesWithoutActions(t *testing.T) {
 	entries := []plugin.Entry{
-		{Name: "with-desc", Manifest: &manifest.Manifest{Description: "sends slack notifications"}},
-		{Name: "no-desc", Manifest: &manifest.Manifest{}},
-		{Name: "broken"}, // Manifest is nil for StateBroken entries
+		{Name: "broken"}, // Manifest nil (StateBroken)
+		{Name: "no-actions", Manifest: &manifest.Manifest{}}, // e.g. release_asset install
+		{Name: "ok", Manifest: singleActionManifest("ok", "")},
 	}
-
-	want := []string{"sends slack notifications", "", ""}
 	actions := PluginActions(entries, nil)
-	if len(actions) != len(entries) {
-		t.Fatalf("len(actions) = %d, want %d", len(actions), len(entries))
+	if len(actions) != 1 {
+		t.Fatalf("len(actions) = %d, want 1 (only the entry with actions)", len(actions))
 	}
-	for i, a := range actions {
-		if a.Description != want[i] {
-			t.Errorf("actions[%d].Description = %q, want %q", i, a.Description, want[i])
+	if actions[0].ID != "plugin:ok:default" {
+		t.Errorf("actions[0].ID = %q, want plugin:ok:default", actions[0].ID)
+	}
+}
+
+func TestPluginActions_NoPluginKeysMeansNoShortcut(t *testing.T) {
+	entries := []plugin.Entry{
+		{Name: "notifier", Manifest: singleActionManifest("notifier", "")},
+	}
+	for _, pluginKeys := range []map[string]map[string][]string{
+		nil,
+		{},
+		{"notifier": nil},
+		{"notifier": {}},
+	} {
+		for _, a := range PluginActions(entries, pluginKeys) {
+			if a.Shortcut != "" {
+				t.Errorf("pluginKeys=%v: Shortcut = %q, want empty", pluginKeys, a.Shortcut)
+			}
 		}
 	}
 }
 
 func TestPluginActions_ShortcutResolution(t *testing.T) {
 	entries := []plugin.Entry{
-		{Name: "notifier"},         // has binding
-		{Name: "vscode-open"},      // not in pluginKeys
-		{Name: "worktree-cleanup"}, // multiple keys — first is used
+		{Name: "notifier", Manifest: &manifest.Manifest{
+			Actions: []manifest.Action{
+				{ID: "default", Label: "notifier", Entrypoint: "bin/a"},
+				{ID: "send-dm", Entrypoint: "bin/b"}, // action-level binding only
+				{ID: "unbound", Entrypoint: "bin/c"}, // no binding
+			},
+		}},
+		{Name: "worktree-cleanup", Manifest: singleActionManifest("worktree-cleanup", "")},
 	}
-	pluginKeys := map[string][]string{
-		"notifier":         {"M-n"},
-		"worktree-cleanup": {"M-w", "M-c"},
+	pluginKeys := map[string]map[string][]string{
+		"notifier": {
+			"send-dm": {"M-d"},
+		},
+		"worktree-cleanup": {
+			"default": {"M-w", "M-c"}, // multiple keys — first is used
+		},
 	}
 
 	actions := PluginActions(entries, pluginKeys)
-	if len(actions) != 3 {
-		t.Fatalf("len(actions) = %d, want 3", len(actions))
+	if len(actions) != 4 {
+		t.Fatalf("len(actions) = %d, want 4", len(actions))
 	}
 
-	want := []string{
-		FormatKeyHint("M-n"),
-		"",
-		FormatKeyHint("M-w"),
+	want := map[string]string{
+		"plugin:notifier:default":         "",
+		"plugin:notifier:send-dm":         FormatKeyHint("M-d"),
+		"plugin:notifier:unbound":         "",
+		"plugin:worktree-cleanup:default": FormatKeyHint("M-w"),
 	}
-	for i, a := range actions {
-		if a.Shortcut != want[i] {
-			t.Errorf("actions[%d] (%s).Shortcut = %q, want %q", i, entries[i].Name, a.Shortcut, want[i])
+	for _, a := range actions {
+		if a.Shortcut != want[a.ID] {
+			t.Errorf("%s: Shortcut = %q, want %q", a.ID, a.Shortcut, want[a.ID])
 		}
 	}
 }

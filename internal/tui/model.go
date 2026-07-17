@@ -839,8 +839,15 @@ func (m Model) dispatchAction(id string) (tea.Model, tea.Cmd) {
 	case action.IDSessionFilter:
 		return m.handleSessionFilter()
 	}
-	if strings.HasPrefix(id, action.PluginIDPrefix) {
-		return m.handlePluginRun(strings.TrimPrefix(id, action.PluginIDPrefix))
+	// Plugin palette IDs are three-segment ("plugin:<name>:<action>");
+	// anything else — a core ID that missed the switch above, or a stale
+	// two-segment ID left in the tmux env by an older binary — falls through
+	// to the no-op return.
+	if name, _, ok := action.ParsePluginActionID(id); ok {
+		// TODO(plugin-multi-action): forward the parsed action ID once
+		// daemon.PluginRunRequest grows an Action field (dispatcher phase);
+		// until then the daemon always runs the plugin's default action.
+		return m.handlePluginRun(name)
 	}
 	return m, nil
 }

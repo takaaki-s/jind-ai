@@ -429,8 +429,18 @@ func TestGetSessionFilterKeys_ExplicitEmptyDisables(t *testing.T) {
 }
 
 // --- GetPluginKeybindings ---
-// nil config field ⇒ empty map (never nil). Map / Keys slice are defensively
-// copied so callers cannot mutate Manager state via the returned value.
+// nil config field ⇒ empty map (never nil). Maps / Keys slices are
+// defensively copied so callers cannot mutate Manager state via the
+// returned value.
+
+// pluginKB is shorthand for building the nested per-plugin config value.
+func pluginKB(actions map[string][]string) PluginKeybindings {
+	out := PluginKeybindings{Actions: make(map[string]PluginActionKeybinding, len(actions))}
+	for id, keys := range actions {
+		out.Actions[id] = PluginActionKeybinding{Keys: keys}
+	}
+	return out
+}
 
 func TestGetPluginKeybindings_DefaultWhenNil(t *testing.T) {
 	m := &Manager{config: &Config{}}
@@ -443,75 +453,106 @@ func TestGetPluginKeybindings_DefaultWhenNil(t *testing.T) {
 	}
 }
 
-func TestGetPluginKeybindings_SinglePlugin(t *testing.T) {
+func TestGetPluginKeybindings_SingleAction(t *testing.T) {
 	m := &Manager{config: &Config{
 		Keybindings: KeybindingsConfig{
-			Plugins: map[string]PluginKeybinding{
-				"notifier": {Keys: []string{"M-n"}},
+			Plugins: map[string]PluginKeybindings{
+				"notifier": pluginKB(map[string][]string{"default": {"M-n"}}),
 			},
 		},
 	}}
 	got := m.GetPluginKeybindings()
-	want := map[string]PluginKeybinding{"notifier": {Keys: []string{"M-n"}}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("GetPluginKeybindings() = %#v, want %#v", got, want)
-	}
-}
-
-func TestGetPluginKeybindings_MultiplePlugins(t *testing.T) {
-	m := &Manager{config: &Config{
-		Keybindings: KeybindingsConfig{
-			Plugins: map[string]PluginKeybinding{
-				"notifier":         {Keys: []string{"M-n"}},
-				"worktree-cleanup": {Keys: []string{"M-w"}},
-			},
-		},
-	}}
-	got := m.GetPluginKeybindings()
-	want := map[string]PluginKeybinding{
-		"notifier":         {Keys: []string{"M-n"}},
-		"worktree-cleanup": {Keys: []string{"M-w"}},
+	want := map[string]map[string][]string{
+		"notifier": {"default": {"M-n"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("GetPluginKeybindings() = %#v, want %#v", got, want)
 	}
 }
 
-func TestGetPluginKeybindings_MultipleKeysPerPlugin(t *testing.T) {
+func TestGetPluginKeybindings_MultiplePluginsAndActions(t *testing.T) {
 	m := &Manager{config: &Config{
 		Keybindings: KeybindingsConfig{
-			Plugins: map[string]PluginKeybinding{
-				"notifier": {Keys: []string{"M-n", "M-!"}},
+			Plugins: map[string]PluginKeybindings{
+				"notifier": pluginKB(map[string][]string{
+					"default": {"M-n"},
+					"send-dm": {"M-d", "M-!"},
+				}),
+				"worktree-cleanup": pluginKB(map[string][]string{"default": {"M-w"}}),
 			},
 		},
 	}}
 	got := m.GetPluginKeybindings()
-	want := map[string]PluginKeybinding{"notifier": {Keys: []string{"M-n", "M-!"}}}
+	want := map[string]map[string][]string{
+		"notifier": {
+			"default": {"M-n"},
+			"send-dm": {"M-d", "M-!"},
+		},
+		"worktree-cleanup": {"default": {"M-w"}},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("GetPluginKeybindings() = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetPluginKeybindings_EmptyActionsTreatedAsNoBindings(t *testing.T) {
+	m := &Manager{config: &Config{
+		Keybindings: KeybindingsConfig{
+			Plugins: map[string]PluginKeybindings{
+				"no-actions": {},                                            // actions: {} or absent
+				"empty-keys": pluginKB(map[string][]string{"default": nil}), // keys: []
+				"only-real":  pluginKB(map[string][]string{"default": {"M-n"}}),
+			},
+		},
+	}}
+	got := m.GetPluginKeybindings()
+	if len(got["no-actions"]) != 0 {
+		t.Errorf("no-actions = %v, want no bindings", got["no-actions"])
+	}
+	if len(got["empty-keys"]) != 0 {
+		t.Errorf("empty-keys = %v, want no bindings (empty Keys omitted)", got["empty-keys"])
+	}
+	if !reflect.DeepEqual(got["only-real"], map[string][]string{"default": {"M-n"}}) {
+		t.Errorf("only-real = %v, want default:[M-n]", got["only-real"])
+	}
+}
+
+func TestGetPluginKeybindings_NormalizesPlusNotation(t *testing.T) {
+	m := &Manager{config: &Config{
+		Keybindings: KeybindingsConfig{
+			Plugins: map[string]PluginKeybindings{
+				"notifier": pluginKB(map[string][]string{"send-dm": {"ctrl+d", "alt+n"}}),
+			},
+		},
+	}}
+	got := m.GetPluginKeybindings()
+	want := map[string][]string{"send-dm": {"C-d", "M-n"}}
+	if !reflect.DeepEqual(got["notifier"], want) {
+		t.Errorf("notifier = %v, want %v", got["notifier"], want)
 	}
 }
 
 func TestGetPluginKeybindings_ReturnsDefensiveCopy(t *testing.T) {
 	m := &Manager{config: &Config{
 		Keybindings: KeybindingsConfig{
-			Plugins: map[string]PluginKeybinding{
-				"notifier": {Keys: []string{"M-n"}},
+			Plugins: map[string]PluginKeybindings{
+				"notifier": pluginKB(map[string][]string{"default": {"M-n"}}),
 			},
 		},
 	}}
 	got := m.GetPluginKeybindings()
 
-	// Mutating the returned map / slice must not touch Manager internals.
-	got["notifier"] = PluginKeybinding{Keys: []string{"M-x"}}
-	got["injected"] = PluginKeybinding{Keys: []string{"M-y"}}
+	// Mutating the returned maps / slices must not touch Manager internals.
+	got["notifier"]["default"] = []string{"M-x"}
+	got["notifier"]["injected-action"] = []string{"M-y"}
+	got["injected"] = map[string][]string{"default": {"M-z"}}
 
 	fresh := m.GetPluginKeybindings()
 	if len(fresh) != 1 {
 		t.Errorf("post-mutation fresh copy has %d entries, want 1", len(fresh))
 	}
-	if kb, ok := fresh["notifier"]; !ok || !reflect.DeepEqual(kb.Keys, []string{"M-n"}) {
-		t.Errorf("post-mutation fresh notifier = %#v, want Keys=[M-n]", kb)
+	if !reflect.DeepEqual(fresh["notifier"], map[string][]string{"default": {"M-n"}}) {
+		t.Errorf("post-mutation fresh notifier = %#v, want default:[M-n]", fresh["notifier"])
 	}
 	if _, ok := fresh["injected"]; ok {
 		t.Errorf("post-mutation fresh copy leaked 'injected' entry from caller mutation")
@@ -519,10 +560,123 @@ func TestGetPluginKeybindings_ReturnsDefensiveCopy(t *testing.T) {
 
 	// Same guarantee for the Keys slice itself.
 	firstCall := m.GetPluginKeybindings()
-	firstCall["notifier"].Keys[0] = "MUTATED"
+	firstCall["notifier"]["default"][0] = "MUTATED"
 	secondCall := m.GetPluginKeybindings()
-	if secondCall["notifier"].Keys[0] != "M-n" {
-		t.Errorf("Keys slice not defensively copied: got %q, want M-n", secondCall["notifier"].Keys[0])
+	if secondCall["notifier"]["default"][0] != "M-n" {
+		t.Errorf("Keys slice not defensively copied: got %q, want M-n", secondCall["notifier"]["default"][0])
+	}
+}
+
+// --- plugin keybindings YAML decode + deprecated v1 shape ---
+
+// newManagerWithYAML writes config.yaml into a temp dir and loads it through
+// the real viper pipeline (same helper pattern as writePopupYAML).
+func newManagerWithYAML(t *testing.T, body string) *Manager {
+	t.Helper()
+	m, err := NewManager(writePopupYAML(t, body))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	return m
+}
+
+func TestPluginKeybindings_YAMLDecode_NewShape(t *testing.T) {
+	body := `
+keybindings:
+  plugins:
+    notifier:
+      actions:
+        default:
+          keys: ["M-n"]
+        send-dm:
+          keys: ["ctrl+d", "M-!"]
+`
+	m := newManagerWithYAML(t, body)
+	got := m.GetPluginKeybindings()
+	want := map[string]map[string][]string{
+		"notifier": {
+			"default": {"M-n"},
+			"send-dm": {"C-d", "M-!"}, // "+" notation normalized to tmux form
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GetPluginKeybindings() = %#v, want %#v", got, want)
+	}
+}
+
+func TestPluginKeybindings_YAMLDecode_EmptyActions(t *testing.T) {
+	body := `
+keybindings:
+  plugins:
+    notifier:
+      actions: {}
+`
+	m := newManagerWithYAML(t, body)
+	got := m.GetPluginKeybindings()
+	if len(got["notifier"]) != 0 {
+		t.Errorf("notifier = %v, want no bindings for empty actions map", got["notifier"])
+	}
+}
+
+func TestPluginKeybindings_DeprecatedV1Shape_WarnsAndDrops(t *testing.T) {
+	body := `
+keybindings:
+  plugins:
+    notifier:
+      keys: ["M-n"]
+    modern:
+      actions:
+        default:
+          keys: ["M-m"]
+`
+	var m *Manager
+	logged := captureLog(t, func() {
+		m = newManagerWithYAML(t, body)
+	})
+
+	if !strings.Contains(logged, "notifier uses deprecated v1 shape") {
+		t.Errorf("expected deprecation warning for notifier, got log: %q", logged)
+	}
+	if strings.Contains(logged, "modern") {
+		t.Errorf("modern (new shape) must not be warned about, got log: %q", logged)
+	}
+
+	got := m.GetPluginKeybindings()
+	if _, ok := got["notifier"]; ok {
+		t.Errorf("notifier binding = %v, want dropped entirely", got["notifier"])
+	}
+	if !reflect.DeepEqual(got["modern"], map[string][]string{"default": {"M-m"}}) {
+		t.Errorf("modern = %v, want default:[M-m]", got["modern"])
+	}
+}
+
+func TestPluginKeybindings_DeprecatedV1Shape_WarnsOncePerPlugin(t *testing.T) {
+	body := `
+keybindings:
+  plugins:
+    notifier:
+      keys: ["M-n"]
+`
+	var m *Manager
+	first := captureLog(t, func() {
+		m = newManagerWithYAML(t, body)
+	})
+	if !strings.Contains(first, "deprecated v1 shape") {
+		t.Fatalf("expected deprecation warning on first load, got: %q", first)
+	}
+
+	second := captureLog(t, func() {
+		if err := m.Reload(); err != nil {
+			t.Fatalf("Reload: %v", err)
+		}
+	})
+	if strings.Contains(second, "deprecated v1 shape") {
+		t.Errorf("expected no repeated warning on Reload, got: %q", second)
+	}
+
+	// The binding stays dropped after Reload even though the warning is muted.
+	if _, ok := m.GetPluginKeybindings()["notifier"]; ok {
+		t.Errorf("notifier binding resurfaced after Reload")
 	}
 }
 

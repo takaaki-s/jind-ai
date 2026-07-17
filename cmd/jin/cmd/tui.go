@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -124,13 +126,15 @@ func applySessionFilterBinding(tc actionPanelBinder, configMgr *config.Manager, 
 type installedPluginSetFn func() map[string]struct{}
 
 // applyPluginActionBindings wires outer tmux root bindings that fire
-// `jin plugin run <name>` for each configured plugin. Idempotent:
-// re-issuing bind-key overwrites the prior mapping. No-op when configMgr
-// is nil, selfBin is empty, or no plugin bindings are configured. Bindings
-// are issued only for plugins currently installed AND enabled
+// `jin plugin run <name> <action>` for each configured plugin action.
+// Idempotent: re-issuing bind-key overwrites the prior mapping. No-op when
+// configMgr is nil, selfBin is empty, or no plugin bindings are configured.
+// Bindings are issued only for plugins currently installed AND enabled
 // (StateEnabled). Uninstalled / broken / incompatible plugins are silently
 // skipped with a single log line each — config vs. installed set drift is
-// common in dev environments and must never block TUI startup. Key
+// common in dev environments and must never block TUI startup. Action IDs
+// are not validated against the manifest here: a typo'd action fails at
+// `jin plugin run` time with the daemon's error listing valid IDs. Key
 // collisions with core outer-tmux bindings are warned once (see
 // reservedOuterTmuxKeys) but not blocked; tmux's last-write-wins semantics
 // apply. Reuses actionPanelBinder — same one-method interface as the two
@@ -145,26 +149,32 @@ func applyPluginActionBindings(tc actionPanelBinder, configMgr *config.Manager, 
 	}
 	installed := installedFn()
 	reserved := reservedOuterTmuxKeys(configMgr)
-	for name, kb := range bindings {
+	for _, name := range slices.Sorted(maps.Keys(bindings)) {
+		actions := bindings[name]
 		if _, ok := installed[name]; !ok {
 			// Runnable() filters to StateEnabled, dropping broken/incompatible/
 			// disabled alike — so "not enabled" is the accurate umbrella.
 			log.Printf("plugin key binding skipped: %s not in the enabled plugin set (uninstalled, disabled, broken, or incompatible)", name)
 			continue
 		}
-		// `>/dev/null 2>&1` is belt-and-suspenders on top of `-b`: some
-		// tmux builds still surface `run-shell -b` stdout via view-mode
-		// when a captured pane is available. The daemon dispatches
-		// asynchronously so nothing depends on the CLI's stdout.
-		runShellCmd := fmt.Sprintf("'%s' plugin run %s >/dev/null 2>&1", selfBin, name)
-		for _, key := range kb.Keys {
-			if key == "" {
+		for _, actionID := range slices.Sorted(maps.Keys(actions)) {
+			if actionID == "" {
 				continue
 			}
-			if other, ok := reserved[key]; ok {
-				log.Printf("plugin %s key %q collides with %s; last binding wins", name, key, other)
+			// `>/dev/null 2>&1` is belt-and-suspenders on top of `-b`: some
+			// tmux builds still surface `run-shell -b` stdout via view-mode
+			// when a captured pane is available. The daemon dispatches
+			// asynchronously so nothing depends on the CLI's stdout.
+			runShellCmd := fmt.Sprintf("'%s' plugin run %s %s >/dev/null 2>&1", selfBin, name, actionID)
+			for _, key := range actions[actionID] {
+				if key == "" {
+					continue
+				}
+				if other, ok := reserved[key]; ok {
+					log.Printf("plugin %s key %q collides with %s; last binding wins", name, key, other)
+				}
+				_ = tc.BindKey(key, "run-shell", "-b", runShellCmd)
 			}
-			_ = tc.BindKey(key, "run-shell", "-b", runShellCmd)
 		}
 	}
 }
