@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/session"
@@ -38,6 +39,7 @@ func (c *Client) send(req Request) (*Response, error) {
 	}
 	defer conn.Close()
 
+	req.ProtocolVersion = ProtocolVersion
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(req); err != nil {
 		return nil, err
@@ -47,6 +49,18 @@ func (c *Client) send(req Request) (*Response, error) {
 	var resp Response
 	if err := decoder.Decode(&resp); err != nil {
 		return nil, err
+	}
+
+	if resp.ProtocolVersion != ProtocolVersion {
+		// Old daemon (pre-versioning) sends no protocol_version and it
+		// deserializes to 0 — treat that the same as any explicit mismatch.
+		// The whole point of the check is to fail loudly here instead of
+		// letting individual endpoints error with confusing symptoms like
+		// "unexpected end of JSON input".
+		return nil, fmt.Errorf(
+			"daemon protocol version %d does not match client %d — run 'jin daemon restart' after updating jin",
+			resp.ProtocolVersion, ProtocolVersion,
+		)
 	}
 
 	return &resp, nil
@@ -234,16 +248,22 @@ func (c *Client) SetDescription(id, description string) error {
 	return nil
 }
 
-// Stop stops the daemon
+// Stop stops the daemon and waits for it to actually exit.
+//
+// A protocol-mismatched daemon still executes the stop action — its handler
+// runs before we notice the client-side mismatch on the response — so we
+// swallow the send error when a subsequent IsRunning() poll confirms the
+// daemon did shut down. Any caller (CLI stop, TUI stop, `daemon restart`)
+// gets this behavior for free without re-implementing the poll.
 func (c *Client) Stop() error {
-	resp, err := c.send(Request{Action: "stop"})
-	if err != nil {
-		return err
+	_, sendErr := c.send(Request{Action: "stop"})
+	for range 30 {
+		if !c.IsRunning() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if !resp.Success {
-		return errors.New(resp.Error)
-	}
-	return nil
+	return sendErr
 }
 
 // SendHook sends a Claude Code hook event to the daemon

@@ -50,15 +50,22 @@ type Server struct {
 }
 
 // Message types
+//
+// ProtocolVersion travels on every request and response so a version-mismatch
+// between the CLI and a running daemon (typically: jin binary updated but the
+// daemon was never restarted) fails loudly with an actionable message,
+// instead of surfacing as endpoint-specific JSON parse errors.
 type Request struct {
-	Action string          `json:"action"`
-	Data   json.RawMessage `json:"data,omitempty"`
+	ProtocolVersion int             `json:"protocol_version,omitempty"`
+	Action          string          `json:"action"`
+	Data            json.RawMessage `json:"data,omitempty"`
 }
 
 type Response struct {
-	Success bool            `json:"success"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	ProtocolVersion int             `json:"protocol_version,omitempty"`
+	Success         bool            `json:"success"`
+	Data            json.RawMessage `json:"data,omitempty"`
+	Error           string          `json:"error,omitempty"`
 }
 
 // NewServer creates a new daemon server.
@@ -191,7 +198,19 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	resp := s.handleRequest(&req)
+	var resp Response
+	if req.ProtocolVersion != ProtocolVersion {
+		// Refuse the request before dispatching so no side effect happens
+		// against an incompatible caller. A pre-versioning CLI sends 0 here;
+		// treat that identically to any other mismatch.
+		resp = Response{Success: false, Error: fmt.Sprintf(
+			"client protocol version %d does not match daemon %d — reinstall jin to match the running daemon (or stop the daemon with SIGTERM and restart it after updating)",
+			req.ProtocolVersion, ProtocolVersion,
+		)}
+	} else {
+		resp = s.handleRequest(&req)
+	}
+	resp.ProtocolVersion = ProtocolVersion
 	_ = encoder.Encode(resp)
 }
 

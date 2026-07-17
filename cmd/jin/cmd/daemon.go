@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
@@ -99,14 +98,6 @@ var daemonStopCmd = &cobra.Command{
 
 		if err := client.Stop(); err != nil {
 			return err
-		}
-		// Wait for daemon to actually exit (handleStop calls os.Exit in a goroutine)
-		for range 30 {
-			if !client.IsRunning() {
-				fmt.Println("Daemon stopped")
-				return nil
-			}
-			time.Sleep(100 * time.Millisecond)
 		}
 		fmt.Println("Daemon stopped")
 		return nil

@@ -11,17 +11,26 @@
 ```go
 // Request (client → server)
 type Request struct {
-    Action string          `json:"action"`
-    Data   json.RawMessage `json:"data,omitempty"`
+    ProtocolVersion int             `json:"protocol_version,omitempty"`
+    Action          string          `json:"action"`
+    Data            json.RawMessage `json:"data,omitempty"`
 }
 
 // Response (server → client)
 type Response struct {
-    Success bool            `json:"success"`
-    Data    json.RawMessage `json:"data,omitempty"`
-    Error   string          `json:"error,omitempty"`
+    ProtocolVersion int             `json:"protocol_version,omitempty"`
+    Success         bool            `json:"success"`
+    Data            json.RawMessage `json:"data,omitempty"`
+    Error           string          `json:"error,omitempty"`
 }
 ```
+
+`ProtocolVersion` is stamped on every request by `Client.send` and on every
+response by `Server.handleConnection`. Either end rejects a message whose
+version does not match its own — a pre-versioning peer sends 0, which counts
+as a mismatch. Bump `daemon.ProtocolVersion` (`internal/daemon/protocol.go`)
+whenever a wire message's shape changes; docs-only or refactor patches leave
+it alone.
 
 ## Actions
 

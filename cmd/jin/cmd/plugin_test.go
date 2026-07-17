@@ -163,7 +163,7 @@ func startFakePluginDaemon(t *testing.T) func() []daemon.PluginRunRequest {
 						mu.Unlock()
 					}
 				}
-				_ = json.NewEncoder(c).Encode(daemon.Response{Success: true})
+				_ = json.NewEncoder(c).Encode(daemon.Response{ProtocolVersion: daemon.ProtocolVersion, Success: true})
 			}(conn)
 		}
 	}()
