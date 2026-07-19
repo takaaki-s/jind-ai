@@ -386,6 +386,10 @@ type envTickMsg time.Time
 // sessionTickMsg fires on sessionTickInterval to refetch the session list.
 type sessionTickMsg time.Time
 
+// attachedSessionMsg carries the inner tmux session name the display-pane
+// client is currently attached to ("" when unknown / no client).
+type attachedSessionMsg string
+
 type deleteErrMsg struct {
 	sessionID string
 	err       error
@@ -413,7 +417,10 @@ const (
 
 	// sessionTickInterval controls how often the TUI refetches the session
 	// list from the daemon. Longer than envTickInterval because refetches
-	// touch the daemon socket and re-render the full list.
+	// touch the daemon socket and re-render the full list. The display-pane
+	// attach poll (pollAttachedSessionCmd) piggybacks on this tick, so this
+	// value is also the upper bound on how long a tmux-side session switch
+	// takes to reflect in the TUI.
 	sessionTickInterval = 2 * time.Second
 )
 
@@ -427,6 +434,33 @@ func sessionTickCmd() tea.Cmd {
 	return tea.Tick(sessionTickInterval, func(t time.Time) tea.Msg {
 		return sessionTickMsg(t)
 	})
+}
+
+// pollAttachedSessionCmd returns a Cmd that reads which inner tmux session the
+// display-pane client is attached to, so adoptAttachedSession can follow a
+// switch the user made from inside the pane (choose-tree etc.). Returns nil
+// unless the display pane is locally attached and both tmux clients are wired,
+// since a placeholder / remote pane has no inner session to poll. The two tmux
+// calls run in the Cmd closure to keep them off the Update loop, mirroring
+// fetchSessions.
+func (m *Model) pollAttachedSessionCmd() tea.Cmd {
+	if !m.displayLocalAttach || m.tmuxClient == nil || m.innerTmuxClient == nil || m.displayPaneID == "" {
+		return nil
+	}
+	tmuxClient := m.tmuxClient
+	innerTmuxClient := m.innerTmuxClient
+	displayPaneID := m.displayPaneID
+	return func() tea.Msg {
+		tty, err := tmuxClient.GetPaneTTY(displayPaneID)
+		if err != nil || tty == "" {
+			return attachedSessionMsg("")
+		}
+		attached, err := innerTmuxClient.ClientSessionForTTY(tty)
+		if err != nil {
+			return attachedSessionMsg("")
+		}
+		return attachedSessionMsg(attached)
+	}
 }
 
 // resizeSettledMsg is sent after a delay to allow WindowSizeMsg to arrive
@@ -443,19 +477,12 @@ func (m *Model) resolveFocusSession() bool {
 	if m.focusSessionID == "" {
 		return true
 	}
-	displaySessions := m.getDisplaySessions()
-	i := slices.IndexFunc(displaySessions, func(s session.Info) bool {
-		return s.ID == m.focusSessionID
-	})
-	if i < 0 {
+	if !m.moveCursorToSession(m.focusSessionID) {
 		return false
 	}
-	m.cursor = i
-	m.adjustScrollForCursor()
 	m.currentSessionID = "" // Force reset so switchToSession runs even when the cursor was already on this session.
-	m.switchToSession(displaySessions[i].ID)
+	m.switchToSession(m.focusSessionID)
 	m.focusSessionID = ""
-	m.writeCursorEnv()
 	return true
 }
 
@@ -511,9 +538,7 @@ func (m *Model) switchToSession(sessionID string) {
 		}
 		_ = m.tmuxClient.RespawnPane(m.displayPaneID, placeholderCmd)
 		_ = m.tmuxClient.ClearHistory(m.displayPaneID)
-		m.currentSessionID = sessionID
-		_ = m.tmuxClient.SetEnvironment(tmux.SessionName, "JIN_CURRENT_SESSION", sessionID)
-		m.pushDisplayedDescription(sess.Description)
+		m.recordDisplayedSession(sess)
 		return
 	}
 
@@ -527,9 +552,7 @@ func (m *Model) switchToSession(sessionID string) {
 		paneTTY, err := m.tmuxClient.GetPaneTTY(m.displayPaneID)
 		if err == nil && paneTTY != "" {
 			if m.innerTmuxClient.SwitchClient(paneTTY, sess.TmuxWindowName) == nil {
-				m.currentSessionID = sessionID
-				_ = m.tmuxClient.SetEnvironment(tmux.SessionName, "JIN_CURRENT_SESSION", sessionID)
-				m.pushDisplayedDescription(sess.Description)
+				m.recordDisplayedSession(sess)
 				return
 			}
 		}
@@ -547,9 +570,39 @@ func (m *Model) switchToSession(sessionID string) {
 	_ = m.tmuxClient.ClearHistory(m.displayPaneID)
 	m.displayLocalAttach = true
 
-	m.currentSessionID = sessionID
-	_ = m.tmuxClient.SetEnvironment(tmux.SessionName, "JIN_CURRENT_SESSION", sessionID)
-	m.pushDisplayedDescription(sess.Description)
+	m.recordDisplayedSession(sess)
+}
+
+// adoptAttachedSession aligns TUI state (currentSessionID, cursor, @session_name
+// label, JIN_CURRENT_SESSION env) to the inner session the display pane is
+// actually attached to, after the user switched it from inside the pane
+// (choose-tree etc.). State adoption only: unlike switchToSession /
+// resolveFocusSession it never issues switch-client back, so a user's tmux-side
+// switch and a TUI-side switch cannot ping-pong — each side just records the
+// last event as fact.
+func (m *Model) adoptAttachedSession(attached string) {
+	if attached == "" || !m.displayLocalAttach {
+		return
+	}
+	// TmuxWindowName is the inner tmux *session* name (one per jin session) —
+	// the same namespace as #{client_session}.
+	i := slices.IndexFunc(m.sessions, func(s session.Info) bool {
+		return s.TmuxWindowName == attached
+	})
+	if i < 0 {
+		return // jin-unmanaged session: leave the TUI untouched.
+	}
+	sess := &m.sessions[i]
+	// Already in sync (steady state). Same-session window switches also land
+	// here since client_session is unchanged.
+	if sess.ID == m.currentSessionID {
+		return
+	}
+
+	m.recordDisplayedSession(sess)
+	// Follow the cursor only when the adopted session is visible; a filter may
+	// exclude it, in which case we still adopt the ID/label/env.
+	m.moveCursorToSession(sess.ID)
 }
 
 // detachInnerClient detaches the inner tmux client running in the display pane.
@@ -563,6 +616,34 @@ func (m *Model) detachInnerClient() {
 		return
 	}
 	_ = m.innerTmuxClient.DetachClientByTTY(paneTTY)
+}
+
+// recordDisplayedSession records which session the display pane now shows:
+// currentSessionID, the JIN_CURRENT_SESSION outer-tmux env var, and the pane
+// border label. Shared tail of every path that changes the displayed session
+// (switchToSession's exits and adoptAttachedSession).
+func (m *Model) recordDisplayedSession(sess *session.Info) {
+	m.currentSessionID = sess.ID
+	if m.tmuxClient != nil {
+		_ = m.tmuxClient.SetEnvironment(tmux.SessionName, "JIN_CURRENT_SESSION", sess.ID)
+	}
+	m.pushDisplayedDescription(sess.Description)
+}
+
+// moveCursorToSession points the list cursor at the given session and
+// republishes the cursor env. Returns false without moving anything when the
+// session is not in the display list (e.g. hidden by a filter).
+func (m *Model) moveCursorToSession(id string) bool {
+	i := slices.IndexFunc(m.getDisplaySessions(), func(s session.Info) bool {
+		return s.ID == id
+	})
+	if i < 0 {
+		return false
+	}
+	m.cursor = i
+	m.adjustScrollForCursor()
+	m.writeCursorEnv()
+	return true
 }
 
 // pushDisplayedDescription sets the display pane's `@session_name` tmux
@@ -1341,7 +1422,15 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, envTickCmd()
 
 	case sessionTickMsg:
-		return m, tea.Batch(m.fetchSessions, sessionTickCmd())
+		cmds := []tea.Cmd{m.fetchSessions, sessionTickCmd()}
+		if c := m.pollAttachedSessionCmd(); c != nil {
+			cmds = append(cmds, c)
+		}
+		return m, tea.Batch(cmds...)
+
+	case attachedSessionMsg:
+		m.adoptAttachedSession(string(msg))
+		return m, nil
 	}
 
 	return m, nil

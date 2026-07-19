@@ -216,6 +216,29 @@ func TestParseEnvironmentOutput(t *testing.T) {
 	}
 }
 
+func TestClientSessionForTTY(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		tty  string
+		want string
+	}{
+		{"match", "/dev/pts/1 mysession", "/dev/pts/1", "mysession"},
+		{"no match", "/dev/pts/1 mysession", "/dev/pts/2", ""},
+		{"empty output", "", "/dev/pts/1", ""},
+		{"multiple clients", "/dev/pts/1 sess-a\n/dev/pts/2 sess-b", "/dev/pts/2", "sess-b"},
+		{"session name with space", "/dev/pts/1 my session", "/dev/pts/1", "my session"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clientSessionForTTY(tt.out, tt.tty)
+			if got != tt.want {
+				t.Errorf("clientSessionForTTY(%q, %q) = %q, want %q", tt.out, tt.tty, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSocketPathFromEnv(t *testing.T) {
 	tests := []struct {
 		in   string

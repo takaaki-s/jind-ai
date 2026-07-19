@@ -802,6 +802,27 @@ func (c *Client) DetachClientByTTY(clientTTY string) error {
 	return c.runSilent("detach-client", "-t", clientTTY)
 }
 
+// ClientSessionForTTY returns the session name the client on the given TTY
+// is attached to, or "" when no such client exists.
+func (c *Client) ClientSessionForTTY(tty string) (string, error) {
+	out, err := c.run("list-clients", "-F", "#{client_tty} #{client_session}")
+	if err != nil {
+		return "", err
+	}
+	return clientSessionForTTY(out, tty), nil
+}
+
+// clientSessionForTTY parses "list-clients -F '#{client_tty} #{client_session}'"
+// output and returns the session for tty, or "" if no client matches.
+func clientSessionForTTY(out, tty string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if t, sess, ok := strings.Cut(line, " "); ok && t == tty {
+			return sess
+		}
+	}
+	return ""
+}
+
 // --- Popup ---
 
 // DisplayPopupOptions configures a tmux display-popup.

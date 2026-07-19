@@ -14,6 +14,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/action"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // Force TrueColor output during tests so styling assertions (e.g. the
@@ -1536,4 +1537,101 @@ func TestOpenPopup_LooksUpSizeByName(t *testing.T) {
 func TestOpenPopup_NoConfigMgr_NoOp(t *testing.T) {
 	m := Model{deletingIDs: map[string]bool{}}
 	m.openPopup("create", " New Session ")
+}
+
+// --- adoptAttachedSession / pollAttachedSessionCmd ---
+//
+// These run with tmuxClient=nil (the degraded-guard style used across this
+// file): the tmux side-effects (SetEnvironment, @session_name) are skipped, so
+// the tests observe only the in-memory state adoption. Real tmux wiring and the
+// end-to-end choose-tree follow are covered by manual verification (03_todo.md
+// V-001/V-002).
+
+// TestAdoptAttachedSession covers the in-memory adoption paths: the happy
+// path, cursor tracking of the display index (V-007's reachable half), the
+// steady-state no-op that keeps the poll from thrashing the cursor every tick,
+// unknown names (V-004), empty attach names (V-006, client dead / poll race),
+// and a late msg after leaving local attach. The off-list half of V-007
+// (adopted session hidden by a filter: ID adopted, cursor kept) is not
+// black-box reachable while getDisplaySessions() returns m.sessions
+// unfiltered; moveCursorToSession's guard covers it structurally.
+func TestAdoptAttachedSession(t *testing.T) {
+	sessions := []session.Info{
+		{ID: "s1", TmuxWindowName: "jin-s1", Description: "one"},
+		{ID: "s2", TmuxWindowName: "jin-s2", Description: "two"},
+		{ID: "s3", TmuxWindowName: "jin-s3", Description: "three"},
+	}
+	cases := []struct {
+		name        string
+		attached    string
+		localAttach bool
+		startID     string
+		startCursor int
+		wantID      string
+		wantCursor  int
+	}{
+		{"follows another session", "jin-s2", true, "s1", 0, "s2", 1},
+		{"cursor tracks display index", "jin-s3", true, "s1", 0, "s3", 2},
+		{"already in sync", "jin-s2", true, "s2", 1, "s2", 1},
+		{"unknown name", "jin-unknown", true, "s1", 0, "s1", 0},
+		{"empty attach name", "", true, "s1", 0, "s1", 0},
+		{"not local attach", "jin-s2", false, "s1", 0, "s1", 0},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				sessions:           sessions,
+				currentSessionID:   tt.startID,
+				cursor:             tt.startCursor,
+				displayLocalAttach: tt.localAttach,
+			}
+			m.adoptAttachedSession(tt.attached)
+			if m.currentSessionID != tt.wantID || m.cursor != tt.wantCursor {
+				t.Errorf("got id=%q cursor=%d, want id=%q cursor=%d",
+					m.currentSessionID, m.cursor, tt.wantID, tt.wantCursor)
+			}
+		})
+	}
+}
+
+// TestPollAttachedSessionCmd_Guards covers V-005: the poll Cmd is only issued
+// when the display pane is locally attached with both tmux clients wired and a
+// known pane ID. Building the Cmd runs no tmux command (that happens only when
+// the closure fires), so the all-satisfied case can assert non-nil with
+// zero-value clients; only the actual tmux round-trip is manual (03_todo.md
+// V-001).
+func TestPollAttachedSessionCmd_Guards(t *testing.T) {
+	cases := []struct {
+		name        string
+		localAttach bool
+		paneID      string
+		outer       *tmux.Client
+		inner       *tmux.Client
+		wantNil     bool
+	}{
+		{"not local attach", false, "%1", &tmux.Client{}, &tmux.Client{}, true},
+		{"empty pane id", true, "", &tmux.Client{}, &tmux.Client{}, true},
+		{"nil outer client", true, "%1", nil, &tmux.Client{}, true},
+		{"nil inner client", true, "%1", &tmux.Client{}, nil, true},
+		{"neither", false, "", nil, nil, true},
+		{"all satisfied", true, "%1", &tmux.Client{}, &tmux.Client{}, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				displayLocalAttach: tt.localAttach,
+				displayPaneID:      tt.paneID,
+				tmuxClient:         tt.outer,
+				innerTmuxClient:    tt.inner,
+				deletingIDs:        map[string]bool{},
+			}
+			c := m.pollAttachedSessionCmd()
+			if tt.wantNil && c != nil {
+				t.Errorf("expected nil Cmd, got %T", c)
+			}
+			if !tt.wantNil && c == nil {
+				t.Error("expected non-nil Cmd, got nil")
+			}
+		})
+	}
 }
