@@ -1089,6 +1089,196 @@ func TestManager_RecoverTmuxSessions_DeadPane(t *testing.T) {
 	}
 }
 
+// setupLivePaneSession creates a session in the state a daemon restart leaves
+// it in — Status normalized to Stopped with the on-disk value stashed in
+// PersistedStatus — and marks its inner tmux session and pane alive on the
+// mock. The shared ritual of the daemon-restart recovery tests.
+func setupLivePaneSession(t *testing.T, mgr *Manager, mock *mockTmuxRunner, paneID string, persisted Status) *Session {
+	t.Helper()
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/recover-live-pane", Description: "rlivepane"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	innerName := "jin_" + sess.ID
+	mgr.mu.Lock()
+	sess.TmuxWindowName = innerName
+	sess.TmuxPaneID = paneID
+	sess.Status = StatusStopped
+	sess.PersistedStatus = persisted
+	mgr.mu.Unlock()
+	mock.sessions[innerName] = true
+	mock.deadPanes[paneID] = false
+	return sess
+}
+
+// TestManager_RecoverTmuxSessions_PreservesPersistedStatus verifies that the
+// hook-derived persisted status survives a daemon restart instead of being
+// overwritten with StatusRunning. The fake resolver's status source returns
+// false for "recover" signals, so only the preserve path is exercised here.
+func TestManager_RecoverTmuxSessions_PreservesPersistedStatus(t *testing.T) {
+	for _, status := range []Status{StatusIdle, StatusThinking, StatusPermission} {
+		t.Run(string(status), func(t *testing.T) {
+			mgr, mock, _ := newTestManager(t)
+			sess := setupLivePaneSession(t, mgr, mock, "%12", status)
+
+			mgr.RecoverTmuxSessions()
+
+			got, ok := mgr.Get(sess.ID)
+			if !ok {
+				t.Fatal("Get returned ok=false")
+			}
+			if got.Status != status {
+				t.Errorf("Status = %q, want persisted %q", got.Status, status)
+			}
+		})
+	}
+}
+
+// recoverVerdictSource answers "recover" signals with a canned verdict and
+// records the signal so tests can assert the payload Manager built.
+type recoverVerdictSource struct {
+	verdict StatusUpdate
+	ok      bool
+	lastSig StatusSignal
+}
+
+func (s *recoverVerdictSource) Interpret(sig StatusSignal) (StatusUpdate, bool) {
+	if sig.Kind != "recover" {
+		return StatusUpdate{}, false
+	}
+	s.lastSig = sig
+	return s.verdict, s.ok
+}
+
+// recoverVerdictAgent is a fakeAgent whose status source is swapped for a
+// recoverVerdictSource.
+type recoverVerdictAgent struct {
+	fakeAgent
+	source *recoverVerdictSource
+}
+
+func (a *recoverVerdictAgent) StatusSource() StatusSource { return a.source }
+
+func TestManager_RecoverTmuxSessions_RecoverVerdictApplied(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+
+	source := &recoverVerdictSource{
+		verdict: StatusUpdate{Status: StatusIdle},
+		ok:      true,
+	}
+	mgr.SetAgentResolver(&fakeAgentResolver{
+		agents: map[string]Agent{"claude": &recoverVerdictAgent{source: source}},
+	})
+
+	// stale thinking: Stop hook missed while daemon was down
+	sess := setupLivePaneSession(t, mgr, mock, "%13", StatusThinking)
+	agentSessionID := sess.AgentSessionID
+
+	mgr.RecoverTmuxSessions()
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.Status != StatusIdle {
+		t.Errorf("Status = %q, want adapter verdict %q", got.Status, StatusIdle)
+	}
+	if s := source.lastSig.Payload["persisted_status"]; s != string(StatusThinking) {
+		t.Errorf("persisted_status payload = %q, want %q", s, StatusThinking)
+	}
+	if s := source.lastSig.Payload["agent_session_id"]; s != agentSessionID {
+		t.Errorf("agent_session_id payload = %q, want %q", s, agentSessionID)
+	}
+}
+
+// TestManager_RecoverTmuxSessions_LiveStatusWinsOverDisk verifies that a
+// status set by hooks after load (the session is already live in memory)
+// is not clobbered by the older on-disk value.
+func TestManager_RecoverTmuxSessions_LiveStatusWinsOverDisk(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+
+	sess := setupLivePaneSession(t, mgr, mock, "%15", StatusIdle)
+	mgr.mu.Lock()
+	sess.Status = StatusThinking // a hook fired after load
+	mgr.mu.Unlock()
+
+	mgr.RecoverTmuxSessions()
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.Status != StatusThinking {
+		t.Errorf("Status = %q, want live %q", got.Status, StatusThinking)
+	}
+}
+
+// TestManager_RecoverTmuxSessions_AfterReload verifies the full daemon-restart
+// path: the status persisted by a previous Manager instance survives the
+// load-time Stopped normalization and is restored when the pane is alive.
+func TestManager_RecoverTmuxSessions_AfterReload(t *testing.T) {
+	dir := t.TempDir()
+	configDir := t.TempDir()
+	configMgr, err := config.NewManager(configDir)
+	if err != nil {
+		t.Fatalf("config.NewManager failed: %v", err)
+	}
+
+	mgr1, err := NewManager(dir, configDir, configMgr)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+	sess, _, err := mgr1.CreateWithOptions(CreateOptions{WorkDir: "/tmp/recover-reload", Description: "rreload"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	innerName := "jin_" + sess.ID
+	sess.TmuxWindowName = innerName
+	sess.TmuxPaneID = "%16"
+	sess.Status = StatusIdle
+	if err := mgr1.store.Save(sess); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	mgr2, err := NewManager(dir, configDir, configMgr)
+	if err != nil {
+		t.Fatalf("NewManager (reload) failed: %v", err)
+	}
+	mock := newMockTmuxRunner()
+	mgr2.SetTmuxClient(mock)
+	mgr2.SetAgentResolver(newFakeAgentResolver())
+	mock.sessions[innerName] = true
+	mock.deadPanes["%16"] = false
+
+	mgr2.RecoverTmuxSessions()
+
+	got, ok := mgr2.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.Status != StatusIdle {
+		t.Errorf("Status = %q, want persisted %q restored after reload", got.Status, StatusIdle)
+	}
+}
+
+func TestManager_RecoverTmuxSessions_NoResolver(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+	mgr.SetAgentResolver(nil)
+
+	sess := setupLivePaneSession(t, mgr, mock, "%14", StatusIdle)
+
+	// Must not panic; the preserve path alone decides.
+	mgr.RecoverTmuxSessions()
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.Status != StatusIdle {
+		t.Errorf("Status = %q, want %q", got.Status, StatusIdle)
+	}
+}
+
 func TestManager_RecoverTmuxSessions_NoTmux(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 

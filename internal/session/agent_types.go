@@ -72,12 +72,20 @@ type SpawnPlan struct {
 // the signal on (hook callback, pane output tail, ...) and hands it to
 // StatusSource.Interpret.
 type StatusSignal struct {
-	// Kind identifies the transport (currently only "hook"). Adapters
-	// switch on this and ignore signals they don't understand.
+	// Kind identifies the transport: "hook" (live agent hook callback) or
+	// "recover" (daemon-restart recovery asking the adapter to re-derive a
+	// possibly stale status from its own persistent data). Adapters switch
+	// on this and ignore signals they don't understand.
+	//
+	// Contract for "recover" verdicts: Manager applies only
+	// StatusUpdate.Status — stale-state correction must not fire
+	// notifications or touch the error field, so Notify / ErrorMessage /
+	// ClearError are ignored.
 	Kind string
 	// Payload is an untyped key/value bag; the exact keys depend on Kind
 	// and are adapter-defined. For "hook" the Manager fills in "event",
-	// "notification_type", "stop_reason", "cwd".
+	// "notification_type", "stop_reason", "cwd"; for "recover" it fills in
+	// "persisted_status", "agent_session_id", "workdir".
 	Payload map[string]string
 }
 

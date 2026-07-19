@@ -1119,6 +1119,172 @@ func TestReader_ReadAITitle(t *testing.T) {
 	})
 }
 
+// --- Structured API: TurnState ---
+
+func TestTurnState(t *testing.T) {
+	userText := transcriptEntry{
+		Type:      "user",
+		Message:   msgObject{Role: "user", Content: "please do the thing"},
+		Timestamp: "2024-01-01T00:00:00Z",
+	}
+	assistantText := transcriptEntry{
+		Type: "assistant",
+		Message: msgObject{Role: "assistant", Content: []any{
+			map[string]any{"type": "text", "text": "done"},
+		}},
+		Timestamp: "2024-01-01T00:00:01Z",
+	}
+	assistantToolUse := transcriptEntry{
+		Type: "assistant",
+		Message: msgObject{Role: "assistant", Content: []any{
+			map[string]any{"type": "text", "text": "running a command"},
+			map[string]any{"type": "tool_use", "name": "Bash", "id": "tu_1", "input": map[string]any{"command": "echo hi"}},
+		}},
+		Timestamp: "2024-01-01T00:00:01Z",
+	}
+	userToolResult := transcriptEntry{
+		Type: "user",
+		Message: msgObject{Role: "user", Content: []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "tu_1", "content": "hi", "is_error": false},
+		}},
+		Timestamp: "2024-01-01T00:00:02Z",
+	}
+	systemTail := transcriptEntry{
+		Type:      "system",
+		Timestamp: "2024-01-01T00:00:03Z",
+	}
+	assistantThinkingOnly := transcriptEntry{
+		Type: "assistant",
+		Message: msgObject{Role: "assistant", Content: []any{
+			map[string]any{"type": "thinking", "thinking": "let me see"},
+		}},
+		Timestamp: "2024-01-01T00:00:01Z",
+	}
+	sidechainAssistantText := transcriptEntry{
+		Type: "assistant",
+		Message: msgObject{Role: "assistant", Content: []any{
+			map[string]any{"type": "text", "text": "subagent finished"},
+		}},
+		Timestamp:   "2024-01-01T00:00:02Z",
+		IsSidechain: true,
+	}
+	metaUser := transcriptEntry{
+		Type:      "user",
+		Message:   msgObject{Role: "user", Content: "injected meta note"},
+		Timestamp: "2024-01-01T00:00:02Z",
+		IsMeta:    true,
+	}
+
+	cases := []struct {
+		name    string
+		entries []transcriptEntry
+		want    TurnState
+	}{
+		{
+			name:    "completed turn: assistant with text only",
+			entries: []transcriptEntry{userText, assistantText},
+			want:    TurnStateComplete,
+		},
+		{
+			name:    "pending tool: assistant with tool_use block",
+			entries: []transcriptEntry{userText, assistantToolUse},
+			want:    TurnStatePendingTool,
+		},
+		{
+			name:    "user pending: last entry is a tool_result",
+			entries: []transcriptEntry{assistantToolUse, userToolResult},
+			want:    TurnStateUserPending,
+		},
+		{
+			name:    "user pending: last entry is a text prompt",
+			entries: []transcriptEntry{assistantText, userText},
+			want:    TurnStateUserPending,
+		},
+		{
+			name:    "system tail is skipped, prior assistant decides",
+			entries: []transcriptEntry{userText, assistantText, systemTail},
+			want:    TurnStateComplete,
+		},
+		{
+			// A subagent's closing message must not read as the main thread
+			// finishing while the main turn still has a pending tool_use.
+			name:    "sidechain tail is skipped, main thread pending tool decides",
+			entries: []transcriptEntry{userText, assistantToolUse, sidechainAssistantText},
+			want:    TurnStatePendingTool,
+		},
+		{
+			name:    "meta user tail is skipped, prior assistant decides",
+			entries: []transcriptEntry{userText, assistantText, metaUser},
+			want:    TurnStateComplete,
+		},
+		{
+			name:    "thinking-only assistant tail is still in flight",
+			entries: []transcriptEntry{userText, assistantThinkingOnly},
+			want:    TurnStateUserPending,
+		},
+		{
+			name:    "sidechain-only transcript is unknown",
+			entries: []transcriptEntry{sidechainAssistantText},
+			want:    TurnStateUnknown,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			r := &Reader{claudeDir: tmpDir}
+			workDir := "/turnstate/test"
+			sessionID := "sess-ts"
+			writeJSONL(t, r.getTranscriptPath(workDir, sessionID), tc.entries)
+
+			if got := r.TurnState(workDir, sessionID); got != tc.want {
+				t.Errorf("TurnState = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTurnState_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	p := r.getTranscriptPath("/turnstate/empty", "sess-ts-empty")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.TurnState("/turnstate/empty", "sess-ts-empty"); got != TurnStateUnknown {
+		t.Errorf("TurnState(empty file) = %d, want %d", got, TurnStateUnknown)
+	}
+}
+
+func TestTurnState_NoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	if got := r.TurnState("/nowhere", "no-such-session"); got != TurnStateUnknown {
+		t.Errorf("TurnState(no file) = %d, want %d", got, TurnStateUnknown)
+	}
+}
+
+func TestTurnState_MalformedLinesSkipped(t *testing.T) {
+	// A broken JSONL line must not abort classification: readEntries skips it
+	// and the last valid assistant entry still decides the state.
+	tmpDir := t.TempDir()
+	r := &Reader{claudeDir: tmpDir}
+	workDir := "/turnstate/broken"
+	sessionID := "sess-ts-broken"
+	writeRawJSONL(t, r.getTranscriptPath(workDir, sessionID), []string{
+		`{not json`,
+		`{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2024-01-01T00:00:00Z"}`,
+		`}also not json`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"timestamp":"2024-01-01T00:00:01Z"}`,
+	})
+	if got := r.TurnState(workDir, sessionID); got != TurnStateComplete {
+		t.Errorf("TurnState(with malformed lines) = %d, want %d", got, TurnStateComplete)
+	}
+}
+
 // --- glob fallback for GetLastMessage / GetLastMessages / GetConversation ---
 //
 // The bug motivating these tests: sessions frequently cd into a subdir or

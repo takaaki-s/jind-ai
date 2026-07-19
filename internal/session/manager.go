@@ -119,6 +119,11 @@ func (m *Manager) recoverTmuxSessionsLocked() {
 	}
 
 	for _, session := range m.sessions {
+		// Consume the status read from disk at load time so a later
+		// recovery pass cannot resurrect a stale value.
+		fromDisk := session.PersistedStatus
+		session.PersistedStatus = ""
+
 		if session.TmuxWindowName == "" {
 			// Fix stale sessions: active status but no tmux session (from prior recovery bug)
 			if session.Status != StatusStopped && session.Status != StatusCreating {
@@ -148,14 +153,65 @@ func (m *Manager) recoverTmuxSessionsLocked() {
 			continue
 		}
 
-		// Session exists and pane is alive - resume monitoring
-		session.Status = StatusRunning
+		// Session exists and pane is alive - resume monitoring.
+		// The hook-driven status persisted before the restart
+		// (idle/thinking/permission) is the best estimate of the session's
+		// real state; only detail-less states fall back to Running. A live
+		// in-memory status (hooks may have fired since load) wins over the
+		// on-disk value.
+		persisted := session.Status
+		if (persisted == StatusStopped || persisted == StatusCreating) && fromDisk != "" {
+			persisted = fromDisk
+		}
+		switch persisted {
+		case StatusIdle, StatusThinking, StatusPermission:
+			session.Status = persisted
+		default:
+			session.Status = StatusRunning
+		}
+
+		// Hooks fired while the daemon was down are lost, so the persisted
+		// value itself can be stale (e.g. a missed Stop hook leaves the
+		// session "thinking" forever). Let the adapter re-derive the status
+		// from its own persistent data (Claude Code: the transcript); a false
+		// verdict keeps the decision above. Only Status is applied — see the
+		// "recover" contract on StatusSignal.
+		if upd, ok := m.recoverStatusVerdict(session, persisted); ok {
+			session.Status = upd.Status
+		}
+
 		session.LastOutputTime = time.Now()
 		_ = m.store.Save(session)
-		debugLog("[RECOVER] Session %s has live inner tmux session, resuming monitoring", session.Description)
+		debugLog("[RECOVER] Session %s has live inner tmux session, resuming monitoring (status: %s)", session.Description, session.Status)
 
 		go m.captureOutputTmux(session)
 	}
+}
+
+// recoverStatusVerdict asks the session's agent adapter to re-derive the
+// status of a recovered pane-alive session from agent-side persistent data
+// (the Claude Code adapter reads the transcript's last turn). persisted is
+// the status loaded from disk, snapshotted before the caller's Running
+// normalization. Returns false when no resolver is configured, the kind is
+// unknown, or the adapter cannot tell — the caller then keeps its own
+// decision. Caller must hold m.mu.
+func (m *Manager) recoverStatusVerdict(session *Session, persisted Status) (StatusUpdate, bool) {
+	if m.agentResolver == nil {
+		return StatusUpdate{}, false
+	}
+	ag, err := m.agentResolver.Resolve(session.AgentKind)
+	if err != nil {
+		debugLog("[RECOVER] Session %s: cannot resolve agent %q: %v", session.Description, session.AgentKind, err)
+		return StatusUpdate{}, false
+	}
+	return ag.StatusSource().Interpret(StatusSignal{
+		Kind: "recover",
+		Payload: map[string]string{
+			"persisted_status": string(persisted),
+			"agent_session_id": session.AgentSessionID,
+			"workdir":          session.WorkDir,
+		},
+	})
 }
 
 // ensureTmuxClient lazily initializes the inner tmux client (-L jin).
@@ -226,7 +282,11 @@ func NewManager(sessionsDir, stateDir string, configMgr *config.Manager) (*Manag
 		return nil, err
 	}
 	for _, s := range sessions {
-		s.Status = StatusStopped // All loaded sessions start as stopped
+		// Normalize to Stopped in memory (the process may be gone), but keep
+		// the on-disk value: recovery uses it to restore the hook-derived
+		// status of sessions whose pane turns out to still be alive.
+		s.PersistedStatus = s.Status
+		s.Status = StatusStopped
 		if s.Fleet == "" {
 			s.Fleet = DefaultFleet
 		}

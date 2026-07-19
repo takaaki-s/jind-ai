@@ -95,13 +95,15 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	// separate wiring is needed here.
 	mgr.SetAgentResolver(agentResolverAdapter{})
 
-	// Set up tmux client if tmux is available and jin tmux session exists
+	// Set up tmux client whenever the tmux binary is available. Recovery
+	// decides per-session whether its inner tmux session is still alive —
+	// gating on a pre-existing outer session would skip recovery entirely
+	// (inner sessions are standalone "sess-*" sessions, and has-session
+	// queries never spawn a tmux server).
 	if tc, err := tmux.NewClient(); err == nil {
-		if tc.HasSession(tmux.SessionName) {
-			mgr.SetTmuxClient(tc)
-			mgr.RecoverTmuxSessions()
-			debugLog("tmux client initialized (session: %s)", tmux.SessionName)
-		}
+		mgr.SetTmuxClient(tc)
+		mgr.RecoverTmuxSessions()
+		debugLog("tmux client initialized (socket: %s)", tmux.SocketName)
 	}
 
 	hookRunner, err := worktreehook.NewRunner(stateDir)

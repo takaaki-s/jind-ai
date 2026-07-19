@@ -253,9 +253,11 @@ func (r *Reader) getTranscriptPath(workDir, sessionID string) string {
 
 // transcriptEntry represents a single entry in the JSONL file
 type transcriptEntry struct {
-	Type      string    `json:"type"`
-	Message   msgObject `json:"message"`
-	Timestamp string    `json:"timestamp"`
+	Type        string    `json:"type"`
+	Message     msgObject `json:"message"`
+	Timestamp   string    `json:"timestamp"`
+	IsSidechain bool      `json:"isSidechain"`
+	IsMeta      bool      `json:"isMeta"`
 }
 
 // msgObject represents the message field which can have different structures
@@ -520,6 +522,110 @@ func (r *Reader) LastToolResult(workDir, sessionID, toolName string, onlyErrors 
 		}
 	}
 	return nil, nil
+}
+
+// TurnState classifies the most recent conversational turn in a transcript.
+// It is used to re-derive a session's live status after a daemon restart, when
+// the persisted (hook-driven) status may be stale.
+type TurnState int
+
+const (
+	// TurnStateUnknown means the turn could not be classified: no transcript
+	// file, an empty file, no user/assistant entries, or a read failure.
+	TurnStateUnknown TurnState = iota
+	// TurnStateComplete means the last user/assistant entry is an assistant
+	// message with no tool_use block. The API call ended without requesting a
+	// tool, so the turn finished. Heuristic: stop_reason is not parsed from the
+	// transcript, but "assistant ending without tool_use" is equivalent to a
+	// stop/end_turn for status purposes.
+	TurnStateComplete
+	// TurnStatePendingTool means the last user/assistant entry is an assistant
+	// message containing a tool_use block. A tool is executing or awaiting
+	// permission; the two are indistinguishable from the transcript alone.
+	TurnStatePendingTool
+	// TurnStateUserPending means the assistant response is still being
+	// generated: the last user/assistant entry is a user message (a freshly
+	// submitted prompt, or a written tool_result), or an assistant entry
+	// whose blocks are all "thinking" (a reply cut off mid-thought).
+	TurnStateUserPending
+)
+
+// TurnState returns the classification of the last conversational turn.
+// Entries that are not part of the main conversation are ignored:
+// system/summary types, sidechain entries (a subagent's turns would
+// otherwise read as the main thread finishing), and meta messages. Any
+// failure (missing file, empty transcript, read error) folds into
+// TurnStateUnknown, so callers can treat it as "cannot determine" without
+// guard code.
+//
+// The file is streamed keeping only the last main-conversation entry — a
+// ReadEntries call would materialize every block (including re-marshalled
+// tool payloads) just to look at the tail.
+func (r *Reader) TurnState(workDir, sessionID string) TurnState {
+	path, err := r.findTranscriptPath(workDir, sessionID)
+	if err != nil {
+		return TurnStateUnknown
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return TurnStateUnknown
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	// Allow lines up to 16 MiB to accommodate large tool_result payloads.
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 16*1024*1024)
+
+	var last *transcriptEntry
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var raw transcriptEntry
+		if err := json.Unmarshal(line, &raw); err != nil {
+			continue
+		}
+		if raw.IsSidechain || raw.IsMeta {
+			continue
+		}
+		if raw.Type != "user" && raw.Type != "assistant" {
+			continue
+		}
+		last = &raw
+	}
+	if scanner.Err() != nil || last == nil {
+		return TurnStateUnknown
+	}
+
+	if last.Type == "user" {
+		return TurnStateUserPending
+	}
+	hasText := false
+	if s, ok := last.Message.Content.(string); ok && s != "" {
+		hasText = true
+	}
+	if blocks, ok := last.Message.Content.([]any); ok {
+		for _, item := range blocks {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch m["type"] {
+			case "tool_use":
+				return TurnStatePendingTool
+			case "text":
+				hasText = true
+			}
+		}
+	}
+	if hasText {
+		return TurnStateComplete
+	}
+	// Thinking-only (or empty) assistant entry: the turn is still in
+	// flight — never report it as complete.
+	return TurnStateUserPending
 }
 
 // ReadAITitle returns the AI-generated session title Claude Code writes to

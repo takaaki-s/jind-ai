@@ -62,6 +62,7 @@ type Session struct {
 	StartedAt        time.Time        `json:"-"` // Process start time (prevents false error detection right after startup)
 	SSHAuthSock      string           `json:"-"` // SSH_AUTH_SOCK (for git operations, not persisted)
 	DescriptionLayer DescriptionLayer `json:"-"` // Runtime-only enhancer layer; see DescriptionLayer docs + TryUpgradeDescription's restart guard
+	PersistedStatus  Status           `json:"-"` // Status read from disk at load time, before the in-memory normalization to Stopped; consumed once by recovery
 
 	// Tracked runtime fields (CurrentWorkDir is persisted so worktree/subdir
 	// context survives daemon restarts and enables resume in the last known dir).

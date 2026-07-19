@@ -11,7 +11,8 @@
                    StartBackground()
                           │
                           ▼
-                    StatusRunning ◄─── RecoverTmuxSessions()
+                    StatusRunning ◄─── RecoverTmuxSessions() (only when no
+                     │    │    │        hook-derived status was persisted)
                      │    │    │
     UserPromptSubmit │    │    │ Notification(permission_prompt)
                      ▼    │    ▼
@@ -127,11 +128,33 @@ stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` r
 ## Recovery (On Daemon Restart)
 
 `RecoverTmuxSessions()`:
-1. Loads all persisted sessions (initialized as Status=Stopped)
+1. On load, in-memory Status is normalized to Stopped (the process may be
+   gone); the on-disk value is stashed in the runtime-only
+   `Session.PersistedStatus` for recovery to consume
 2. For sessions with TmuxWindowName, checks if the inner tmux is alive
-3. Alive → StatusRunning + restart `captureOutputTmux()`
+3. Alive → restart `captureOutputTmux()`. The status is decided in two steps:
+   - The hook-derived status persisted before the restart
+     (idle/thinking/permission) is restored as the best estimate; other
+     states (stopped/creating/running) fall back to StatusRunning. A live
+     in-memory status (hooks that fired since load) wins over the on-disk
+     value
+   - The agent adapter may then refine it via a `StatusSignal{Kind:"recover"}`
+     (payload: `persisted_status`, `agent_session_id`, `workdir`). Hooks fired
+     while the daemon was down are lost, so the persisted value can be stale;
+     the Claude Code adapter re-derives the status from the transcript's last
+     turn (`transcript.TurnState`): assistant message without a trailing
+     tool_use → idle (a missed Stop hook), trailing tool_use → thinking
+     (or permission when persisted, indistinguishable from the transcript
+     alone), last entry user → thinking. Unknown/no transcript keeps the
+     step-1 decision
 4. Pane dead → StatusStopped (TmuxWindowName preserved for RespawnPane)
 5. Session itself gone → Clear TmuxWindowName + StatusStopped
+
+Known residual: a recovered session whose status ends up "running" (no
+hook-derived status persisted and no transcript verdict) stays "running"
+until the next hook — the running→idle poll fallback is intentionally
+disabled for recovered sessions (`StartedAt` is runtime-only) to avoid false
+idle transitions while a task is still executing.
 
 ## Auto-Recovery on Resume Failure
 
@@ -149,6 +172,10 @@ CWD / AgentSessionStarted invariants, and then hands the raw event to
 and Status mapping — the Claude Code mapping lives in
 `internal/agent/claude/status.go`; other adapters plug their own
 `StatusSource` into the same slot without touching `session/manager.go`.
+
+`StatusSignal.Kind` currently has two values: `"hook"` (live hook callback)
+and `"recover"` (daemon-restart recovery, see above). Adapters ignore kinds
+they don't understand by returning a false verdict, so new kinds are additive.
 
 ## WorkDir Tracking
 

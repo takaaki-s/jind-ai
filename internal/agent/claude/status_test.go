@@ -5,6 +5,7 @@ import (
 
 	"github.com/takaaki-s/jind-ai/internal/agent"
 	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/transcript"
 )
 
 func TestInterpret_HookEventMap(t *testing.T) {
@@ -59,6 +60,83 @@ func TestInterpret_HookEventMap(t *testing.T) {
 				t.Errorf("ErrorMessage = %q, want %q", upd.ErrorMessage, tc.wantErrMsg)
 			}
 		})
+	}
+}
+
+// stubTurnStater returns a canned TurnState and records whether it was called,
+// so tests can assert the recover branch skips the transcript read when the
+// agent_session_id is empty.
+type stubTurnStater struct {
+	state  transcript.TurnState
+	called bool
+}
+
+func (s *stubTurnStater) TurnState(workDir, sessionID string) transcript.TurnState {
+	s.called = true
+	return s.state
+}
+
+func TestInterpret_RecoverTurnStateMap(t *testing.T) {
+	cases := []struct {
+		name       string
+		state      transcript.TurnState
+		persisted  session.Status
+		wantOK     bool
+		wantStatus session.Status
+	}{
+		{name: "Complete → idle", state: transcript.TurnStateComplete, persisted: session.StatusThinking, wantOK: true, wantStatus: session.StatusIdle},
+		{name: "PendingTool + persisted permission → permission", state: transcript.TurnStatePendingTool, persisted: session.StatusPermission, wantOK: true, wantStatus: session.StatusPermission},
+		{name: "PendingTool + persisted thinking → thinking", state: transcript.TurnStatePendingTool, persisted: session.StatusThinking, wantOK: true, wantStatus: session.StatusThinking},
+		{name: "PendingTool + persisted running → thinking", state: transcript.TurnStatePendingTool, persisted: session.StatusRunning, wantOK: true, wantStatus: session.StatusThinking},
+		{name: "UserPending → thinking", state: transcript.TurnStateUserPending, persisted: session.StatusRunning, wantOK: true, wantStatus: session.StatusThinking},
+		{name: "Unknown → false", state: transcript.TurnStateUnknown, persisted: session.StatusRunning, wantOK: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubTurnStater{state: tc.state}
+			src := &HookStatusSource{turns: stub}
+			upd, ok := src.Interpret(agent.StatusSignal{
+				Kind: "recover",
+				Payload: map[string]string{
+					"agent_session_id": "sess-1",
+					"workdir":          "/work",
+					"persisted_status": string(tc.persisted),
+				},
+			})
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (upd=%+v)", ok, tc.wantOK, upd)
+			}
+			if !ok {
+				return
+			}
+			if upd.Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q", upd.Status, tc.wantStatus)
+			}
+			if upd.Notify != agent.NotifyNone {
+				t.Errorf("Notify = %q, want NotifyNone (recover transitions are stale-derived)", upd.Notify)
+			}
+			if upd.ErrorMessage != "" || upd.ClearError {
+				t.Errorf("recover must not touch error fields: ErrorMessage=%q ClearError=%v", upd.ErrorMessage, upd.ClearError)
+			}
+		})
+	}
+}
+
+func TestInterpret_RecoverEmptySessionIDSkipsTranscript(t *testing.T) {
+	stub := &stubTurnStater{state: transcript.TurnStateComplete}
+	src := &HookStatusSource{turns: stub}
+	upd, ok := src.Interpret(agent.StatusSignal{
+		Kind: "recover",
+		Payload: map[string]string{
+			"agent_session_id": "",
+			"persisted_status": string(session.StatusThinking),
+		},
+	})
+	if ok {
+		t.Errorf("expected ok=false for empty agent_session_id, got upd=%+v", upd)
+	}
+	if stub.called {
+		t.Error("TurnState must not be consulted when agent_session_id is empty")
 	}
 }
 
