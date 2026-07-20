@@ -163,6 +163,18 @@ const (
 	DescriptionLayerTranscript DescriptionLayer = 3
 )
 
+// descriptionDriftedFrom reports whether the session's Description has moved
+// off the given Layer A baseline while DescriptionLayer is still zero.
+//
+// That combination means the drift did not come from this daemon process:
+// most commonly a restart lost the runtime layer while the persisted
+// Description still carries a Layer C value written earlier. It is the signal
+// TryUpgradeDescription's Guard 1 refuses to overwrite, since there is no way
+// to tell whether an incoming candidate is better than what is already there.
+func (s *Session) descriptionDriftedFrom(baseline string) bool {
+	return s.Description != baseline && s.DescriptionLayer == DescriptionLayerBaseline
+}
+
 // DescriptionEnhancer produces an agent-specific "Layer C" description upgrade
 // from live session state (e.g., the first user prompt in a transcript, or a
 // session name Claude Code writes to disk at start-up).

@@ -2343,15 +2343,27 @@ func TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision(t *testi
 // layer defaults to DescriptionLayerBaseline (zero); tests that expect a
 // successful promotion must set it to a layer strictly greater than the
 // session's current layer.
+//
+// during, when set, runs inside TryGenerate. It stands in for the window where
+// the real enhancer is scanning a transcript with m.mu released, and may mutate
+// the manager freely — exactly what a concurrent caller can do. got records the
+// session TryGenerate was handed, so a test can check it is a snapshot copy
+// rather than the live one.
 type stubEnhancer struct {
 	response string
 	ok       bool
 	layer    DescriptionLayer
 	calls    int
+	during   func()
+	got      *Session
 }
 
 func (s *stubEnhancer) TryGenerate(sess *Session) (string, DescriptionLayer, bool) {
 	s.calls++
+	s.got = sess
+	if s.during != nil {
+		s.during()
+	}
 	return s.response, s.layer, s.ok
 }
 
@@ -2498,6 +2510,230 @@ func TestManager_TryUpgradeDescription_UnknownSession_NoPanic(t *testing.T) {
 
 	if enh.calls != 0 {
 		t.Errorf("enhancer.TryGenerate calls = %d, want 0 (unknown session should short-circuit)", enh.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TryUpgradeDescription: lock-free I/O phase
+// ---------------------------------------------------------------------------
+
+// requireUnlocked fails the test instead of deadlocking when m.mu is still held
+// while the enhancer runs. The stubEnhancer during callbacks below take m.mu,
+// so without this they would hang until the test binary times out rather than
+// report a clear failure.
+//
+// Must be called from the test goroutine: t.Fatal is only valid there.
+func requireUnlocked(t *testing.T, mgr *Manager) {
+	t.Helper()
+	if !mgr.mu.TryLock() {
+		t.Fatal("m.mu held while the enhancer ran; the I/O must happen outside the lock")
+	}
+	mgr.mu.Unlock()
+}
+
+// TestManager_TryUpgradeDescription_EnhancerRunsWithoutLock is the core
+// regression test for this change: the enhancer performs unbounded file I/O,
+// so running it under the Manager's central lock stalls every other session
+// for the duration. TryLock succeeding proves the lock is free.
+func TestManager_TryUpgradeDescription_EnhancerRunsWithoutLock(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-unlocked"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	enh := &stubEnhancer{
+		response: "candidate",
+		ok:       true,
+		layer:    DescriptionLayerTranscript,
+		during:   func() { requireUnlocked(t, mgr) },
+	}
+	mgr.TryUpgradeDescription(sess.ID, enh)
+
+	if enh.calls != 1 {
+		t.Errorf("enhancer.TryGenerate calls = %d, want 1", enh.calls)
+	}
+	got, _ := mgr.Get(sess.ID)
+	if got.Description != "candidate" {
+		t.Errorf("Description = %q, want %q (upgrade should still apply)", got.Description, "candidate")
+	}
+}
+
+// TestManager_TryUpgradeDescription_EnhancerGetsSnapshotNotLiveSession pins the
+// other half of moving the I/O out of the lock: the enhancer runs unlocked, so
+// handing it the live session would let it read fields while another goroutine
+// writes them. It must receive an independent copy.
+func TestManager_TryUpgradeDescription_EnhancerGetsSnapshotNotLiveSession(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-snapshot"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	enh := &stubEnhancer{response: "candidate", ok: true, layer: DescriptionLayerTranscript}
+	mgr.TryUpgradeDescription(sess.ID, enh)
+
+	mgr.mu.Lock()
+	live := mgr.sessions[sess.ID]
+	mgr.mu.Unlock()
+
+	if enh.got == nil {
+		t.Fatal("enhancer was never called")
+	}
+	if enh.got == live {
+		t.Error("enhancer received the live session; it must get a snapshot copy")
+	}
+}
+
+// TestManager_TryUpgradeDescription_DeletedDuringIO_NoWriteback covers the
+// session disappearing while the lock is released: the write-back must be
+// dropped rather than resurrecting a deleted session.
+func TestManager_TryUpgradeDescription_DeletedDuringIO_NoWriteback(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-deleted"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	id := sess.ID
+
+	enh := &stubEnhancer{
+		response: "candidate",
+		ok:       true,
+		layer:    DescriptionLayerTranscript,
+		during: func() {
+			requireUnlocked(t, mgr)
+			mgr.mu.Lock()
+			delete(mgr.sessions, id)
+			mgr.mu.Unlock()
+		},
+	}
+	mgr.TryUpgradeDescription(id, enh)
+
+	if enh.calls != 1 {
+		t.Errorf("enhancer.TryGenerate calls = %d, want 1", enh.calls)
+	}
+	if _, ok := mgr.Get(id); ok {
+		t.Error("session reappeared in the manager after being deleted mid-upgrade")
+	}
+	reloaded, err := mgr.store.Load(id)
+	if err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	if reloaded.Description == "candidate" {
+		t.Errorf("persisted Description = %q; the write-back should have been dropped", reloaded.Description)
+	}
+}
+
+// TestManager_TryUpgradeDescription_ManualLockDuringIO_KeepsManualValue covers
+// the user renaming a session while the enhancer is running. SetDescription
+// sets DescriptionLocked, so the re-checked guard must discard our candidate.
+func TestManager_TryUpgradeDescription_ManualLockDuringIO_KeepsManualValue(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-manual"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	id := sess.ID
+
+	enh := &stubEnhancer{
+		response: "candidate",
+		ok:       true,
+		layer:    DescriptionLayerTranscript,
+		during: func() {
+			requireUnlocked(t, mgr)
+			if err := mgr.SetDescription(id, "manual label"); err != nil {
+				t.Errorf("SetDescription failed: %v", err)
+			}
+		},
+	}
+	mgr.TryUpgradeDescription(id, enh)
+
+	if enh.calls != 1 {
+		t.Errorf("enhancer.TryGenerate calls = %d, want 1", enh.calls)
+	}
+	got, _ := mgr.Get(id)
+	if got.Description != "manual label" {
+		t.Errorf("Description = %q, want %q (manual rename must win)", got.Description, "manual label")
+	}
+	if !got.DescriptionLocked {
+		t.Error("DescriptionLocked = false, want true")
+	}
+}
+
+// TestManager_TryUpgradeDescription_ConcurrentUpgradeDuringIO_RejectsLate
+// covers two hook events racing: the one that finishes second carries a layer
+// that is no longer strictly greater, so Guard 2 must reject it on re-check.
+func TestManager_TryUpgradeDescription_ConcurrentUpgradeDuringIO_RejectsLate(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-raced"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	id := sess.ID
+
+	enh := &stubEnhancer{
+		response: "late candidate",
+		ok:       true,
+		layer:    DescriptionLayerTranscript,
+		during: func() {
+			requireUnlocked(t, mgr)
+			// A competing upgrade lands first, at the same layer.
+			winner := &stubEnhancer{response: "early candidate", ok: true, layer: DescriptionLayerTranscript}
+			mgr.TryUpgradeDescription(id, winner)
+		},
+	}
+	mgr.TryUpgradeDescription(id, enh)
+
+	if enh.calls != 1 {
+		t.Errorf("enhancer.TryGenerate calls = %d, want 1", enh.calls)
+	}
+	got, _ := mgr.Get(id)
+	if got.Description != "early candidate" {
+		t.Errorf("Description = %q, want %q (Guard 2 must reject the late same-layer write)", got.Description, "early candidate")
+	}
+}
+
+// TestManager_TryUpgradeDescription_WorkDirChangedDuringIO_Drops covers the
+// baseline going stale: the baseline was derived from the snapshot's WorkDir,
+// so once the session moves we drop the round rather than compare Guard 1
+// against a value that no longer describes the session.
+func TestManager_TryUpgradeDescription_WorkDirChangedDuringIO_Drops(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: "/tmp/upgrade-moved"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	id := sess.ID
+	original := sess.Description
+
+	enh := &stubEnhancer{
+		response: "candidate",
+		ok:       true,
+		layer:    DescriptionLayerTranscript,
+		during: func() {
+			requireUnlocked(t, mgr)
+			mgr.mu.Lock()
+			mgr.sessions[id].WorkDir = "/tmp/upgrade-moved-elsewhere"
+			mgr.mu.Unlock()
+		},
+	}
+	mgr.TryUpgradeDescription(id, enh)
+
+	if enh.calls != 1 {
+		t.Errorf("enhancer.TryGenerate calls = %d, want 1", enh.calls)
+	}
+	got, _ := mgr.Get(id)
+	if got.Description != original {
+		t.Errorf("Description = %q, want %q (stale baseline should drop the write-back)", got.Description, original)
+	}
+	if got.DescriptionLayer != DescriptionLayerBaseline {
+		t.Errorf("DescriptionLayer = %d, want %d", got.DescriptionLayer, DescriptionLayerBaseline)
 	}
 }
 

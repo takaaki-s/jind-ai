@@ -956,11 +956,8 @@ func (m *Manager) SetDescription(id string, desc string) error {
 // from every hook event that might carry new signal; guard-heavy internal
 // short-circuiting is what keeps repeated calls cheap.
 //
-// Guard 1 (restart protection): if the persisted Description has drifted from
-// the Layer A baseline while our in-memory DescriptionLayer is still zero,
-// assume the drift came from a previous Layer C write in an earlier daemon
-// process. Refuse to overwrite it — we have no way to know that the incoming
-// candidate is actually higher-quality than what is already there.
+// Guard 1 (restart protection) is Session.descriptionDriftedFrom: refuse to
+// overwrite a Description that a previous daemon process already upgraded.
 //
 // Guard 2 (monotonic layer): reject candidates whose layer is not strictly
 // greater than the session's current layer. This lets us call the same
@@ -971,16 +968,20 @@ func (m *Manager) SetDescription(id string, desc string) error {
 //
 // A nil enhancer (or an unknown session id, or a locked description) is a
 // silent no-op so callers do not need to guard hook wiring.
+//
+// The enhancer scans the agent transcript end to end and the store write hits
+// the filesystem, so neither runs under m.mu — that is the Manager's central
+// lock, and holding it across this I/O stalls every other session. Only the
+// snapshot and the commit take the lock; everything between them is lock-free,
+// which means the session can change in the gap. commitDescriptionUpgrade
+// therefore re-evaluates every guard against live state before writing.
 func (m *Manager) TryUpgradeDescription(id string, enhancer DescriptionEnhancer) {
 	if enhancer == nil {
 		return
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	session, ok := m.sessions[id]
-	if !ok || session.DescriptionLocked {
+	snapshot, ok := m.snapshotForUpgrade(id)
+	if !ok {
 		return
 	}
 
@@ -988,28 +989,88 @@ func (m *Manager) TryUpgradeDescription(id string, enhancer DescriptionEnhancer)
 	// SetDescription use. Threading CurrentBranch / IsWorktree / TmuxWindowName
 	// here would make the comparison miss as soon as captureOutputTmux populates
 	// those runtime fields, silently disabling Layer C on the very first poll.
-	baseline := GenerateBaselineDescription(session.WorkDir, "", false, "")
+	baseline := GenerateBaselineDescription(snapshot.WorkDir, "", false, "")
 
-	// Guard 1: description drifted from baseline but our layer counter is zero.
-	// Most commonly this means daemon restart lost the runtime layer while the
-	// persisted Description still carries a prior Layer C value.
-	if session.Description != baseline && session.DescriptionLayer == DescriptionLayerBaseline {
+	// Guard 1, evaluated against the snapshot purely to skip the transcript
+	// scan. commitDescriptionUpgrade runs the authoritative one.
+	if snapshot.descriptionDriftedFrom(baseline) {
 		return
 	}
 
-	candidate, layer, ok := enhancer.TryGenerate(session)
+	candidate, layer, ok := enhancer.TryGenerate(&snapshot)
 	if !ok || candidate == "" {
 		return
 	}
 
+	saved, ok := m.commitDescriptionUpgrade(id, &snapshot, baseline, candidate, layer)
+	if !ok {
+		return
+	}
+	// Save the copy rather than the live session: Store.Save marshals every
+	// field, so handing it the live pointer outside the lock would race with
+	// concurrent mutators. The copy can persist a Status that a concurrent Save
+	// has already superseded; that is accepted, since memory stays
+	// authoritative and the next Save reconverges.
+	_ = m.store.Save(&saved)
+}
+
+// snapshotForUpgrade returns an independent copy of the session to hand to an
+// enhancer running without the lock, or ok=false when the session is unknown or
+// its description is user-locked.
+//
+// The copy is safe because no Session field aliases mutable state: they are
+// strings, bools, ints and time.Time, whose internal *Location is immutable
+// and shared.
+func (m *Manager) snapshotForUpgrade(id string) (Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok || session.DescriptionLocked {
+		return Session{}, false
+	}
+	return *session, true
+}
+
+// commitDescriptionUpgrade applies a candidate produced from snapshot, after
+// re-running every guard against live state. It returns the value to persist.
+//
+// Re-running the guards, rather than diffing snapshot against live field by
+// field, is what lets a write that landed during the unlocked window win: a
+// deletion misses the map, a manual SetDescription has set DescriptionLocked,
+// and a concurrent upgrade has raised DescriptionLayer past Guard 2.
+func (m *Manager) commitDescriptionUpgrade(id string, snapshot *Session, baseline, candidate string, layer DescriptionLayer) (Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok || session.DescriptionLocked {
+		return Session{}, false
+	}
+
+	// baseline describes snapshot.WorkDir. Once the session moves it says
+	// nothing about the session in front of us, so drop the round rather than
+	// compare against a stale value; the next hook recomputes both. (baseline
+	// also depends on the filesystem layout around WorkDir, which cannot be
+	// pinned down the same way — this is a best-effort check, and a miss only
+	// costs one skipped round.)
+	if session.WorkDir != snapshot.WorkDir {
+		return Session{}, false
+	}
+
+	// Guard 1, authoritative.
+	if session.descriptionDriftedFrom(baseline) {
+		return Session{}, false
+	}
+
 	// Guard 2: only promote strictly upward.
 	if layer <= session.DescriptionLayer {
-		return
+		return Session{}, false
 	}
 
 	session.Description = candidate
 	session.DescriptionLayer = layer
-	_ = m.store.Save(session)
+	return *session, true
 }
 
 // CountActive returns the number of active sessions (creating, running, thinking, permission)
@@ -1545,6 +1606,10 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		},
 	})
 
+	// git.IsGitRoot stats the filesystem, so settle it before taking the lock.
+	// cwd comes from the hook payload, so this is a pure function of the event.
+	cwdIsGitRoot := cwd != "" && git.IsGitRoot(cwd) && !git.IsClaudeWorktreePath(cwd)
+
 	m.mu.Lock()
 	oldStatus := session.Status
 	sessionID := session.ID
@@ -1563,7 +1628,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 	cwdChanged := false
 	if cwd != "" {
 		session.CurrentWorkDir = cwd
-		if session.WorkDir != cwd && git.IsGitRoot(cwd) && !git.IsClaudeWorktreePath(cwd) {
+		if session.WorkDir != cwd && cwdIsGitRoot {
 			session.WorkDir = cwd
 			cwdChanged = true
 		}
