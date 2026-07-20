@@ -1804,6 +1804,11 @@ func (m *Manager) Kill(id string) error {
 // If removeWorktree is true and the session's WorkDir is a git worktree,
 // the worktree will also be removed. If the worktree has uncommitted changes
 // and forceRemoveWorktree is false, ErrWorktreeDirty is returned.
+//
+// Worktree removal failures are always fatal to the delete: the session record
+// is kept and the error is returned, so the caller never sees a success while
+// the worktree is still on disk. Retry after fixing the cause, or delete
+// without removeWorktree to drop the session and keep the directory.
 func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) error {
 	// Defense-in-depth: the CLI validates the same combination, but non-CLI
 	// callers (TUI, integration tests, future clients) reach Manager directly.
@@ -1828,14 +1833,12 @@ func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) er
 	workDir := git.ResolveWorktreeDir(currentWorkDir, persistedWorkDir)
 
 	// Remove worktree if requested (outside lock to avoid blocking during exec).
-	// This runs before tmux kill so that ErrWorktreeDirty / ErrNotWorktree can
-	// abort without side effects.
+	// Runs before tmux kill and store removal so a failure aborts before
+	// anything on the jin side is touched. Git may still have removed files
+	// before failing, so the directory itself is not guaranteed pristine.
 	if removeWorktree && workDir != "" {
 		if err := m.removeGitWorktree(workDir, forceRemoveWorktree); err != nil {
-			if errors.Is(err, ErrWorktreeDirty) || errors.Is(err, ErrNotWorktree) {
-				return err
-			}
-			debugLog("[DELETE] worktree removal failed for %s: %v", workDir, err)
+			return err
 		}
 	}
 
@@ -1858,16 +1861,26 @@ func (m *Manager) Delete(id string, removeWorktree, forceRemoveWorktree bool) er
 
 // removeGitWorktree removes a git worktree at the given path.
 // Returns ErrWorktreeDirty if the worktree has uncommitted changes and force
-// is false. Returns ErrNotWorktree if workDir is not a git worktree.
+// is false. Returns ErrNotWorktree if workDir is not a git worktree. Any other
+// failure (permissions, filesystem, git exec) is wrapped with the worktree path
+// and the way out, since this error is what the CLI and TUI show verbatim.
+//
+// The static wrapper text must not contain the ErrWorktreeDirty /
+// ErrNotWorktree messages: the daemon client restores those sentinels from the
+// error string across IPC, and a collision would misreport an unrelated
+// failure as dirty. The interpolated path and git's own output are outside
+// that guarantee; only structured error codes over IPC would close the gap.
 func (m *Manager) removeGitWorktree(workDir string, force bool) error {
 	err := m.gitClient.RemoveWorktree(workDir, force)
 	switch {
+	case err == nil:
+		return nil
 	case errors.Is(err, git.ErrDirty):
 		return ErrWorktreeDirty
 	case errors.Is(err, git.ErrNotWorktree):
 		return ErrNotWorktree
 	default:
-		return err
+		return fmt.Errorf("removing git worktree at %s: %w (session kept; delete without worktree removal to drop it)", workDir, err)
 	}
 }
 

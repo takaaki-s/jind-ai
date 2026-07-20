@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/git"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // newTestManager creates a Manager backed by temporary directories, a mock
@@ -2050,6 +2051,97 @@ func TestManager_Delete_DirtyWorktreeReturnsErrWorktreeDirty(t *testing.T) {
 	}
 	if _, err := os.Stat(worktreeDir); !os.IsNotExist(err) {
 		t.Errorf("worktree should be removed after force delete: stat err=%v", err)
+	}
+}
+
+// A worktree removal that fails for a reason other than dirty/not-a-worktree
+// (permissions, filesystem, git exec) must abort the delete rather than report
+// success while the directory is still on disk. Covers force too: with force
+// the dirty classification is skipped entirely (internal/git/worktree.go), so
+// every git failure lands on this path.
+func TestManager_Delete_WorktreeRemovalFailureAbortsDelete(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		name := "force=false"
+		if force {
+			name = "force=true"
+		}
+		t.Run(name, func(t *testing.T) {
+			mgr, tmuxMock, _ := newTestManager(t)
+			_, worktreeDir := setupTestWorktree(t)
+
+			sess, _, err := mgr.CreateWithOptions(CreateOptions{WorkDir: worktreeDir, Description: "wt-fail"})
+			if err != nil {
+				t.Fatalf("create failed: %v", err)
+			}
+			innerName := tmux.InnerSessionName(sess.ID)
+			mgr.mu.Lock()
+			sess.TmuxWindowName = innerName
+			mgr.mu.Unlock()
+
+			// Dirty-looking output under force must still land on the wrapped
+			// path, not ErrWorktreeDirty.
+			gitOutput := "fatal: could not remove: permission denied"
+			if force {
+				gitOutput = "fatal: 'wt' contains modified or untracked files, use --force to delete it"
+			}
+
+			// Fail only `git worktree remove`; the pre-flight .git checks still
+			// run against the real worktree created above. The injected output
+			// deliberately omits the path so that finding it in the returned
+			// error proves the wrapper added it.
+			runner := &scriptedGitRunner{
+				handler: func(dir string, args []string) ([]byte, error) {
+					if len(args) >= 2 && args[0] == "worktree" && args[1] == "remove" {
+						return []byte(gitOutput), errors.New("exit status 128")
+					}
+					return nil, nil
+				},
+			}
+			mgr.gitClient = git.NewClientWithRunner(runner)
+
+			err = mgr.Delete(sess.ID, true, force)
+			if err == nil {
+				t.Fatal("Delete should fail when worktree removal fails")
+			}
+			if got := runner.hadCall("worktree", "remove", "--force"); got != force {
+				t.Errorf("--force propagation: got %v, want %v", got, force)
+			}
+			if !strings.HasPrefix(err.Error(), "removing git worktree at ") {
+				t.Errorf("error should carry the removal context, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), worktreeDir) {
+				t.Errorf("error should name the leftover worktree path %q, got: %v", worktreeDir, err)
+			}
+
+			// Must not masquerade as a sentinel. The daemon client restores
+			// sentinels from the error string across IPC, so a substring
+			// collision would tell the user to retry with --force-worktree for
+			// an unrelated failure.
+			if errors.Is(err, ErrWorktreeDirty) || errors.Is(err, ErrNotWorktree) {
+				t.Errorf("unrelated failure must not be classified as a sentinel: %v", err)
+			}
+			if strings.Contains(err.Error(), ErrWorktreeDirty.Error()) ||
+				strings.Contains(err.Error(), ErrNotWorktree.Error()) {
+				t.Errorf("error text must not contain a sentinel message: %q", err.Error())
+			}
+
+			// Aborting must leave no side effects: session (in memory and on
+			// disk), directory and tmux all intact.
+			if _, ok := mgr.Get(sess.ID); !ok {
+				t.Error("session should still exist after worktree removal failure")
+			}
+			if _, err := mgr.store.Load(sess.ID); err != nil {
+				t.Errorf("session should still be persisted: %v", err)
+			}
+			if _, err := os.Stat(worktreeDir); err != nil {
+				t.Errorf("worktree should still exist: %v", err)
+			}
+			for _, c := range tmuxMock.calls {
+				if c.method == "KillSession" {
+					t.Errorf("tmux session should not be killed when the delete aborts, got call: %+v", c)
+				}
+			}
+		})
 	}
 }
 
