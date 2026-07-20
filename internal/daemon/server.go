@@ -263,6 +263,22 @@ func (s *Server) handleRequest(req *Request) Response {
 	}
 }
 
+// readOnlyActions names the actions above whose handlers only read state. The
+// client uses it to decide whether a timeout needs the "your request may have
+// gone through anyway" warning (see wrapDeadline); it lives here so that the
+// two stay in sync as the switch grows.
+//
+// Membership is opt-in on purpose: an action added above and forgotten here
+// gets the cautious wording, which is wrong but harmless — the reverse
+// mistake would quietly drop the warning from a mutating action.
+var readOnlyActions = map[string]bool{
+	"list":         true,
+	"get":          true,
+	"dir-history":  true,
+	"pane-capture": true,
+	"result":       true,
+}
+
 // AgentSignalRequest carries a generic status signal from any agent adapter's
 // out-of-band notifier (a hook binary for Claude Code, a pane-output tailer
 // for adapters without hooks). Manager routes the Payload through the

@@ -2,24 +2,38 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-// fakeServer stands up a Unix socket that captures the raw request bytes and
-// replies with a caller-provided Response. It lets us drive Client.send in
-// isolation, without spinning up a full Server / session Manager.
-func fakeServer(t *testing.T, reply Response) (sockPath string, received *Request) {
+// serverBehavior selects what the fake daemon does once it has decoded the
+// request — the only thing that varies between the shapes below.
+type serverBehavior struct {
+	reply      *Response // nil = never reply, holding the conn until the test ends
+	closeAfter bool      // stop listening once the reply is out
+}
+
+// fakeServerWith stands up a Unix socket that captures the request and then
+// behaves as b says. It lets us drive Client.send in isolation, without
+// spinning up a full Server / session Manager.
+func fakeServerWith(t *testing.T, b serverBehavior) (sockPath string, received *Request) {
 	t.Helper()
 	sockPath = filepath.Join(t.TempDir(), "daemon.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		_ = ln.Close()
+	})
 
 	received = &Request{}
 	go func() {
@@ -29,9 +43,342 @@ func fakeServer(t *testing.T, reply Response) (sockPath string, received *Reques
 		}
 		defer conn.Close()
 		_ = json.NewDecoder(conn).Decode(received)
-		_ = json.NewEncoder(conn).Encode(reply)
+
+		if b.reply == nil {
+			<-release
+			return
+		}
+		_ = json.NewEncoder(conn).Encode(*b.reply)
+		if b.closeAfter {
+			_ = ln.Close()
+		}
 	}()
 	return sockPath, received
+}
+
+// fakeServer replies once and keeps listening.
+func fakeServer(t *testing.T, reply Response) (sockPath string, received *Request) {
+	t.Helper()
+	return fakeServerWith(t, serverBehavior{reply: &reply})
+}
+
+// hangingServer accepts and reads the request but never replies. This is the
+// wedged-daemon shape: dial succeeds, so only a read deadline can break the
+// client out of it.
+func hangingServer(t *testing.T) (sockPath string) {
+	t.Helper()
+	sockPath, _ = fakeServerWith(t, serverBehavior{})
+	return sockPath
+}
+
+// closingServer replies once and then stops listening, the way a real daemon
+// behaves after "stop". Without the close, Stop's IsRunning poll would keep
+// finding the socket and spin for its full 3s.
+func closingServer(t *testing.T, reply Response) (sockPath string) {
+	t.Helper()
+	sockPath, _ = fakeServerWith(t, serverBehavior{reply: &reply, closeAfter: true})
+	return sockPath
+}
+
+func TestClientSendWithTimeout_ReportsDeadlineOverrun(t *testing.T) {
+	// A short bound stands in for defaultRequestTimeout: the code path is the
+	// same and the test stays fast.
+	c := NewClient(hangingServer(t))
+
+	_, err := c.sendWithTimeout(Request{Action: "list"}, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a deadline error from a daemon that never replies, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not respond within") {
+		t.Errorf("error = %q, want it to say the daemon did not respond within the bound", err.Error())
+	}
+	if !strings.Contains(err.Error(), "jin daemon restart") {
+		t.Errorf("error = %q, want it to suggest 'jin daemon restart'", err.Error())
+	}
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("errors.Is(err, os.ErrDeadlineExceeded) = false for %v, want true", err)
+	}
+}
+
+// deadlineLog records the bounds the client applied: the dial timeouts it
+// asked for, and the read/write deadlines it set, as durations measured from
+// the moment of the call.
+type deadlineLog struct {
+	dial  []time.Duration
+	read  []time.Duration
+	write []time.Duration
+}
+
+type recordingConn struct {
+	net.Conn
+	log *deadlineLog
+}
+
+func (c *recordingConn) SetReadDeadline(t time.Time) error {
+	c.log.read = append(c.log.read, time.Until(t))
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *recordingConn) SetWriteDeadline(t time.Time) error {
+	c.log.write = append(c.log.write, time.Until(t))
+	return c.Conn.SetWriteDeadline(t)
+}
+
+// swapDial replaces the package's dial seam with one that logs every dial
+// timeout the client asks for and hands each dialed conn to wrap, restoring
+// the original when the test ends. The timeout is logged before dialing, so
+// the bound is captured even on the paths where the dial itself fails and
+// there is no conn to wrap; wrap receives the same log, which is how a wrapper
+// reports what it saw.
+func swapDial(t *testing.T, wrap func(net.Conn, *deadlineLog) net.Conn) *deadlineLog {
+	t.Helper()
+	log := &deadlineLog{}
+	original := dialDaemon
+	dialDaemon = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		log.dial = append(log.dial, timeout)
+		conn, err := original(network, address, timeout)
+		if err != nil {
+			return nil, err
+		}
+		return wrap(conn, log), nil
+	}
+	t.Cleanup(func() { dialDaemon = original })
+	return log
+}
+
+// recordDeadlines swaps the package's dial seam for one that wraps the conn and
+// logs every deadline set on it. Observing the calls is the only way to assert
+// "no read deadline at all" — waiting can never distinguish an absent deadline
+// from a long one — and it is also how the call-site tests below stay fast:
+// they read the bound rather than sitting through it.
+func recordDeadlines(t *testing.T) *deadlineLog {
+	t.Helper()
+	return swapDial(t, func(conn net.Conn, log *deadlineLog) net.Conn {
+		return &recordingConn{Conn: conn, log: log}
+	})
+}
+
+// assertOneDeadline checks that exactly one deadline of about want was set.
+func assertOneDeadline(t *testing.T, kind string, got []time.Duration, want time.Duration) {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("%s deadlines = %v, want exactly one of about %s", kind, got, want)
+	}
+	// Recorded a hair after the client computed it, so it lands just under
+	// want and never over.
+	if got[0] > want || got[0] < want-time.Second {
+		t.Errorf("%s deadline = %s, want about %s", kind, got[0], want)
+	}
+}
+
+// assertReadDeadline checks the bound the client applied to the response wait.
+// A want of 0 asserts that no read deadline was set at all.
+func assertReadDeadline(t *testing.T, got []time.Duration, want time.Duration) {
+	t.Helper()
+	if want == 0 {
+		if len(got) != 0 {
+			t.Errorf("read deadlines = %v, want none to be set", got)
+		}
+		return
+	}
+	assertOneDeadline(t, "read", got, want)
+}
+
+// assertWriteDeadline checks the request-write bound, which — unlike the read
+// bound — is the same constant for every call site and is never waived. It
+// takes no want for that reason: a call site is not entitled to its own write
+// bound, so there is nothing per-caller to declare.
+func assertWriteDeadline(t *testing.T, got []time.Duration) {
+	t.Helper()
+	assertOneDeadline(t, "write", got, requestWriteTimeout)
+}
+
+// assertDialTimeout checks the timeout the client handed to the dialer. The
+// dial seam takes the value as an argument and can quietly ignore it, so this
+// is the only thing standing between the code and a bare net.Dial.
+func assertDialTimeout(t *testing.T, got []time.Duration) {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("dial timeouts = %v, want exactly one", got)
+	}
+	if got[0] != dialTimeout {
+		t.Errorf("dial timeout = %s, want %s", got[0], dialTimeout)
+	}
+}
+
+// TestClientSendWithTimeout_ZeroSkipsOnlyTheReadDeadline pins the PanePopup /
+// New contract: a caller that cannot name a bound waives the wait for the
+// response, and nothing else. The write stays bounded so that a daemon which
+// stopped reading cannot wedge Encode forever.
+func TestClientSendWithTimeout_ZeroSkipsOnlyTheReadDeadline(t *testing.T) {
+	log := recordDeadlines(t)
+	sock, _ := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true})
+
+	resp, err := NewClient(sock).sendWithTimeout(Request{Action: "pane-popup"}, 0)
+	if err != nil {
+		t.Fatalf("sendWithTimeout with timeout=0: %v", err)
+	}
+	if !resp.Success {
+		t.Errorf("Success = false, want true")
+	}
+
+	assertReadDeadline(t, log.read, 0)
+	assertWriteDeadline(t, log.write)
+	assertDialTimeout(t, log.dial)
+}
+
+// TestClientCallSites_PassTheirOwnBound pins which bound each call site picks.
+// A correct sendWithTimeout is worth nothing if a call site quietly reverts to
+// send() and inherits the default.
+func TestClientCallSites_PassTheirOwnBound(t *testing.T) {
+	tests := []struct {
+		name     string
+		call     func(*Client) error
+		wantRead time.Duration // 0 = the call must set no read deadline
+	}{
+		{"SendHook", func(c *Client) error { return c.SendHook(HookRequest{}) }, hookRequestTimeout},
+		{"PanePopup", func(c *Client) error { return c.PanePopup("id", "cmd", "", "", "") }, 0},
+		{"NewWithOptions", func(c *Client) error { _, _, err := c.NewWithOptions(NewOptions{}); return err }, 0},
+		{"Delete", func(c *Client) error { return c.Delete("id", true, false) }, 0},
+		{"List via send", func(c *Client) error { _, err := c.List(); return err }, defaultRequestTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := recordDeadlines(t)
+			// Data "null" unmarshals into every response payload shape, so one
+			// reply serves every call site.
+			sock, _ := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true, Data: json.RawMessage("null")})
+
+			if err := tt.call(NewClient(sock)); err != nil {
+				t.Fatalf("%s: %v", tt.name, err)
+			}
+			assertReadDeadline(t, log.read, tt.wantRead)
+			// Asserted for every row rather than declared per row: the write
+			// and dial bounds are properties of the transport, so a call site
+			// that wants its own is already wrong.
+			assertWriteDeadline(t, log.write)
+			assertDialTimeout(t, log.dial)
+		})
+	}
+}
+
+// TestClientIsRunning_BoundsTheDial pins the third of this package's bounds on
+// the one path that has nothing else: IsRunning never reads or writes, so the
+// dial timeout is all that keeps it from blocking on a socket nobody accepts.
+func TestClientIsRunning_BoundsTheDial(t *testing.T) {
+	log := recordDeadlines(t)
+	sock, _ := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true})
+
+	if !NewClient(sock).IsRunning() {
+		t.Fatal("IsRunning = false against a listening socket, want true")
+	}
+	assertDialTimeout(t, log.dial)
+}
+
+// deadWriteConn accepts the connection and then fails every write the way a
+// blown write deadline does. Reproducing a real write stall would mean filling
+// the socket buffer against a daemon that stopped reading, then waiting out
+// requestWriteTimeout; the failure mode is what matters here, not how the
+// kernel gets there.
+type deadWriteConn struct {
+	net.Conn
+}
+
+func (c *deadWriteConn) Write([]byte) (int, error) {
+	return 0, os.ErrDeadlineExceeded
+}
+
+// TestClientSend_WriteOverrunSaysTheDaemonStoppedReading guards the split F023
+// asked for: a write that runs out of time means the daemon stopped reading,
+// and saying "did not respond" there would send the reader looking at the
+// wrong half of the exchange. The unknown-outcome clause still applies — see
+// wrapDeadline for why a timed-out write may nonetheless have delivered a
+// complete request.
+func TestClientSend_WriteOverrunSaysTheDaemonStoppedReading(t *testing.T) {
+	swapDial(t, func(conn net.Conn, _ *deadlineLog) net.Conn {
+		return &deadWriteConn{Conn: conn}
+	})
+
+	sock, _ := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true})
+	err := NewClient(sock).Delete("id", true, false)
+	if err == nil {
+		t.Fatal("expected an error when the request cannot be written, got nil")
+	}
+	if !strings.Contains(err.Error(), "stopped reading the request within") {
+		t.Errorf("error = %q, want it to say the daemon stopped reading", err.Error())
+	}
+	if strings.Contains(err.Error(), "did not respond") {
+		t.Errorf("error = %q, want it not to blame the response", err.Error())
+	}
+	if !strings.Contains(err.Error(), "outcome is unknown") {
+		t.Errorf("error = %q, want the unknown-outcome warning for a mutating action", err.Error())
+	}
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("errors.Is(err, os.ErrDeadlineExceeded) = false for %v, want true", err)
+	}
+}
+
+// TestClientStop_PassesStopBound covers the fourth call site separately: Stop
+// polls IsRunning afterwards, so it needs a server that actually goes away.
+func TestClientStop_PassesStopBound(t *testing.T) {
+	log := recordDeadlines(t)
+	c := NewClient(closingServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true}))
+
+	if err := c.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	assertReadDeadline(t, log.read, stopRequestTimeout)
+}
+
+// TestWrapDeadline_WarnsOnlyForMutatingActions guards the credibility of the
+// unknown-outcome warning: emitting it for a failed list would train users to
+// ignore it on delete.
+func TestWrapDeadline_WarnsOnlyForMutatingActions(t *testing.T) {
+	const stalled = "daemon did not respond within 1s"
+
+	readOnly := wrapDeadline(os.ErrDeadlineExceeded, "list", stalled)
+	if strings.Contains(readOnly.Error(), "outcome is unknown") {
+		t.Errorf("read-only action error = %q, want no unknown-outcome warning", readOnly.Error())
+	}
+
+	mutating := wrapDeadline(os.ErrDeadlineExceeded, "delete", stalled)
+	if !strings.Contains(mutating.Error(), "outcome is unknown") {
+		t.Errorf("mutating action error = %q, want the unknown-outcome warning", mutating.Error())
+	}
+
+	// An action nobody classified must fall on the cautious side.
+	unclassified := wrapDeadline(os.ErrDeadlineExceeded, "some-future-action", stalled)
+	if !strings.Contains(unclassified.Error(), "outcome is unknown") {
+		t.Errorf("unclassified action error = %q, want the cautious default", unclassified.Error())
+	}
+}
+
+// TestClientSend_DistinguishesNotRunningFromUnresponsive guards the reason for
+// splitting the dial error: "not started" and "started but wedged" need
+// different remedies. The not-running wording is load-bearing for users and
+// must not drift.
+func TestClientSend_DistinguishesNotRunningFromUnresponsive(t *testing.T) {
+	notRunning := NewClient(filepath.Join(t.TempDir(), "daemon.sock"))
+	_, notRunningErr := notRunning.send(Request{Action: "list"})
+	if notRunningErr == nil {
+		t.Fatal("expected an error when nothing is listening, got nil")
+	}
+	if notRunningErr.Error() != "daemon not running. Start with: jin daemon" {
+		t.Errorf("error = %q, want the unchanged not-running wording", notRunningErr.Error())
+	}
+
+	unresponsive := NewClient(hangingServer(t))
+	_, unresponsiveErr := unresponsive.sendWithTimeout(Request{Action: "list"}, 100*time.Millisecond)
+	if unresponsiveErr == nil {
+		t.Fatal("expected an error from a daemon that never replies, got nil")
+	}
+	if unresponsiveErr.Error() == notRunningErr.Error() {
+		t.Errorf("unresponsive daemon reports the same error as a missing one: %q", unresponsiveErr.Error())
+	}
+	if strings.Contains(unresponsiveErr.Error(), "daemon not running") {
+		t.Errorf("error = %q, want it not to claim the daemon is not running", unresponsiveErr.Error())
+	}
 }
 
 func TestClientSend_StampsRequestProtocolVersion(t *testing.T) {

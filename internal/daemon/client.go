@@ -5,12 +5,87 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
+
+// The client sets a bound only when it can name one that is certainly longer
+// than any legitimate handler run. Where the handler's legitimate duration is
+// unknowable from here — a popup's user-controlled lifetime, a user-configurable
+// hook timeout, an rm -rf over a checkout of unknown size — the client passes 0
+// to sendWithTimeout and defers to the bound the handler already owns. A bound
+// we cannot justify does not protect anyone: a timeout is not a cancellation,
+// so it would only report "outcome unknown" for work that went on to succeed.
+const (
+	// dialTimeout bounds connecting to the daemon socket. A local unix socket
+	// either connects instantly or not at all, so anything slower means the
+	// daemon is not accepting; failing fast beats blocking the caller forever.
+	dialTimeout = 2 * time.Second
+
+	// requestWriteTimeout bounds writing the request, for every action alike.
+	// The bound does not vary because what it guards does not vary: a request
+	// is one small JSON value, and the daemon hands each accepted connection
+	// to its own goroutine that decodes immediately (server.go handleConnection),
+	// so the write never waits on handler work — however long that work may
+	// legitimately take. A write that blocks for seconds means the daemon
+	// stopped reading altogether, and 5s is already several orders of
+	// magnitude past what writing a few hundred bytes into a local socket
+	// costs.
+	requestWriteTimeout = 5 * time.Second
+
+	// defaultRequestTimeout bounds the wait for a response on every action
+	// that does not name its own bound. Out of its scope are "new" and
+	// "delete" (each fronts an external process with no bound this side can
+	// name) and "pane-popup" (user-controlled lifetime); "hook" and "stop"
+	// take the tighter bounds below. What is left is tmux subprocess calls
+	// and local file reads, plus one handler with a named cost: "send" waits
+	// up to sendVerifyTimeout (5s) for the prompt to appear in the pane.
+	// Those handlers also queue behind the manager lock, so 60s is chosen to
+	// clear a backlog of them comfortably — hitting it should mean "the
+	// daemon is wedged", not "this machine is loaded".
+	defaultRequestTimeout = 60 * time.Second
+
+	// hookRequestTimeout bounds the agent-facing hook path. The trade cuts
+	// both ways here. A stalled hook blocks the agent process itself, so the
+	// path must stay bounded; but an overrun is worse than an ordinary
+	// failure, because cmd/jin/cmd/hook.go only logs it and exits 0 — the
+	// status update is dropped with nothing shown to the user, and the session
+	// looks frozen in the TUI. 10s therefore sits well clear of the handler's
+	// real cost (HandleHookEvent upgrades the description inline, reading
+	// transcript JSONL under the manager lock) while still capping what a
+	// wedged daemon can cost the agent.
+	//
+	// That makes 10s the effective bound for claude and codex only. On
+	// opencode the effective bound stays 3s, because the plugin SIGKILLs the
+	// `jin hook` child at HOOK_TIMEOUT_MS (internal/agent/opencode/plugin/jin.ts)
+	// before this one can fire. Raising the client bound was deliberately not
+	// meant to cover opencode: the plugin's kill routes through done(false),
+	// which drops the entry from lastSent so the report is re-sent on the next
+	// event, whereas claude and codex just log and exit 0 and lose the update.
+	// The asymmetry is intended — opencode can afford the tighter bound
+	// because it recovers from overrunning it.
+	hookRequestTimeout = 10 * time.Second
+
+	// stopRequestTimeout bounds the stop request. Stopping is the remedy this
+	// package points users at when a request times out, so it must stay
+	// responsive against exactly the wedged daemon it is meant to clear —
+	// waiting defaultRequestTimeout there would make the cure look as broken
+	// as the disease. handleStop replies before it does any work, so a daemon
+	// healthy enough to answer at all answers quickly; Stop already treats a
+	// failed send as non-fatal and confirms through IsRunning instead.
+	stopRequestTimeout = 5 * time.Second
+)
+
+// dialDaemon is the package's one door to the socket. It is a var so that
+// tests can record the dial timeout and wrap the returned conn to observe
+// which deadlines the client set — "no read deadline at all" is not something
+// waiting can demonstrate. Swapping a package-level var means the tests that
+// do so must stay serial; nothing in this package calls t.Parallel().
+var dialDaemon = net.DialTimeout
 
 // Client is the daemon client
 type Client struct {
@@ -22,9 +97,12 @@ func NewClient(socketPath string) *Client {
 	return &Client{socketPath: socketPath}
 }
 
-// IsRunning checks if the daemon is running
+// IsRunning checks if the daemon is running.
+//
+// A true result only means the socket accepted the connection — a wedged
+// daemon still accepts, so this is not a liveness check.
 func (c *Client) IsRunning() bool {
-	conn, err := net.Dial("unix", c.socketPath)
+	conn, err := dialDaemon("unix", c.socketPath, dialTimeout)
 	if err != nil {
 		return false
 	}
@@ -33,22 +111,49 @@ func (c *Client) IsRunning() bool {
 }
 
 func (c *Client) send(req Request) (*Response, error) {
-	conn, err := net.Dial("unix", c.socketPath)
+	return c.sendWithTimeout(req, defaultRequestTimeout)
+}
+
+// sendWithTimeout performs one request/response exchange. The timeout bounds
+// the wait for a response only, and a timeout of 0 waives that bound; dial and
+// write keep their own fixed bounds either way.
+//
+// Each deadline is set once, before writing, because every response is a single
+// JSON value read in one Decode — there is no streaming path that would need
+// the deadline extended mid-exchange.
+func (c *Client) sendWithTimeout(req Request, timeout time.Duration) (*Response, error) {
+	conn, err := dialDaemon("unix", c.socketPath, dialTimeout)
 	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return nil, fmt.Errorf(
+				"daemon is not accepting connections (timed out after %s) — try: jin daemon restart",
+				dialTimeout,
+			)
+		}
 		return nil, fmt.Errorf("daemon not running. Start with: jin daemon")
 	}
 	defer conn.Close()
 
+	_ = conn.SetWriteDeadline(time.Now().Add(requestWriteTimeout))
+	if timeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+
 	req.ProtocolVersion = ProtocolVersion
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(req); err != nil {
-		return nil, err
+		return nil, wrapDeadline(err, req.Action, fmt.Sprintf(
+			"daemon stopped reading the request within %s", requestWriteTimeout,
+		))
 	}
 
 	decoder := json.NewDecoder(conn)
 	var resp Response
 	if err := decoder.Decode(&resp); err != nil {
-		return nil, err
+		return nil, wrapDeadline(err, req.Action, fmt.Sprintf(
+			"daemon did not respond within %s", timeout,
+		))
 	}
 
 	if resp.ProtocolVersion != ProtocolVersion {
@@ -64,6 +169,37 @@ func (c *Client) send(req Request) (*Response, error) {
 	}
 
 	return &resp, nil
+}
+
+// wrapDeadline turns a deadline overrun into a message that distinguishes
+// "the daemon is stuck" from "the daemon is gone". stalled says which half of
+// the exchange ran out of time and after how long; the two halves fail for
+// different reasons and must not be described alike — an overrun while writing
+// means the daemon stopped reading, not that it failed to answer.
+//
+// The protocol has no cancel channel, so giving up here does not stop the
+// daemon: a mutating action such as new or delete may well have completed.
+// Those get an unknown-outcome wording rather than a failure, so callers are
+// not nudged into blindly repeating them. That holds on the write side too:
+// the daemon decodes with a json.Decoder, which is satisfied by the closing
+// brace, so a write that timed out may nonetheless have delivered a complete
+// request. Encode issues the value and its newline as one Write, so the cut
+// can land anywhere in it — including past the closing brace. Which is why the
+// wording has to stay cautious: where it landed is not observable from here.
+// Read-only actions get the plain message — telling someone
+// to go check state after a failed `list` spends the warning's credibility
+// where nothing is at stake.
+func wrapDeadline(err error, action, stalled string) error {
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	if readOnlyActions[action] {
+		return fmt.Errorf("%s — try: jin daemon restart (%w)", stalled, os.ErrDeadlineExceeded)
+	}
+	return fmt.Errorf(
+		"%s — the request may still be running there, so its outcome is unknown; check the current state before repeating it, or run: jin daemon restart (%w)",
+		stalled, os.ErrDeadlineExceeded,
+	)
 }
 
 // NewOptions contains options for creating a new session
@@ -102,7 +238,13 @@ func (c *Client) NewWithOptions(opts NewOptions) (*session.Info, string, error) 
 	// copy; NewRequest's JSON tags apply on Marshal regardless.
 	data, _ := json.Marshal(NewRequest(opts))
 
-	resp, err := c.send(Request{Action: "new", Data: data})
+	// No read bound: CreateWithOptions runs a chain of unbounded steps —
+	// git prune, then `git worktree add`, then the post-create hook where
+	// `npm ci` and friends live. Only the last of those is capped (by the
+	// user's worktree.hook_timeout, 300s by default and freely raised), so
+	// there is no duration to name here that would not eventually fire on a
+	// session that was in fact being created successfully.
+	resp, err := c.sendWithTimeout(Request{Action: "new", Data: data}, 0)
 	if err != nil {
 		return nil, "", err
 	}
@@ -217,7 +359,13 @@ func (c *Client) Kill(id string) error {
 // is false, an error is returned.
 func (c *Client) Delete(id string, removeWorktree, forceRemoveWorktree bool) error {
 	data, _ := json.Marshal(DeleteRequest{ID: id, RemoveWorktree: removeWorktree, ForceRemoveWorktree: forceRemoveWorktree})
-	resp, err := c.send(Request{Action: "delete", Data: data})
+	// No read bound, for the same reason as NewWithOptions: Manager.Delete runs
+	// `git worktree remove` synchronously and that has no timeout on either
+	// side. Removing a worktree is an rm -rf of a whole checkout — node_modules
+	// included — so how long it legitimately takes is a property of the user's
+	// disk, not something this side can name. It runs outside the manager lock
+	// (manager.go), so a slow delete does not hold up other actions either.
+	resp, err := c.sendWithTimeout(Request{Action: "delete", Data: data}, 0)
 	if err != nil {
 		return err
 	}
@@ -256,7 +404,7 @@ func (c *Client) SetDescription(id, description string) error {
 // daemon did shut down. Any caller (CLI stop, TUI stop, `daemon restart`)
 // gets this behavior for free without re-implementing the poll.
 func (c *Client) Stop() error {
-	_, sendErr := c.send(Request{Action: "stop"})
+	_, sendErr := c.sendWithTimeout(Request{Action: "stop"}, stopRequestTimeout)
 	for range 30 {
 		if !c.IsRunning() {
 			return nil
@@ -269,7 +417,7 @@ func (c *Client) Stop() error {
 // SendHook sends a Claude Code hook event to the daemon
 func (c *Client) SendHook(req HookRequest) error {
 	data, _ := json.Marshal(req)
-	resp, err := c.send(Request{Action: "hook", Data: data})
+	resp, err := c.sendWithTimeout(Request{Action: "hook", Data: data}, hookRequestTimeout)
 	if err != nil {
 		return err
 	}
@@ -320,7 +468,11 @@ func (c *Client) RemoveDirHistory(path string) error {
 // pane and started in the session's working directory.
 func (c *Client) PanePopup(id, cmd, title, width, height string) error {
 	data, _ := json.Marshal(PanePopupRequest{ID: id, Cmd: cmd, Title: title, Width: width, Height: height})
-	resp, err := c.send(Request{Action: "pane-popup", Data: data})
+	// No read deadline: the handler runs `tmux display-popup -E`, which blocks
+	// for the popup's entire lifetime. That lifetime ends when the user closes
+	// the popup, so there is no bound we could pick that would not eventually
+	// kill a legitimately open popup.
+	resp, err := c.sendWithTimeout(Request{Action: "pane-popup", Data: data}, 0)
 	if err != nil {
 		return err
 	}

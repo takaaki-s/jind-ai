@@ -6,6 +6,57 @@
 - One request / one response per connection (no connection pooling)
 - JSON encoding/decoding
 
+## Timeouts
+
+`Client` bounds every exchange so a daemon that accepts a connection and then
+stops responding cannot hang the caller forever. The bounds are tiered, not
+per-action:
+
+| Bound | Value | Applies to |
+|---|---|---|
+| dial | 2s | every request |
+| write | 5s | every request |
+| response wait | 60s | every action without its own entry below |
+| `hook` | 10s | the agent-facing path — a stalled hook blocks the agent process itself |
+| `stop` | 5s | the remedy for a wedged daemon, so it must not inherit the wedged-daemon bound |
+| `new` | none | the handler chains unbounded git subprocesses and then the post-create hook; only the hook is capped (`worktree.hook_timeout`, default 300s) |
+| `delete` | none | the handler runs `git worktree remove` synchronously, and neither side bounds it — how long an `rm -rf` of a checkout takes is a property of the user's disk |
+| `pane-popup` | none | the handler runs `tmux display-popup -E`, which blocks for the popup's user-controlled lifetime |
+
+**The client bounds an exchange only when it can name a duration that is
+certainly longer than any legitimate handler run.** `new`, `delete` and
+`pane-popup` have no such value — one is capped by a user-editable config key
+the client cannot see, one by an external process over a checkout of unknown
+size, the last by when the user closes a popup — so they defer to the bound the
+handler already owns. Guessing on their behalf would not protect anyone: since
+a timeout is not a cancellation (below), a bound that fires early just reports
+an unknown outcome for work that goes on to succeed.
+
+Dial and write stay bounded for every action, including those three. The write
+bound is a single constant rather than a per-action one because what it guards
+does not vary: a request is one small JSON value, and the daemon decodes each
+accepted connection on its own goroutine, so writing never waits on handler
+work. A blocked write means the daemon stopped reading, and it is reported that
+way rather than as a failure to respond.
+
+The 60s response wait is deliberately generous. With `new`, `delete` and
+`pane-popup` out of its scope — and `hook` and `stop` on bounds of their own —
+what it covers is tmux subprocess calls and local file reads, plus one handler
+with a named cost: `send` waits up to 5s for the prompt to appear in the pane
+before giving up. Those handlers queue behind the manager lock, so
+60s is sized to clear a backlog of them; hitting it should mean "the daemon is
+wedged", not "this machine is loaded".
+
+**A timeout is not a cancellation.** The protocol has no cancel channel, so a
+client that gives up does not stop the daemon — a mutating action such as
+`new` or `delete` may still complete. Error messages for those actions
+therefore report an unknown outcome rather than a failure, and point at
+`jin daemon restart` instead of encouraging a blind retry; read-only actions
+(`readOnlyActions` in `server.go`) get a plain timeout message instead, so the
+warning keeps its weight where it matters. Any new action that mutates state
+inherits this property by default; make it idempotent, or expect callers to
+check state after a timeout.
+
 ## Message Format
 
 ```go
