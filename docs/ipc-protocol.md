@@ -15,13 +15,13 @@ per-action:
 | Bound | Value | Applies to |
 |---|---|---|
 | dial | 2s | every request |
-| write | 5s | every request |
-| response wait | 60s | every action without its own entry below |
-| `hook` | 10s | the agent-facing path — a stalled hook blocks the agent process itself |
-| `stop` | 5s | the remedy for a wedged daemon, so it must not inherit the wedged-daemon bound |
-| `new` | none | the handler chains unbounded git subprocesses and then the post-create hook; only the hook is capped (`worktree.hook_timeout`, default 300s) |
-| `delete` | none | the handler runs `git worktree remove` synchronously, and neither side bounds it — how long an `rm -rf` of a checkout takes is a property of the user's disk |
-| `pane-popup` | none | the handler runs `tmux display-popup -E`, which blocks for the popup's user-controlled lifetime |
+| request write | 5s | every request |
+| response wait (default) | 60s | every action without its own entry below |
+| response wait: `hook` | 10s | the agent-facing path — a stalled hook blocks the agent process itself |
+| response wait: `stop` | 5s | the remedy for a wedged daemon, so it must not inherit the wedged-daemon bound |
+| response wait: `new` | none | the handler chains unbounded git subprocesses and then the post-create hook; only the hook is capped (`worktree.hook_timeout`, default 300s) |
+| response wait: `delete` | none | the handler runs `git worktree remove` synchronously, and neither side bounds it — how long an `rm -rf` of a checkout takes is a property of the user's disk |
+| response wait: `pane-popup` | none | the handler runs `tmux display-popup -E`, which blocks for the popup's user-controlled lifetime |
 
 **The client bounds an exchange only when it can name a duration that is
 certainly longer than any legitimate handler run.** `new`, `delete` and
@@ -47,6 +47,12 @@ before giving up. Those handlers queue behind the manager lock, so
 60s is sized to clear a backlog of them; hitting it should mean "the daemon is
 wedged", not "this machine is loaded".
 
+The table lists the bounds a Go client sets today, so `agent-signal` has no row:
+the daemon dispatches it, but no client method sends it. It nonetheless lands on
+the same agent-facing path as `hook`, so a client method added for it belongs on
+the `hook` bound rather than the default — `hookRequestTimeout` in `client.go`
+traces the path and says so.
+
 **A timeout is not a cancellation.** The protocol has no cancel channel, so a
 client that gives up does not stop the daemon — a mutating action such as
 `new` or `delete` may still complete. Error messages for those actions
@@ -56,6 +62,14 @@ therefore report an unknown outcome rather than a failure, and point at
 warning keeps its weight where it matters. Any new action that mutates state
 inherits this property by default; make it idempotent, or expect callers to
 check state after a timeout.
+
+`stop` is the one action that does not point at `jin daemon restart` when the
+exchange blows a deadline, for the obvious reason: restart stops through
+`Client.Stop()` itself, so it would answer a stop that timed out with the stop
+that just failed. A daemon deaf to the request needs a signal instead, and
+`Stop()` says so. Only that path is rewritten, and only once the shutdown poll
+has run out: a stop failing any other way — including a dial that times out
+before the daemon is reached — still returns the error as it came.
 
 ## Message Format
 

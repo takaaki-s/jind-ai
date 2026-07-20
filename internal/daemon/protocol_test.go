@@ -331,6 +331,97 @@ func TestClientStop_PassesStopBound(t *testing.T) {
 	assertReadDeadline(t, log.read, stopRequestTimeout)
 }
 
+// deadReadConn accepts the connection and lets the request through, then fails
+// every read the way a blown read deadline does. It buys the stop test its
+// timeout instantly instead of waiting out stopRequestTimeout.
+type deadReadConn struct {
+	net.Conn
+}
+
+func (c *deadReadConn) Read([]byte) (int, error) {
+	return 0, os.ErrDeadlineExceeded
+}
+
+// TestClientStop_TimeoutDoesNotSuggestRestart guards F010: a stop that timed
+// out must not be answered by naming the command that routes back through it.
+// See Client.Stop for why, and docs/ipc-protocol.md for where this sits among
+// the other timeout messages.
+func TestClientStop_TimeoutDoesNotSuggestRestart(t *testing.T) {
+	swapDial(t, func(conn net.Conn, _ *deadlineLog) net.Conn {
+		return &deadReadConn{Conn: conn}
+	})
+	// The wedged shape: the daemon takes the request, never answers, and keeps
+	// accepting. Reaching the exhausted poll needs both halves — an answer
+	// would end the send, and a closed listener would end the poll.
+	sock := hangingServer(t)
+
+	err := NewClient(sock).stop(2, time.Millisecond)
+	if err == nil {
+		t.Fatal("expected an error when the daemon never confirms the stop, got nil")
+	}
+	if strings.Contains(err.Error(), "jin daemon restart") {
+		t.Errorf("error = %q, want it not to suggest the command that routes back here", err.Error())
+	}
+	if !strings.Contains(err.Error(), "pkill") {
+		t.Errorf("error = %q, want a remedy that does not go through the socket", err.Error())
+	}
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("errors.Is(err, os.ErrDeadlineExceeded) = false for %v, want true", err)
+	}
+}
+
+// TestClientStop_PassesItsConstantsToThePoll covers what the seam moved out of
+// reach. Every other stop test drives stop() directly and so says nothing about
+// the one line that supplies its arguments — drop that to zero attempts and the
+// package still passes, while a stop that timed out on the send would start
+// reporting failure for a daemon that did shut down.
+func TestClientStop_PassesItsConstantsToThePoll(t *testing.T) {
+	// The documented budget. Asserted rather than described so that changing
+	// either constant has to face the comment that quotes their product.
+	if got := time.Duration(stopPollAttempts) * stopPollInterval; got != 3*time.Second {
+		t.Errorf("stop poll budget = %s, want the documented 3s", got)
+	}
+
+	// Nothing is listening, so the send fails and the poll is the only thing
+	// that can tell the daemon is nonetheless gone. Hand the poll no attempts
+	// and that send error is what Stop returns instead of nil.
+	c := NewClient(filepath.Join(t.TempDir(), "daemon.sock"))
+
+	if err := c.Stop(); err != nil {
+		t.Fatalf("Stop against a daemon that is already gone: %v", err)
+	}
+}
+
+// TestReadOnlyActions_NameRealActions guards F021. Membership is opt-in, so a
+// typo fails the same silent-and-harmless way an honest omission does: the
+// action simply never matches and keeps the cautious wording. That makes the
+// map the one place where a misspelling has no symptom, and this is the only
+// thing that would notice.
+//
+// Spelling is the whole scope. Whether a named action only reads is a claim
+// about its handler that no test here checks — adding "delete" to the map
+// would pass this and silently drop the unknown-outcome warning. That stays a
+// question for review.
+func TestReadOnlyActions_NameRealActions(t *testing.T) {
+	if len(readOnlyActions) == 0 {
+		t.Fatal("readOnlyActions is empty; this test would pass vacuously")
+	}
+	s := newTestServer(t)
+
+	for action := range readOnlyActions {
+		t.Run(action, func(t *testing.T) {
+			// Data stays nil: every handler here either ignores it or fails
+			// its json.Unmarshal, so the dispatch is exercised without any
+			// side effect. Success is therefore not asserted — only that the
+			// switch recognized the name.
+			resp := s.handleRequest(&Request{Action: action})
+			if strings.Contains(resp.Error, "unknown action") {
+				t.Errorf("handleRequest(%q) = %q; readOnlyActions names an action the server does not dispatch", action, resp.Error)
+			}
+		})
+	}
+}
+
 // TestWrapDeadline_WarnsOnlyForMutatingActions guards the credibility of the
 // unknown-outcome warning: emitting it for a failed list would train users to
 // ignore it on delete.
@@ -378,6 +469,12 @@ func TestClientSend_DistinguishesNotRunningFromUnresponsive(t *testing.T) {
 	}
 	if strings.Contains(unresponsiveErr.Error(), "daemon not running") {
 		t.Errorf("error = %q, want it not to claim the daemon is not running", unresponsiveErr.Error())
+	}
+	// Without this the test passes on any error at all — including one raised
+	// before the bound was ever reached — and would keep passing if the read
+	// deadline stopped being set.
+	if !errors.Is(unresponsiveErr, os.ErrDeadlineExceeded) {
+		t.Errorf("errors.Is(err, os.ErrDeadlineExceeded) = false for %v, want the error to come from the bound", unresponsiveErr)
 	}
 }
 

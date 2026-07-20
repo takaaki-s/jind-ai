@@ -68,6 +68,15 @@ const (
 	// event, whereas claude and codex just log and exit 0 and lose the update.
 	// The asymmetry is intended — opencode can afford the tighter bound
 	// because it recovers from overrunning it.
+	//
+	// This bound covers the "hook" action only because that is the only
+	// agent-facing action a Go client sends today. The "agent-signal" action
+	// is the same path in every respect that matters here: the server
+	// dispatches it to Manager.HandleAgentSignal, which forwards kind "hook"
+	// straight into the same HandleHookEvent. It has no client method yet, so
+	// if one is added it must pass this bound explicitly — reaching for send()
+	// would inherit defaultRequestTimeout and leave the agent blocked for a
+	// minute on the wedged daemon this bound exists to cap at ten seconds.
 	hookRequestTimeout = 10 * time.Second
 
 	// stopRequestTimeout bounds the stop request. Stopping is the remedy this
@@ -78,6 +87,18 @@ const (
 	// healthy enough to answer at all answers quickly; Stop already treats a
 	// failed send as non-fatal and confirms through IsRunning instead.
 	stopRequestTimeout = 5 * time.Second
+
+	// stopPollAttempts and stopPollInterval bound how long Stop waits for the
+	// daemon to actually go away once the request has been sent — sent, not
+	// acknowledged, since the poll runs whether or not an answer came back.
+	// handleStop replies before shutting down (it cannot answer over the
+	// socket it is about to close), so even an acknowledgement only means
+	// "accepted"; this poll is the only thing that turns it into "stopped".
+	// Their product is far past the listener close and os.Exit that follow,
+	// and a test in protocol_test.go pins it rather than leaving the figure
+	// quoted here on trust.
+	stopPollAttempts = 30
+	stopPollInterval = 100 * time.Millisecond
 )
 
 // dialDaemon is the package's one door to the socket. It is a var so that
@@ -85,6 +106,14 @@ const (
 // which deadlines the client set — "no read deadline at all" is not something
 // waiting can demonstrate. Swapping a package-level var means the tests that
 // do so must stay serial; nothing in this package calls t.Parallel().
+//
+// This is deliberately not the interface seam the repo reaches for elsewhere
+// (tmux.Runner, per docs/conventions.md). Client carries no other injected
+// dependency and every caller builds one through NewClient(path) alone, so a
+// constructor parameter or field would add an injection point whose only user
+// is the test binary — widening the type's surface to say what this var
+// already says. Revisit if Client ever grows a second seam, or if a test in
+// here needs t.Parallel(); until then the var is the smaller thing.
 var dialDaemon = net.DialTimeout
 
 // Client is the daemon client
@@ -151,6 +180,12 @@ func (c *Client) sendWithTimeout(req Request, timeout time.Duration) (*Response,
 	decoder := json.NewDecoder(conn)
 	var resp Response
 	if err := decoder.Decode(&resp); err != nil {
+		// "within 0s" is built here but never reaches the caller: timeout == 0
+		// skipped the read deadline above, so Decode has none to blow and
+		// wrapDeadline returns the error unwrapped, message discarded. That is
+		// a consequence of the branch above, not a property of this call — put
+		// a bound on the read path unconditionally and this string starts
+		// escaping, claiming the daemon had zero seconds to answer.
 		return nil, wrapDeadline(err, req.Action, fmt.Sprintf(
 			"daemon did not respond within %s", timeout,
 		))
@@ -401,15 +436,45 @@ func (c *Client) SetDescription(id, description string) error {
 // A protocol-mismatched daemon still executes the stop action — its handler
 // runs before we notice the client-side mismatch on the response — so we
 // swallow the send error when a subsequent IsRunning() poll confirms the
-// daemon did shut down. Any caller (CLI stop, TUI stop, `daemon restart`)
-// gets this behavior for free without re-implementing the poll.
+// daemon did shut down. There is one caller — stopDaemonIfRunning in
+// cmd/jin/cmd/daemon.go — and both `jin daemon stop` and `jin daemon restart`
+// reach it through there, so both get this behavior without re-implementing
+// the poll. Anything added later inherits it the same way; the error wording
+// below assumes only that the caller wanted the daemon stopped.
 func (c *Client) Stop() error {
+	return c.stop(stopPollAttempts, stopPollInterval)
+}
+
+// stop is Stop with the shutdown poll spelled out, so a test can reach the
+// exhausted-poll path without sitting through three real seconds. Only Stop
+// calls it, and only with the constants above.
+func (c *Client) stop(attempts int, interval time.Duration) error {
 	_, sendErr := c.sendWithTimeout(Request{Action: "stop"}, stopRequestTimeout)
-	for range 30 {
+	for range attempts {
 		if !c.IsRunning() {
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(interval)
+	}
+	// Past the poll the daemon is still accepting, and the remedy the rest of
+	// this package points at is no help: `jin daemon restart` stops through
+	// this very function, so naming it here would answer a failed stop with
+	// the same stop. Send the user outside the socket instead — a daemon that
+	// ignored the request needs a signal, not another request.
+	if errors.Is(sendErr, os.ErrDeadlineExceeded) {
+		// pkill is offered as an example rather than the instruction: the
+		// pattern also matches a daemon started on another --socket, which the
+		// user may not want to take down.
+		//
+		// The two callers named above want opposite things once the kill is
+		// done — restart is left without the daemon it was going to start
+		// again, while stop got what it asked for — so the start half is
+		// offered conditionally. Telling every reader to start one back up
+		// would be this same message's mistake aimed at the other caller.
+		return fmt.Errorf(
+			"daemon did not respond to stop within %s and is still accepting connections — kill it manually (e.g. pkill -f 'jin daemon'); if you were restarting, start the new one with: jin daemon start (%w)",
+			stopRequestTimeout, os.ErrDeadlineExceeded,
+		)
 	}
 	return sendErr
 }
