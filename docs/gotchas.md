@@ -194,6 +194,17 @@ Common pitfalls and caveats that agents tend to fall into.
   overlap; the plugin caches the in-flight promise, not just the result, so
   one turn's ~9 `session.status` events share a single lookup.
 
+- **An opencode modal swallows every keystroke.** Some time after launch
+  opencode raises an "Update Available — A new release vX.Y.Z is available"
+  dialog that captures all keyboard input. While it is up, neither `tmux
+  send-keys` nor `jin session send` can put a character in the prompt box;
+  `Escape` dismisses it and input works again immediately. `jin session
+  send` behaves correctly here — it retries, never sees the text land, and
+  returns an error **without pressing Enter**, so a half-formed prompt is
+  never committed. If a send fails with "the TUI may not have been ready to
+  receive input", capture the pane before assuming the verify heuristic is
+  at fault.
+
 - **The plugin is a pure observer.** It subscribes via the `event` hook,
   not the `permission.ask` hook. Note that `permission.ask` (a `Hooks`
   interface key, which can rewrite the user's allow/deny decision) and
