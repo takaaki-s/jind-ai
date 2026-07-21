@@ -1676,7 +1676,7 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 		return b.String()
 	}
 
-	_, statusLabel, statusStyle := getStatusDisplay(sess.Status)
+	statusIcon, statusLabel, statusStyle := getStatusDisplay(sess.Status)
 
 	// withBg composes any inline style with the viewed row background when
 	// the card is being displayed on the right. Applying the background per
@@ -1752,7 +1752,7 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 		}
 	}
 
-	statusCluster := withBg(statusStyle).Render("● " + statusLabel)
+	statusCluster := withBg(statusStyle).Render(statusIcon + " " + statusLabel)
 	statusClusterW := lipgloss.Width(statusCluster)
 
 	b.WriteString(innerLead)
