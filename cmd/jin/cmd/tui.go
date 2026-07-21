@@ -327,8 +327,14 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd, agentFlag string) error {
 		}
 	}
 
-	// Create outer tmux session with the TUI command running in the "ui" window
-	if err := tc.NewSessionWithCmd(tmux.SessionName, cols, rows, tmux.UIWindowName, tuiInnerCmd); err != nil {
+	// Create the outer tmux session with a placeholder in the "ui" window. The real
+	// TUI command is respawned into this pane only AFTER the display pane and
+	// JIN_DISPLAY_PANE env are in place (see RespawnPane below). Launching the TUI
+	// here would race the SplitPane call: on a cold tmux server boot (e.g. right
+	// after `pkill tmux`) the TUI's display-pane discovery loop in runTUIInner can
+	// time out before the split lands, leaving displayPaneID empty and the right
+	// pane permanently blank until the next `jin ui`.
+	if err := tc.NewSessionWithCmd(tmux.SessionName, cols, rows, tmux.UIWindowName, tmux.PlaceholderCmd); err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
@@ -393,8 +399,12 @@ func createAndAttachTmux(tc *tmux.Client, tuiInnerCmd, agentFlag string) error {
 		_ = tc.SetEnvironment(tmux.SessionName, "SSH_AUTH_SOCK", sshAuthSock)
 	}
 
-	// Focus TUI pane (left)
+	// Now that both panes exist and JIN_DISPLAY_PANE is set, respawn the real TUI
+	// command into the left pane and focus it. Doing this last (instead of at
+	// NewSessionWithCmd) guarantees the TUI process sees a fully-built layout on its
+	// first look, so its display-pane discovery never times out on a cold start.
 	if tuiPaneID != "" {
+		_ = tc.RespawnPane(tuiPaneID, tuiInnerCmd)
 		_ = tc.SelectPane(tuiPaneID)
 	}
 
