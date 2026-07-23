@@ -579,7 +579,14 @@ func (m *Model) switchToSession(sessionID string) {
 	// the outer session. Without env -u TMUX, attaching to the inner tmux (jin)
 	// on the same host is rejected as nesting. This mirrors the env -u TMUX pattern
 	// used in session/manager.go when launching CC processes.
-	attachCmd := fmt.Sprintf("env -u TMUX tmux -L %s attach -t %s", tmux.SocketName, sess.TmuxWindowName)
+	//
+	// Chain `tail -f /dev/null` after attach so a quick attach failure (or a
+	// later user-initiated detach) leaves the pane with a still-running
+	// process. Without the tail, the shell exits, and remain-on-exit=on on
+	// this pane surfaces tmux's "Pane is dead" overlay until the next
+	// respawn — a jarring flash on first-session startup that the user would
+	// see between the placeholder and a successful attach.
+	attachCmd := fmt.Sprintf("env -u TMUX tmux -L %s attach -t %s; tail -f /dev/null", tmux.SocketName, sess.TmuxWindowName)
 	_ = m.tmuxClient.RespawnPane(m.displayPaneID, attachCmd)
 	_ = m.tmuxClient.ClearHistory(m.displayPaneID)
 	m.displayLocalAttach = true
