@@ -243,17 +243,10 @@ func NewModelWithTmux(client *daemon.Client, tc, innerTC *tmux.Client, tuiPaneID
 }
 
 // contentAreaLines returns the number of lines available for the scrollable
-// card area — the pane height minus the fixed header rows (STATS + blank,
-// plus error / warning when active).
+// card area — the pane height minus error / warning rows when active.
 func (m *Model) contentAreaLines() int {
 	// Pane holds (m.height - 1) rows (the extra row is the outer help line).
 	avail := m.height - 1
-	// STATS row (always shown unless there are literally no sessions).
-	if len(m.sessions) > 0 {
-		avail--
-	}
-	// Blank separator row between header and cards.
-	avail--
 	if m.err != nil {
 		avail -= 2 // "Error: ..." + blank
 	}
@@ -1593,24 +1586,14 @@ func (m Model) renderDeleteConfirm() string {
 //
 // Layout:
 //
-//	[STATS row]        <- fixed header (top of pane, not scrolled)
-//	[blank spacer]     <- fixed header
 //	[err / warn ...]
 //	[scrollable card area]  <- windowed by m.scrollOffset
 //
 // The "sessions" title is rendered on the tmux pane-border above via the
 // pane's @session_name option, so the content area starts directly with
-// the STATS row.
+// err/warn (if any) or the first card.
 func (m Model) renderListContent(contentWidth int) string {
 	var content strings.Builder
-
-	// --- Fixed header (never scrolled) ---
-	statusSummary := buildStatusSummary(m.sessions)
-	if statusSummary != "" {
-		content.WriteString(statusSummary)
-		content.WriteString("\n")
-	}
-	content.WriteString("\n")
 
 	if m.err != nil {
 		content.WriteString(lipgloss.NewStyle().Foreground(errorColor).Render(fmt.Sprintf("Error: %v", m.err)))
@@ -1929,68 +1912,6 @@ func timeAgo(t time.Time) string {
 		}
 		return fmt.Sprintf("%dd ago", days)
 	}
-}
-
-// countStatuses counts sessions by status category for summary
-type statusCounts struct {
-	thinking   int
-	permission int
-	running    int
-	creating   int
-	idle       int
-	stopped    int
-}
-
-func countStatuses(sessions []session.Info) statusCounts {
-	var counts statusCounts
-	for _, s := range sessions {
-		switch s.Status {
-		case session.StatusThinking:
-			counts.thinking++
-		case session.StatusPermission:
-			counts.permission++
-		case session.StatusRunning:
-			counts.running++
-		case session.StatusCreating:
-			counts.creating++
-		case session.StatusIdle:
-			counts.idle++
-		case session.StatusStopped:
-			counts.stopped++
-		}
-	}
-	return counts
-}
-
-// buildStatusSummary builds the status summary string for header
-func buildStatusSummary(sessions []session.Info) string {
-	counts := countStatuses(sessions)
-
-	// Each cluster: "● N Label" colored by its status style; separated by a
-	// dim middle dot. The colored dot replaces the earlier `*` / `>` / `o`
-	// ASCII glyphs for a more modern, uniform look.
-	var parts []string
-	if counts.thinking > 0 {
-		parts = append(parts, thinkingStyle.Render(fmt.Sprintf("● %d Thinking", counts.thinking)))
-	}
-	if counts.permission > 0 {
-		parts = append(parts, permissionStyle.Render(fmt.Sprintf("● %d Permission", counts.permission)))
-	}
-	if counts.running > 0 {
-		parts = append(parts, runningStyle.Render(fmt.Sprintf("● %d Running", counts.running)))
-	}
-	if counts.creating > 0 {
-		parts = append(parts, creatingStyle.Render(fmt.Sprintf("● %d Creating", counts.creating)))
-	}
-	if counts.idle > 0 {
-		parts = append(parts, idleStyle.Render(fmt.Sprintf("● %d Idle", counts.idle)))
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-	sep := lipgloss.NewStyle().Foreground(dimColor).Render("  ·  ")
-	return strings.Join(parts, sep)
 }
 
 // getStatusDisplay returns icon, label, and style for a given status

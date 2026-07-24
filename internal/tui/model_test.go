@@ -164,51 +164,6 @@ func TestTimeAgo(t *testing.T) {
 	}
 }
 
-// --- countStatuses ---
-
-func TestCountStatuses(t *testing.T) {
-	t.Run("empty list", func(t *testing.T) {
-		counts := countStatuses(nil)
-		if counts.thinking != 0 || counts.permission != 0 || counts.running != 0 ||
-			counts.creating != 0 || counts.idle != 0 || counts.stopped != 0 {
-			t.Errorf("countStatuses(nil) should return all zeros, got %+v", counts)
-		}
-	})
-
-	t.Run("mixed statuses", func(t *testing.T) {
-		sessions := []session.Info{
-			{Status: session.StatusThinking},
-			{Status: session.StatusThinking},
-			{Status: session.StatusPermission},
-			{Status: session.StatusRunning},
-			{Status: session.StatusCreating},
-			{Status: session.StatusIdle},
-			{Status: session.StatusIdle},
-			{Status: session.StatusIdle},
-			{Status: session.StatusStopped},
-		}
-		counts := countStatuses(sessions)
-		if counts.thinking != 2 {
-			t.Errorf("thinking = %d, want 2", counts.thinking)
-		}
-		if counts.permission != 1 {
-			t.Errorf("permission = %d, want 1", counts.permission)
-		}
-		if counts.running != 1 {
-			t.Errorf("running = %d, want 1", counts.running)
-		}
-		if counts.creating != 1 {
-			t.Errorf("creating = %d, want 1", counts.creating)
-		}
-		if counts.idle != 3 {
-			t.Errorf("idle = %d, want 3", counts.idle)
-		}
-		if counts.stopped != 1 {
-			t.Errorf("stopped = %d, want 1", counts.stopped)
-		}
-	})
-}
-
 // --- getStatusDisplay ---
 
 func TestGetStatusDisplay(t *testing.T) {
@@ -558,87 +513,6 @@ func TestTruncateFromEndToWidth(t *testing.T) {
 	}
 }
 
-// --- buildStatusSummary ---
-
-func TestBuildStatusSummary(t *testing.T) {
-	t.Run("empty sessions returns empty string", func(t *testing.T) {
-		got := buildStatusSummary(nil)
-		if got != "" {
-			t.Errorf("buildStatusSummary(nil) = %q, want empty string", got)
-		}
-	})
-
-	t.Run("all same status", func(t *testing.T) {
-		sessions := []session.Info{
-			{Status: session.StatusIdle},
-			{Status: session.StatusIdle},
-			{Status: session.StatusIdle},
-		}
-		got := buildStatusSummary(sessions)
-		if got == "" {
-			t.Fatal("buildStatusSummary with idle sessions should not return empty string")
-		}
-		if !strings.Contains(got, "3") {
-			t.Errorf("buildStatusSummary should contain count 3, got %q", got)
-		}
-		if !strings.Contains(got, "Idle") {
-			t.Errorf("buildStatusSummary should contain 'Idle', got %q", got)
-		}
-	})
-
-	t.Run("mixed statuses", func(t *testing.T) {
-		sessions := []session.Info{
-			{Status: session.StatusThinking},
-			{Status: session.StatusThinking},
-			{Status: session.StatusPermission},
-			{Status: session.StatusIdle},
-		}
-		got := buildStatusSummary(sessions)
-		if got == "" {
-			t.Fatal("buildStatusSummary with mixed sessions should not return empty string")
-		}
-		if !strings.Contains(got, "2") {
-			t.Errorf("buildStatusSummary should contain count 2 for thinking, got %q", got)
-		}
-		if !strings.Contains(got, "Thinking") {
-			t.Errorf("buildStatusSummary should contain 'Thinking', got %q", got)
-		}
-		if !strings.Contains(got, "Permission") {
-			t.Errorf("buildStatusSummary should contain 'Permission', got %q", got)
-		}
-		if !strings.Contains(got, "Idle") {
-			t.Errorf("buildStatusSummary should contain 'Idle', got %q", got)
-		}
-	})
-
-	t.Run("stopped only returns empty because stopped is excluded from summary", func(t *testing.T) {
-		sessions := []session.Info{
-			{Status: session.StatusStopped},
-			{Status: session.StatusStopped},
-		}
-		got := buildStatusSummary(sessions)
-		// buildStatusSummary intentionally excludes stopped from the summary
-		if got != "" {
-			t.Errorf("buildStatusSummary with only stopped should return empty, got %q", got)
-		}
-	})
-
-	t.Run("running and creating", func(t *testing.T) {
-		sessions := []session.Info{
-			{Status: session.StatusRunning},
-			{Status: session.StatusCreating},
-			{Status: session.StatusCreating},
-		}
-		got := buildStatusSummary(sessions)
-		if !strings.Contains(got, "Running") {
-			t.Errorf("buildStatusSummary should contain 'Running', got %q", got)
-		}
-		if !strings.Contains(got, "Creating") {
-			t.Errorf("buildStatusSummary should contain 'Creating', got %q", got)
-		}
-	})
-}
-
 // --- cardHeight ---
 
 func TestCardHeight(t *testing.T) {
@@ -694,7 +568,7 @@ func TestAdjustScrollForCursor(t *testing.T) {
 	newModel := func(cursor int) *Model {
 		m := &Model{
 			sessions:    sessions,
-			height:      10, // contentAreaLines() → 10-1-1-1 = 7 usable
+			height:      10, // contentAreaLines() → 10-1 = 9 usable
 			cursor:      cursor,
 			deletingIDs: map[string]bool{},
 		}
@@ -711,11 +585,11 @@ func TestAdjustScrollForCursor(t *testing.T) {
 
 	t.Run("cursor below viewport scrolls down", func(t *testing.T) {
 		m := newModel(4)
-		// Card 4 top = 1 (fleet header) + 4*3 = 13. avail = 7. Bottom = 16.
-		// Should scroll so bottom = scrollOffset + avail → scrollOffset = 9.
+		// Card 4 top = 1 (fleet header) + 4*3 = 13. avail = 9. Bottom = 16.
+		// Should scroll so bottom = scrollOffset + avail → scrollOffset = 7.
 		m.adjustScrollForCursor()
-		if m.scrollOffset != 9 {
-			t.Errorf("scrollOffset = %d, want 9 (cursor below fold)", m.scrollOffset)
+		if m.scrollOffset != 7 {
+			t.Errorf("scrollOffset = %d, want 7 (cursor below fold)", m.scrollOffset)
 		}
 	})
 
@@ -723,9 +597,9 @@ func TestAdjustScrollForCursor(t *testing.T) {
 		m := newModel(9)
 		m.adjustScrollForCursor()
 		// Last card top = 1 + 9*3 = 28, height = 3, bottom = 31.
-		// scrollOffset = 31 - 7 = 24. clampScroll bounds by totalCardLines(31) - avail(7) = 24.
-		if m.scrollOffset != 24 {
-			t.Errorf("scrollOffset = %d, want 24 (cursor at end)", m.scrollOffset)
+		// scrollOffset = 31 - 9 = 22. clampScroll bounds by totalCardLines(31) - avail(9) = 22.
+		if m.scrollOffset != 22 {
+			t.Errorf("scrollOffset = %d, want 22 (cursor at end)", m.scrollOffset)
 		}
 	})
 
@@ -733,8 +607,8 @@ func TestAdjustScrollForCursor(t *testing.T) {
 		m := newModel(0)
 		m.scrollOffset = 999
 		m.clampScroll()
-		if m.scrollOffset != 24 {
-			t.Errorf("clampScroll from overshoot = %d, want 24", m.scrollOffset)
+		if m.scrollOffset != 22 {
+			t.Errorf("clampScroll from overshoot = %d, want 22", m.scrollOffset)
 		}
 		m.scrollOffset = -50
 		m.clampScroll()
