@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/paths"
@@ -21,7 +22,36 @@ var enabled = os.Getenv("JIN_DEBUG") == "1"
 // re-reading the variable and re-deciding what counts as on. Two readings of
 // the same variable can disagree, and the shape of the disagreement is a child
 // that logs when the parent does not, or the reverse.
+//
+// It answers only "is the flag on", and deliberately does not consult
+// isTestBinary: the answer is what gets passed to a child process, and a test
+// that checks the flag reaches the child needs the flag to still be on when it
+// looks. Where the lines are allowed to land is logDir's question, not this
+// one.
 func Enabled() bool { return enabled }
+
+// isTestBinary reports whether this process is a test binary built by `go test`.
+//
+// A variable only so this package's tests can force the production branch,
+// which is otherwise unreachable from where they run. Production never
+// reassigns it. TestProductionBinaryWritesTheLog covers what an in-process test
+// cannot: inside a test binary this and a constant true are indistinguishable.
+var isTestBinary = testing.Testing
+
+// logDir returns the directory NewLogger writes into, and whether it may write
+// at all.
+//
+// A test binary gets nothing, and there is nothing for a test to opt into: the
+// loggers this serves are package-level variables, so their path is resolved
+// before TestMain runs and a test cannot redirect one for itself. The Debug
+// Logging section of docs/conventions.md has what that cost when it was not
+// refused here.
+func logDir() (string, bool) {
+	if isTestBinary() {
+		return "", false
+	}
+	return paths.StateOrEmpty()
+}
 
 // Untrusted renders a value the local process did not choose so that it is safe
 // to put in a log line: quoted, and bounded to max bytes. Use it with %s — it
@@ -62,14 +92,14 @@ func UntrustedBytes(b []byte, max int) string {
 // NewLogger returns a debug logging function that writes to
 // $XDG_STATE_HOME/jind-ai/<filename> (default ~/.local/state/jind-ai/<filename>)
 // when JIN_DEBUG=1 is set.
-// When debugging is disabled or the state directory cannot be resolved,
-// the returned function is a no-op.
+// When debugging is disabled, the state directory cannot be resolved, or this
+// process is a test binary, the returned function is a no-op.
 func NewLogger(filename string) func(string, ...any) {
 	if !enabled {
 		return func(string, ...any) {}
 	}
 
-	stateDir, ok := paths.StateOrEmpty()
+	stateDir, ok := logDir()
 	if !ok {
 		return func(string, ...any) {}
 	}

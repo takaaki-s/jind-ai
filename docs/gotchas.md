@@ -1060,7 +1060,8 @@ Common pitfalls and caveats that agents tend to fall into.
   rest of the event — status verdict, CWD tracking, `SessionStart`
   bookkeeping — unchanged. Dropping the whole event instead would let one
   malformed payload stop status tracking for that session, which is the outage
-  the gate exists to prevent. Refusals are logged under `JIN_DEBUG=1`.
+  the gate exists to prevent. Refusals are logged under `JIN_DEBUG=1` — from a
+  real jin, not from a test binary.
 
   Why this matters beyond a malformed record: `JIN_SESSION_ID` names the
   session a hook acts on and is read from the hook process's own environment,
@@ -1422,7 +1423,8 @@ Common pitfalls and caveats that agents tend to fall into.
   cost is that the session which hit the corrupt file gets the trust dialog —
   which in a jind-ai pane means it hangs, not that someone answers it. Claude
   Code's recovery leaves a valid file behind, so the next session start writes
-  the entry normally; `JIN_DEBUG=1` logs jind-ai's side of it.
+  the entry normally; `JIN_DEBUG=1` logs jind-ai's side of it, from a real jin
+  rather than from a test binary.
 
 - **What the atomic write buys, and what it does not.** `atomicfile.Write`
   renames a complete temp file over the target, so no reader ever sees a
@@ -1728,6 +1730,9 @@ Common pitfalls and caveats that agents tend to fall into.
 
 - **Debug logging uses `internal/debug.NewLogger`**.
   Call `var debugLog = debug.NewLogger("filename.log")` to get a logger for any package.
+  A test binary gets a no-op — see the Debug Logging section of
+  [conventions.md](conventions.md) for why a test cannot redirect these loggers
+  for itself.
 
 - **config.Manager and config.StateManager are separate** instances. Do not confuse them.
 

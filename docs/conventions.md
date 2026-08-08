@@ -77,7 +77,8 @@ var debugLog = debug.NewLogger("daemon-debug.log")   // one per log file
 ```
 
 - `debug.NewLogger(<file>)` writes to the state dir, and is a no-op when
-  debugging is off, so callers need no guard of their own.
+  debugging is off, when the caller is a test binary, or when the state dir
+  cannot be resolved, so callers need no guard of their own.
 - `debug.Enabled()` is the answer to "is debugging on" for code that has to do
   something other than write a line — routing a child's output, or passing the
   flag to a process jind-ai starts. Do not re-read the environment variable.
@@ -89,6 +90,37 @@ The line format lives in `NewLogger` and nowhere else. It carries a full date
 on purpose: these files are appended to and never rotated, so one accumulates
 days of a long-lived daemon, and a clock-only stamp cannot order two lines
 across a midnight. `internal/debug`'s tests pin it.
+
+A test binary gets a no-op, whatever `JIN_DEBUG` says, and there is nothing to
+opt into or remember. This is where the reason lives; the code says it in one
+line and points here.
+
+It is not tidiness. The loggers above are package-level variables, so each
+resolves its path when its package is initialized — before `TestMain`, and long
+before any `t.Setenv` — which means a test cannot redirect one for itself even
+if it tries. A suite run with the flag on therefore appended to the same file
+the daemon writes: measured on a real one, 955 of its 1121 status-transition
+lines were fixtures, carrying session names straight out of the suite. Read
+without excluding them, one transition appeared 245 times and looked endemic;
+production had produced it once. Nothing failed while that was true. The file is
+a diagnostic, so misreading it is the whole damage.
+
+Isolating `$XDG_STATE_HOME` per package was the alternative, and it fails twice
+over: it is the "remember to call this from `TestMain`" contract that
+`testutil.IsolateFromRealDaemon` already carries and that most packages needing
+it do not call, and it does nothing at all for anyone who exports
+`XDG_STATE_HOME` pointing at their real state directory. Deciding in the one
+constructor leaves nothing to remember.
+
+The consequence to know about is that `JIN_DEBUG=1 go test` prints nothing to
+these files. That capability is what was doing the harm, so it was not worth
+keeping — but if a future change needs it back, give it a destination of its own
+rather than letting the ambient one through.
+
+The guard covers the process it runs in and nothing else. `Enabled()` is
+deliberately still true under the flag, so a test that starts a real jin as a
+child starts one that logs normally: isolate that child's `XDG_STATE_HOME`
+yourself.
 
 ## Configuration Access
 
