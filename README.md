@@ -201,9 +201,10 @@ attach to the pane. Claude Code and opencode are unaffected.
 
 The TUI list carries one more column to the left of this one. An orange ● there
 is **not a status**: it means the session has a completed turn you have not
-acknowledged yet (see [Completed turns](#completed-turns)). Clear it from the
-action palette (`M-p` → "mark completion seen") or with
-`jin session seen <selector>`.
+acknowledged yet. Attaching to the session from the TUI clears it, as do the
+action palette's "mark completion seen" and `jin session seen <selector>` —
+[Completed turns](#completed-turns) has the rest, including what does *not*
+clear it.
 
 ## CLI Commands
 
@@ -285,10 +286,17 @@ to find the session that finished while you were reading another one: it went
 `idle`, and so did every session that has been sitting there all afternoon.
 
 So a finished turn also leaves a receipt. The TUI marks the session with an
-orange dot and floats it to the top of its fleet. Clear it from the action
-palette (`M-p` → "mark completion seen") or with `jin session seen <selector>`.
-Nothing clears it on its own — not moving the cursor, not attaching, not
-sending the next prompt — because the point is that you decided you had looked.
+orange dot and floats it to the top of its fleet.
+
+Three things clear it, and all three are you saying you looked: **attaching to
+the session from the TUI** (`Enter`, a second click on the row, or picking it in
+the switch-session popup), the action palette's "mark completion seen", and
+`jin session seen <selector>`.
+
+Nothing else does — not moving the cursor, not the CLI's `jin session attach`,
+not sending the next prompt, not a plugin calling `jin session focus`. A turn
+that finishes while you are reading a different session is still marked when you
+come back.
 
 The receipt says a turn ended without an error. It says nothing about whether
 the work is any good.

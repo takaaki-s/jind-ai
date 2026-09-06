@@ -13,14 +13,17 @@ log.
   says what an agent is doing now, which is the wrong question once several are
   running: the one that finished a second ago and the one idle since lunch both
   read `idle`. An applied task-completion transition now also raises a
-  monotonic `attention` counter, and it stays raised until `jin session seen
-  <selector>` acknowledges it. Nothing acknowledges implicitly — not moving the
-  cursor, not attaching, not sending the next prompt — so a turn that ends
+  monotonic `attention` counter, and it stays raised until you acknowledge it.
+  Three things do: attaching to the session from the TUI, the action palette's
+  "mark completion seen", and `jin session seen <selector>`. Nothing else —
+  not moving the cursor, not the CLI's `jin session attach`, not sending the
+  next prompt, not a plugin calling `jin session focus` — so a turn that ends
   while you are reading another session is still marked when you come back.
 
   The TUI shows it as an orange dot in a column of its own and floats those
-  sessions to the top of their fleet; the action palette's "mark completion
-  seen" clears it without leaving the TUI. `list`, `info`, `new`, `wait` and
+  sessions to the top of their fleet. `Enter`, a second click on the row, and a
+  pick from the switch-session popup all clear it once the attach lands,
+  including when the pane was already showing that session. `list`, `info`, `new`, `wait` and
   `seen` all carry the same `attention` object under `--json`, with `unseen`
   derived from `generation > seen_generation` — two counters rather than a
   flag, so a turn finishing while you acknowledge the previous one is not

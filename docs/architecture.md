@@ -316,7 +316,10 @@ Who touches it:
 - `Manager.HandleHookEvent` raises one generation per applied
   `NotifyTaskComplete` status transition.
 - `Manager.MarkSeen` moves `seen_generation` up to `generation`, reached from
-  the `attention-seen` IPC action and `jin session seen`.
+  the `attention-seen` IPC action, `jin session seen`, the TUI's "mark
+  completion seen" palette action, and a TUI attach that landed
+  (`handleSelectSession`, or the switch-session popup through
+  `resolveFocusSession`).
 - `Store.Save` merges attention with what is already on disk instead of
   overwriting it, so a stale full-session snapshot cannot roll a receipt back.
 - The TUI renders one fixed-width cell for it and floats unseen sessions to the

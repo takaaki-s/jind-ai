@@ -178,8 +178,11 @@ direct keys documented above, so users don't need to keep checking this doc
 once they've learned a shortcut from the palette itself.
 
 "mark completion seen" is the one core action with no key of its own — see
-`CoreActions` for why — and the only one that refetches the list rather than
-waiting for the next poll.
+`CoreActions` for why. It is not the only way to acknowledge from the TUI: a
+landed attach does it too (`handleSelectSession`, and a pick from the
+switch-session popup via `resolveFocusSession`). All three refetch the list
+rather than waiting for the next poll, because the dot and the unseen-first
+partition are both derived from it.
 
 Override or disable the trigger the same way as `toggle_pane`:
 

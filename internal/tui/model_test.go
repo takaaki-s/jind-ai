@@ -4220,6 +4220,17 @@ func (d *fakeDaemon) serve(conn net.Conn) {
 	_ = json.NewEncoder(conn).Encode(resp)
 }
 
+// actions returns the action names the daemon has been asked for, in order.
+func (d *fakeDaemon) actions() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]string, len(d.requests))
+	for i, r := range d.requests {
+		out[i] = r.Action
+	}
+	return out
+}
+
 // first returns the request that opened the exchange — the kill or delete.
 // (Both Cmds follow up with a "list" to refresh the model.)
 func (d *fakeDaemon) first(t *testing.T) daemon.Request {
@@ -5208,7 +5219,7 @@ func TestResolveFocusSession_EmptyID_ReturnsTrue(t *testing.T) {
 		sessions: []session.Info{{ID: "a"}, {ID: "b"}},
 		cursor:   1,
 	}
-	if !m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); !resolved {
 		t.Errorf("resolveFocusSession() = false, want true (nothing pending)")
 	}
 	// Cursor must not move on the no-op path — the helper is called from
@@ -5225,7 +5236,7 @@ func TestResolveFocusSession_TargetInSessions_Switches(t *testing.T) {
 		cursor:           0,
 		currentSessionID: "a",
 	}
-	if !m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); !resolved {
 		t.Fatalf("resolveFocusSession() = false, want true (target present)")
 	}
 	if m.cursor != 1 {
@@ -5252,7 +5263,7 @@ func TestResolveFocusSession_TargetMissing_ReturnsFalse(t *testing.T) {
 		cursor:           1,
 		currentSessionID: "b",
 	}
-	if m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); resolved {
 		t.Errorf("resolveFocusSession() = true, want false (target absent)")
 	}
 	if m.focusSessionID != "ghost" {

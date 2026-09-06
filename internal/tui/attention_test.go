@@ -482,3 +482,125 @@ func TestDispatchAction_MarkSeenSurfacesTheDaemonError(t *testing.T) {
 		t.Error("a failed acknowledgement must not schedule a refresh")
 	}
 }
+
+// --- explicit attach acknowledges, implicit paths do not ---
+
+// The three env keys funnel into one focusSessionID, so the origin has to be
+// carried with it or the TUI cannot tell the user picking a row from a plugin
+// asking for a switch.
+func TestHandleEnvTick_OnlyThePickerIsAnExplicitAttach(t *testing.T) {
+	for _, tt := range []struct {
+		key            string
+		wantFromPicker bool
+	}{
+		{"JIN_CREATED_SESSION", false},
+		{"JIN_NOTIFY_SESSION", false},
+		{"JIN_FOCUS_SESSION", true},
+	} {
+		t.Run(tt.key, func(t *testing.T) {
+			m := Model{sessions: nil, deletingIDs: map[string]bool{}, height: 100}
+			next, _ := m.handleEnvTick(map[string]string{tt.key: "ghost"}, func(string) {})
+			nm := next.(Model)
+
+			if nm.focusSessionID != "ghost" {
+				t.Fatalf("focusSessionID = %q, want %q", nm.focusSessionID, "ghost")
+			}
+			if nm.focusFromPicker != tt.wantFromPicker {
+				t.Errorf("focusFromPicker = %v, want %v", nm.focusFromPicker, tt.wantFromPicker)
+			}
+		})
+	}
+}
+
+// The loop lets a later key win the ID. The origin must win with it, or a
+// picker selection arriving alongside a created-session id would be judged by
+// the wrong half.
+func TestConsumeEnvRequests_OriginFollowsTheWinningID(t *testing.T) {
+	env := map[string]string{"JIN_CREATED_SESSION": "created", "JIN_FOCUS_SESSION": "picked"}
+	req := consumeEnvRequests(func(k string) string { return env[k] })
+
+	if req.focusSessionID != "picked" || !req.focusFromPicker {
+		t.Errorf("got (%q, %v), want (\"picked\", true)", req.focusSessionID, req.focusFromPicker)
+	}
+}
+
+// The slow path gives up on a focus target that never appeared. It has to drop
+// the origin too — the next request reuses the same field.
+func TestSessionsMsg_GivingUpOnFocusDropsTheOrigin(t *testing.T) {
+	m := Model{
+		sessions:        []session.Info{plainInfo("a", "f")},
+		deletingIDs:     map[string]bool{},
+		height:          100,
+		focusSessionID:  "ghost",
+		focusFromPicker: true,
+	}
+
+	next, _ := m.updateListMode(sessionsMsg([]session.Info{plainInfo("a", "f")}))
+	nm := next.(Model)
+
+	if nm.focusSessionID != "" || nm.focusFromPicker {
+		t.Errorf("after giving up: (%q, %v), want (\"\", false)", nm.focusSessionID, nm.focusFromPicker)
+	}
+}
+
+// handleSelectSession refuses at three different points, and acknowledging has
+// to sit behind all of them: one case per guard, or moving the call above the
+// wrong one goes unnoticed. (The attach that does happen is in the e2e file —
+// whether one happened is not observable without a real pane.)
+func TestHandleSelectSession_NoAttachNoAcknowledge(t *testing.T) {
+	creating := unseenInfo("s1", "f")
+	creating.Status = session.StatusCreating
+
+	for _, tt := range []struct {
+		name string
+		sess session.Info
+		del  map[string]bool
+	}{
+		{name: "no display pane to attach to", sess: unseenInfo("s1", "f")},
+		{name: "a session still being created", sess: creating},
+		{name: "a session on its way out", sess: unseenInfo("s1", "f"), del: map[string]bool{"s1": true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d, client := startFakeDaemon(t)
+			del := tt.del
+			if del == nil {
+				del = map[string]bool{}
+			}
+			m := Model{
+				client: client, sessions: []session.Info{tt.sess},
+				cursor: 0, deletingIDs: del, height: 100,
+			}
+
+			m.handleSelectSession()
+
+			if got := d.actions(); len(got) != 0 {
+				t.Errorf("daemon saw %v, want no request", got)
+			}
+		})
+	}
+}
+
+// Same for the picker path: the switch is a no-op without a tmux client, and a
+// switch that did not happen acknowledges nothing however explicit it was.
+func TestResolveFocusSession_NoSwitchNoAcknowledge(t *testing.T) {
+	d, client := startFakeDaemon(t)
+	m := &Model{
+		client: client, sessions: []session.Info{unseenInfo("s1", "f")},
+		deletingIDs: map[string]bool{}, height: 100,
+		focusSessionID: "s1", focusFromPicker: true,
+	}
+
+	resolved, cmd := m.resolveFocusSession()
+	if !resolved {
+		t.Fatal("resolveFocusSession() = false, want true (target present)")
+	}
+	if cmd != nil {
+		t.Error("a switch that did not happen returned a refresh Cmd")
+	}
+	if got := d.actions(); len(got) != 0 {
+		t.Errorf("daemon saw %v, want no request", got)
+	}
+	if m.focusSessionID != "" || m.focusFromPicker {
+		t.Errorf("pending focus not cleared: (%q, %v)", m.focusSessionID, m.focusFromPicker)
+	}
+}
