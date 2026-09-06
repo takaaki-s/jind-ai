@@ -151,6 +151,7 @@ it alone.
 | `hook` | `HookRequest` | Claude Code hook event |
 | `result` | `ResultRequest` | Fetch structured transcript entries from the session's own agent adapter (orchestration; fails for a kind with no reader) |
 | `set-description` | `SetDescriptionRequest` | Update session description (empty resets to auto-generated) |
+| `attention-seen` | `IDRequest` | Acknowledge a session's completion receipt; returns the postcondition `session.Info`. Idempotent, changes no process status |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -416,6 +417,16 @@ applied rather than an exception to it: an action that never existed cannot
 break an old client, because an old client never calls it. Adding a field to
 `SendRequest` instead — the alternative considered — would have been a change
 to an existing endpoint's Data shape, and would have needed one.
+
+v3 is the other half of the same rule. `attention-seen` alone would not have
+needed a bump, but the same change put an `attention` object on `session.Info`,
+which `new` (embedded in `NewResponse`), `list`, `get` and `set-description`
+all return — a change to existing endpoints' Data shape.
+
+`attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
+session file, so a client that times out on it must be told the outcome is
+unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
+safe.
 
 ## Adding a New Action
 

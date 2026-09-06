@@ -2041,6 +2041,27 @@ func (m *Manager) PaneSendKeys(id, keys string, literal bool) error {
 	return m.tmuxClient.SendKeys(target, keys)
 }
 
+// MarkSeen acknowledges the session's completion receipt: seen_generation
+// catches up to generation. It is idempotent and touches no process status,
+// and returns the postcondition Info alongside any save error.
+//
+// The save runs even when the in-memory mutation was a no-op: that is exactly
+// the state a retry after a failed write is in, and skipping it would report
+// success over a disk record that still reads unseen.
+func (m *Manager) MarkSeen(id string) (Info, error) {
+	m.mu.Lock()
+	session, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	session.Attention = session.Attention.acknowledged()
+	saved := m.snapshotAndUnlock(session)
+
+	err := m.store.Save(saved)
+	return saved.ToInfo(), err
+}
+
 // SetStatusWithError updates the status and error message of a session
 func (m *Manager) SetStatusWithError(id string, status Status, errMsg string) {
 	m.mu.Lock()
@@ -3150,6 +3171,17 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		}
 		if upd.Status == StatusStopped {
 			session.LastActiveAt = time.Now()
+		}
+		// One completion receipt per applied task-completion transition. Keyed
+		// on the adapter's normalized verdict rather than the raw event name,
+		// so every adapter's spelling of "the turn ended" counts and none has
+		// to know about attention; and on the status actually moving, so a
+		// repeated hook for a turn that already landed advances nothing. That
+		// is the same applied-transition predicate the save and the plugin
+		// status_changed event below are gated on. What that predicate gives
+		// up is in docs/gotchas.md, under "Session persistence".
+		if upd.Notify == NotifyTaskComplete && oldStatus != session.Status {
+			session.Attention = session.Attention.completed()
 		}
 	}
 

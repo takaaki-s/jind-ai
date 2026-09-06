@@ -39,6 +39,47 @@ Status constants (session/session.go):
   `thinking` deliberately — see [architecture.md](architecture.md) and the
   "Codex adapter" section of [gotchas.md](gotchas.md#codex-adapter)
 
+## Completion Attention
+
+Status is the process axis: what the agent is doing now. Attention is a second,
+independent axis: whether a turn that finished is still unacknowledged. Neither
+derives from the other — a session that completed and went idle keeps its
+receipt after the operator starts the next turn, and a session that is running
+again can still be carrying one from before.
+
+```go
+Attention (persisted, internal/session/attention.go)
+├─ State          "" | "done"   // "" is the zero value, so old records need no migration
+├─ Generation     uint64        // one per applied completion
+└─ SeenGeneration uint64        // the one the operator acknowledged
+
+unseen = State == "done" && Generation > SeenGeneration   // derived, never stored
+```
+
+Transitions:
+
+| Input | Attention result |
+|---|---|
+| An applied verdict whose `Notify` is `NotifyTaskComplete` **and** whose status actually moved | `done`, `Generation + 1`, `SeenGeneration` untouched |
+| The same verdict for a turn that already landed (status did not move) | unchanged |
+| `NotifyError`, permission, prompt, tool, CWD, recovery, kill, idle fallback | unchanged |
+| `Manager.MarkSeen` (`attention-seen` / `jin session seen`) | `SeenGeneration = Generation`; state, generation and status untouched |
+| daemon restart | unchanged — the receipt is loaded from the session file as it was. A restart is not an acknowledgement: nothing knows whether anyone looked while the daemon was down, and recovery raises no completion verdict |
+
+The predicate is the adapter's normalized verdict, not the raw event name, so
+no adapter has to know attention exists. It is applied inside the same
+`Manager.mu` critical section as the status verdict, and it is the same
+"applied transition" predicate that gates the save and the plugin
+`status_changed` event.
+
+Nothing acknowledges implicitly. Moving the cursor, attaching, focusing,
+sending and responding all leave the receipt standing; only an explicit `seen`
+clears it. Two counters rather than a flag for the same reason: acknowledging
+generation 3 while generation 4 lands leaves 4 unseen.
+
+What that predicate gives up, and how the pair survives two concurrent saves,
+is in gotchas.md under "Session persistence".
+
 ## Session Structure
 
 ```go

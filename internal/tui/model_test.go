@@ -4209,8 +4209,13 @@ func (d *fakeDaemon) serve(conn net.Conn) {
 	d.mu.Unlock()
 
 	resp := daemon.Response{ProtocolVersion: daemon.ProtocolVersion, Success: true}
-	if req.Action == "list" {
+	switch req.Action {
+	case "list":
 		resp.Data = json.RawMessage("[]")
+	case "attention-seen":
+		// The client decodes this one into a session.Info, so an empty Data
+		// would fail the call rather than exercise it.
+		resp.Data = json.RawMessage("{}")
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }

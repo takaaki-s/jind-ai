@@ -301,6 +301,31 @@ so `internal/session/` never imports `internal/agent/*`. Adding a new
 adapter is a matter of dropping `internal/agent/<kind>/` with an
 implementation and adding one line to `internal/agent/register/register.go`.
 
+## Completion Attention
+
+`Session.Attention` (`internal/session/attention.go`) is a second axis beside
+`Session.Status`: status is what the agent's process is doing, attention is
+whether a finished turn is still unacknowledged. It is persisted as a
+`state` / `generation` / `seen_generation` triple; `unseen` is derived in
+`ToInfo` and never stored. The zero value is a session with nothing to
+acknowledge, which is also what a record written before the field existed
+decodes to — so there is no attention migration.
+
+Who touches it:
+
+- `Manager.HandleHookEvent` raises one generation per applied
+  `NotifyTaskComplete` status transition.
+- `Manager.MarkSeen` moves `seen_generation` up to `generation`, reached from
+  the `attention-seen` IPC action and `jin session seen`.
+- `Store.Save` merges attention with what is already on disk instead of
+  overwriting it, so a stale full-session snapshot cannot roll a receipt back.
+- The TUI renders one fixed-width cell for it and floats unseen sessions to the
+  top of their fleet. It is display-only there: `session.SortInfos`, the CLI
+  list order and the switch-session popup ranking are unchanged.
+
+The state machine and its exclusions are in
+[session-lifecycle.md](session-lifecycle.md#completion-attention).
+
 ## Session Description Model
 
 Sessions carry a human-readable `Description` field decoupled from the technical `ID`. It is filled by a 3-layer generation pipeline (see [session-lifecycle.md](session-lifecycle.md) for the state machine):

@@ -46,7 +46,14 @@ func newTestManager(t *testing.T) (*Manager, *mockTmuxRunner, *mockHookRunner) {
 // that hop is what the assertions are about.
 func newTestManagerOn(t *testing.T, identity jinenv.Identity) (*Manager, *mockTmuxRunner, *mockHookRunner) {
 	t.Helper()
-	dir := t.TempDir()
+	return newTestManagerIn(t, t.TempDir(), identity)
+}
+
+// newTestManagerIn is newTestManagerOn over a caller-chosen sessions dir, so a
+// test can build a second Manager over the first one's records — which is what
+// a daemon restart is.
+func newTestManagerIn(t *testing.T, dir string, identity jinenv.Identity) (*Manager, *mockTmuxRunner, *mockHookRunner) {
+	t.Helper()
 	configDir := t.TempDir()
 	configMgr, err := config.NewManager(configDir)
 	if err != nil {
@@ -110,6 +117,10 @@ type fakeAgent struct {
 	// every id, so tests that predate the hook re-key gate keep describing
 	// the same behaviour; tests exercising the gate set it.
 	recognizesFn func(string) bool
+	// statusFn overrides StatusSource().Interpret so a test can hand Manager
+	// a verdict in another adapter's vocabulary. Nil (the default) keeps the
+	// Claude Code mapping below, which every other test reads.
+	statusFn func(StatusSignal) (StatusUpdate, bool)
 }
 
 func (a *fakeAgent) Kind() string { return "claude" }
@@ -132,8 +143,13 @@ func (a *fakeAgent) RecognizesSessionID(id string) bool {
 	return a.recognizesFn(id)
 }
 func (a *fakeAgent) Description() DescriptionEnhancer { return a.enhancer }
-func (a *fakeAgent) StatusSource() StatusSource       { return fakeStatusSource{} }
-func (a *fakeAgent) ClearInputKeys() []string         { return a.clearKeys }
+func (a *fakeAgent) StatusSource() StatusSource {
+	if a.statusFn != nil {
+		return statusSourceFunc(a.statusFn)
+	}
+	return fakeStatusSource{}
+}
+func (a *fakeAgent) ClearInputKeys() []string { return a.clearKeys }
 func (a *fakeAgent) PastePlaceholder(prompt string) string {
 	if a.pasteFn == nil {
 		return ""
@@ -162,6 +178,12 @@ func (a *fakeAgent) AnswerBlockKeys(kind BlockKind, capture string, ans BlockAns
 	}
 	return a.answerFn(kind, capture, ans)
 }
+
+// statusSourceFunc adapts a plain function to StatusSource, for tests that
+// need one verdict mapping rather than a whole adapter.
+type statusSourceFunc func(StatusSignal) (StatusUpdate, bool)
+
+func (f statusSourceFunc) Interpret(sig StatusSignal) (StatusUpdate, bool) { return f(sig) }
 
 type fakeStatusSource struct{}
 
@@ -239,6 +261,13 @@ func fakeClaudeAgent(t *testing.T, mgr *Manager) *fakeAgent {
 func installEnhancer(t *testing.T, mgr *Manager, enh DescriptionEnhancer) {
 	t.Helper()
 	fakeClaudeAgent(t, mgr).enhancer = enh
+}
+
+// installStatusSource swaps the verdict mapping the "claude" fake adapter
+// returns via StatusSource().
+func installStatusSource(t *testing.T, mgr *Manager, fn func(StatusSignal) (StatusUpdate, bool)) {
+	t.Helper()
+	fakeClaudeAgent(t, mgr).statusFn = fn
 }
 
 // installClearKeys mutates the resolver's "claude" adapter so

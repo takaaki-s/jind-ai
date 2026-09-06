@@ -440,6 +440,25 @@ func (c *Client) SetDescription(id, description string) error {
 	return nil
 }
 
+// MarkSeen acknowledges a session's completion receipt and returns the
+// resulting Info. See session.Manager.MarkSeen.
+func (c *Client) MarkSeen(id string) (*session.Info, error) {
+	data, _ := json.Marshal(IDRequest{ID: id})
+	resp, err := c.send(Request{Action: "attention-seen", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+
+	var info session.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler

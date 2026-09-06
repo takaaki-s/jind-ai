@@ -1500,6 +1500,29 @@ func (m Model) handleVscode() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleMarkSeen acknowledges the cursor session's completion receipt, so the
+// unseen dot can be cleared without leaving the TUI. Failures surface on
+// m.err.
+//
+// It refetches rather than waiting for the next poll: the dot and the
+// unseen-first partition are both derived from the list, so up to two seconds
+// would pass with the row unchanged — which reads as the action not having
+// worked.
+func (m Model) handleMarkSeen() (tea.Model, tea.Cmd) {
+	if m.client == nil {
+		return m, nil
+	}
+	sess, ok := m.cursorSession()
+	if !ok {
+		return m, nil
+	}
+	if _, err := m.client.MarkSeen(sess.ID); err != nil {
+		m.err = fmt.Errorf("mark seen %s: %w", sess.Description, err)
+		return m, nil
+	}
+	return m, m.fetchSessions
+}
+
 // handleSessionFilter opens the switch-session popup — the same popup
 // bound at the outer-tmux root key table via keybindings.search. Wired
 // here so the action palette can launch it without depending on the
@@ -1544,6 +1567,8 @@ func (m Model) dispatchAction(id string) (tea.Model, tea.Cmd) {
 		return m.handleTogglePane()
 	case action.IDSessionFilter:
 		return m.handleSessionFilter()
+	case action.IDMarkSeen:
+		return m.handleMarkSeen()
 	}
 	// Plugin palette IDs are three-segment ("plugin:<name>:<action>");
 	// anything else — a core ID that missed the switch above, or a stale
@@ -1819,7 +1844,15 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sessionsMsg:
-		m.sessions = msg
+		// The unseen-first partition reorders the list under the cursor, and it
+		// does so on a two-second poll nobody asked for. Follow the session the
+		// cursor was on by ID rather than leaving it on an index that now names
+		// a different row.
+		cursorID := ""
+		if prev := m.getDisplaySessions(); m.cursor >= 0 && m.cursor < len(prev) {
+			cursorID = prev[m.cursor].ID
+		}
+		m.sessions = partitionUnseenFirst(msg)
 		m.err = nil
 
 		// Check whether any deleting session has resolved: either the record
@@ -1852,10 +1885,17 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// relaunched TUI selects whatever the right pane is showing. Runs once per
 		// startup; if the target no longer exists between runs, IndexFunc returns
 		// -1 and the cursor keeps its default.
+		// An ID that no longer resolves falls through to the clamp below,
+		// which is the pre-existing behaviour for a session that disappeared
+		// between polls.
+		wantID := cursorID
 		if m.pendingCursorRestore {
 			m.pendingCursorRestore = false
+			wantID = m.currentSessionID
+		}
+		if wantID != "" {
 			if i := slices.IndexFunc(m.getDisplaySessions(), func(s session.Info) bool {
-				return s.ID == m.currentSessionID
+				return s.ID == wantID
 			}); i >= 0 {
 				m.cursor = i
 			}
@@ -2278,9 +2318,14 @@ func (m Model) renderListHeader(sessions []session.Info, width int) string {
 }
 
 // sessionRowLead is the fixed prefix width of a session row: cursor bar (2) +
-// status icon cell (2) + separator (1). What is left of the row belongs to the
-// name, so every name starts in the same column and the list reads as a table.
-const sessionRowLead = 5
+// attention cell (2) + status icon cell (2) + separator (1). What is left of
+// the row belongs to the name, so every name starts in the same column and the
+// list reads as a table.
+//
+// The attention cell holds its two columns whether or not it has a dot to
+// draw: a cell that collapsed when empty would shift every name on the row the
+// moment a turn finished.
+const sessionRowLead = 7
 
 // sanitizeRowText takes out of a string everything that could break the
 // fixed-height block it is about to be drawn in. Every piece of text this file
@@ -2419,9 +2464,9 @@ func sessionNameLines(sess session.Info, avail, lines int) []string {
 
 // renderSession renders a single session as one list row of two lines:
 //
-//	[cursor bar 2][status icon 2][sep 1][name                  ]
-//	[cursor bar 2][    blank    ][sep 1][repo ....... branch   ]
-//	└────────── sessionRowLead ────────┘
+//	[cursor bar 2][attention 2][status icon 2][sep 1][name                  ]
+//	[cursor bar 2][   blank   ][    blank    ][sep 1][repo ....... branch   ]
+//	└───────────────── sessionRowLead ───────────────┘
 //
 // It always returns exactly sessionRowHeight lines. That is what makes
 // sessionRowHeight a constant: content can no longer change a row's height, so
@@ -2435,8 +2480,8 @@ func sessionNameLines(sess session.Info, avail, lines int) []string {
 //     the same line. The branch alone would leave a gap that is empty rather
 //     than a channel.
 //   - The pair cannot share line one. Real session names run to 38 columns in
-//     Japanese, and 38 + a 12-column branch + sessionRowLead needs 55 the left
-//     pane does not have.
+//     Japanese, and 38 + a 12-column branch + sessionRowLead needs more than the
+//     left pane has.
 //   - It gives the row a third level of hierarchy (coloured icon, white name,
 //     grey metadata), which is what lets a screen of sessions be scanned rather
 //     than read.
@@ -2508,13 +2553,20 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 	// guard above guarantees at least one column here.
 	avail := width - sessionRowLead
 	nameStyled := withBg(nameStyle).Render(sessionNameText(sess, avail))
-	// Four columns narrower than the detail pane gave this pair, so a branch
-	// that used to fit whole may now be cut — renderRepoBranch keeps its tail,
-	// which is the identifying half.
+	// A narrower budget than the detail pane gives this pair (which spends only
+	// detailIndentWidth), so a branch that fits there may be cut here —
+	// renderRepoBranch keeps its tail, which is the identifying half.
 	metaStyled := renderRepoBranch(sess, avail, withBg(helpStyle))
 
 	var b strings.Builder
 	b.WriteString(cursorBar)
+	// Its own column rather than a second meaning loaded onto the status icon:
+	// a session can be running with an unacknowledged completion from before.
+	if sess.Attention.Unseen {
+		b.WriteString(withBg(attentionStyle).Render(padIcon(attentionGlyph)))
+	} else {
+		b.WriteString(padBg(2))
+	}
 	b.WriteString(withBg(statusStyle).Render(padIcon(statusIcon)))
 	b.WriteString(padBg(1))
 	b.WriteString(nameStyled)
@@ -2919,6 +2971,11 @@ func getStatusDisplay(status session.Status) (icon, label string, style lipgloss
 	}
 }
 
+// attentionGlyph is the unseen-completion dot. Padded through padIcon like a
+// status icon so both cells are two columns wide however the terminal measures
+// the rune.
+const attentionGlyph = "●"
+
 // padIcon pads a status icon to a fixed 2-column cell, measured with
 // ansi.StringWidth. Icons already 2 columns or wider are returned
 // unchanged.
@@ -2931,6 +2988,45 @@ func padIcon(icon string) string {
 		return icon + strings.Repeat(" ", 2-w)
 	}
 	return icon
+}
+
+// partitionUnseenFirst reorders sessions so that, inside each fleet, the ones
+// holding an unseen completion come first. Order is preserved in both halves
+// and no session crosses a fleet boundary, so the daemon's canonical order
+// (session.SortInfos) still decides everything else.
+//
+// Display-only, and applied where the poll's result is installed rather than
+// in session.SortInfos: the CLI's list order and the switch-session popup's
+// ranking are contracts of their own.
+//
+// Fleets are emitted in the order they first appear in the input rather than
+// re-sorted, because that is the one property this function must not have an
+// opinion about — groupSessionsByFleet decides fleet order downstream.
+func partitionUnseenFirst(sessions []session.Info) []session.Info {
+	fleetOrder := make([]string, 0, len(sessions))
+	byFleet := make(map[string][]session.Info, len(sessions))
+	for _, sess := range sessions {
+		if _, seen := byFleet[sess.Fleet]; !seen {
+			fleetOrder = append(fleetOrder, sess.Fleet)
+		}
+		byFleet[sess.Fleet] = append(byFleet[sess.Fleet], sess)
+	}
+
+	out := make([]session.Info, 0, len(sessions))
+	for _, fleet := range fleetOrder {
+		members := byFleet[fleet]
+		for _, sess := range members {
+			if sess.Attention.Unseen {
+				out = append(out, sess)
+			}
+		}
+		for _, sess := range members {
+			if !sess.Attention.Unseen {
+				out = append(out, sess)
+			}
+		}
+	}
+	return out
 }
 
 // fleetGroup represents a group of sessions belonging to the same fleet.

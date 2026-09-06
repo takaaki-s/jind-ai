@@ -15,4 +15,6 @@ package daemon
 //
 // v2: NewResponse returns a StatusCreating reservation instead of a
 // fully-provisioned session; Session/Info gained CreationWarning.
-const ProtocolVersion = 2
+// v3: session.Info responses can include completion attention; add the
+// idempotent attention-seen action.
+const ProtocolVersion = 3

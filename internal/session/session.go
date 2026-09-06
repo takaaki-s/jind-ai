@@ -82,6 +82,12 @@ type Session struct {
 	// conversation onto a different model without saying so.
 	Model string `json:"model,omitempty"`
 
+	// Attention is the completion receipt, orthogonal to Status (see
+	// attention.go). Zero means "nothing to acknowledge", which is also what a
+	// record written before the field existed decodes to — that is why there is
+	// no attention migration.
+	Attention Attention `json:"attention,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -138,6 +144,11 @@ type Info struct {
 	TmuxWindowName    string    `json:"tmux_window_name,omitempty"` // tmux window name
 	Fleet             string    `json:"fleet"`                      // Fleet name for session grouping
 
+	// Attention projects the completion receipt with `unseen` derived. Omitted
+	// entirely at zero, so a consumer that finds no object may read it as
+	// none/seen.
+	Attention AttentionInfo `json:"attention,omitzero"`
+
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
 	CurrentBranch  string `json:"current_branch,omitempty"`   // Current git branch
@@ -186,6 +197,7 @@ func (s *Session) ToInfo() Info {
 		Model:             s.Model,
 		TmuxWindowName:    s.TmuxWindowName,
 		Fleet:             s.Fleet,
+		Attention:         s.Attention.toInfo(),
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,

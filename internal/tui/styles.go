@@ -49,6 +49,11 @@ var (
 	sessionNameStyle = lipgloss.NewStyle().
 				Bold(true)
 
+	// attentionStyle paints the unseen-completion dot.
+	attentionStyle = lipgloss.NewStyle().
+			Foreground(warningColor).
+			Bold(true)
+
 	// Status styles - Tokyo Night inspired
 	thinkingStyle = lipgloss.NewStyle().
 			Foreground(purpleColor).

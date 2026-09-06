@@ -1838,6 +1838,47 @@ Common pitfalls and caveats that agents tend to fall into.
   stop for some other reason, and re-points to whatever the cursor is on at
   that point — late, and not necessarily where the user last put the pane.
 
+## Session persistence
+
+- **A session file is last-writer-wins, and lock correctness does not fix
+  that.** Almost every mutating path snapshots the session under `Manager.mu`
+  and calls `Store.Save` after unlocking (holding the central lock across
+  filesystem I/O would stall the daemon; the two saves in `startSessionTmux`
+  are the exceptions and say on the spot why they keep the lock). Two
+  goroutines can therefore mutate in one order and reach the file in the other,
+  and the later `rename` wins.
+  `-race` sees nothing: both writes are properly serialised. A Manager-side
+  save mutex would not help either — goroutines may acquire it in the opposite
+  order to the mutations they carry.
+
+  Completion attention is exempted rather than fixed. `Store.Save` serialises
+  its read/merge/write with a private Store mutex and merges the candidate's
+  attention with what is on disk component-wise: `done` beats `none`, and both
+  counters take their maximum. Attention has no reset or decrement, so the
+  merge is associative, commutative and idempotent, and the result is the later
+  of the two whichever order they land in. This protects attention from *any*
+  stale full-session snapshot — a description or CWD save carrying an old copy
+  included — and repairs nothing else.
+
+  A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
+  one, and assert the file did not regress
+  (`internal/session/store_attention_test.go`).
+
+- **An acknowledgement whose save fails survives only until the daemon
+  restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and
+  saves afterwards, and it returns the store's error rather than swallowing it.
+  Until that error is acted on, memory reads seen and the session file does
+  not: `list` and the TUI show the dot cleared, a daemon restart brings it
+  back. The action is idempotent, so the answer is to call it again.
+
+- **A completion after the idle fallback leaves no receipt.**
+  `captureOutputTmux` moves a session `running -> idle` after 30 seconds
+  without a hook. A completion arriving afterwards finds the status already at
+  the verdict's value, so the applied-transition predicate — the one the save
+  and the plugin event are also gated on — does not fire, and no attention
+  generation is raised. Fixing it needs turn/completion identity, which the
+  attention axis deliberately does not carry.
+
 ## Code Structure
 
 - **Debug logging uses `internal/debug.NewLogger`**.
