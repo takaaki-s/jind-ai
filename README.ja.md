@@ -178,6 +178,12 @@ TUI 内で `n` キーを押してセッション作成、`Enter` でアタッチ
 `jin session respond` では応答できず、タイマーで解除されることもありません。pane に
 アタッチして操作してください。Claude Code と opencode は影響を受けません。
 
+TUI の一覧では、この列の左隣にもう 1 列あります。オレンジの ● は**ステータスではなく**、
+まだ確認していない完了ターンがあることを表します。TUI からそのセッションに attach する
+と消えます。アクションパレットの「mark completion seen」と
+`jin session seen <selector>` でも消えます。消えない操作を含む詳細は
+[完了したターン](#完了したターン)にあります。
+
 ## CLI コマンド
 
 ### デーモン管理
@@ -234,6 +240,9 @@ jin session output <session-name>
 # 直近 N 往復の会話を取得
 jin session output <session-name> --last 3
 
+# 完了したターンを確認済みにする（TUI のドットを消す）
+jin session seen <session-name>
+
 # セッション終了
 jin session kill <session-name>
 
@@ -246,6 +255,45 @@ jin cleanup stopped --dry-run   # 削除対象の確認
 ```
 
 > **エイリアス**: `session` は `sess` でも可（例: `jin sess list`）。`list` は `ls`、`delete` は `rm` でも可。
+
+#### 完了したターン
+
+セッションのステータスは「いま何をしているか」を表します。これは「自分が別のセッション
+を見ている間に終わったのはどれか」を知るには向いていません。終わったセッションは `idle`
+になりますが、午後じゅう放置されているセッションも `idle` だからです。
+
+そこで、ターンが終わると受領印が残ります。TUI はそのセッションにオレンジのドットを付け、
+fleet 内の先頭へ浮かせます。
+
+ドットを消すのは 3 つで、どれも「自分が見た」と言う操作です:
+**TUI からそのセッションに attach する**（`Enter`、行の 2 度目のクリック、
+switch-session ポップアップでの選択）、アクションパレットの
+「mark completion seen」、`jin session seen <selector>`。
+
+それ以外では消えません — カーソル移動でも、CLI の `jin session attach` でも、
+次のプロンプト送信でも、プラグインが叩く `jin session focus` でも。別のセッションを
+読んでいる間に終わったターンは、戻ってきたときにまだ印が付いています。
+
+受領印は「ターンがエラーなく終わった」ことだけを表します。成果物の良し悪しは何も表しません。
+
+`--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
+`seen` — のいずれにも同じ形で載ります:
+
+```json
+{
+  "attention": {
+    "state": "done",
+    "generation": 4,
+    "seen_generation": 3,
+    "unseen": true
+  }
+}
+```
+
+`unseen` は `generation > seen_generation` です。`attention` オブジェクトが無いセッションは
+確認すべきものがありません。カウンタが 2 つあるのは、直前のターンを確認している最中に次の
+ターンが終わっても取りこぼさないためです — generation 3 を確認しても generation 4 は未確認
+のまま残ります。
 
 ### スクリプト / 別のエージェントから動かす
 

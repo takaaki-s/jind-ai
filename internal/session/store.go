@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/takaaki-s/jind-ai/internal/atomicfile"
 )
@@ -11,6 +12,15 @@ import (
 // Store handles session persistence
 type Store struct {
 	dataDir string
+	// saveMu serializes Save's read-merge-write section. It orders nothing
+	// about the callers — two goroutines may still take it in the opposite
+	// order to the mutations they represent — it only makes each merge see a
+	// whole file rather than half of another Save's.
+	//
+	// It is taken under Manager.mu (startSessionTmux saves with the lock
+	// held), so Store must stay a leaf: nothing reached from here may call
+	// back into Manager, or the two locks close a cycle.
+	saveMu sync.Mutex
 }
 
 // tmpSuffixPattern is appended to a session id to form the os.CreateTemp
@@ -62,6 +72,10 @@ func (s *Store) cleanupTempFiles() {
 
 // Save persists a session.
 //
+// Attention is merged with what is already on disk rather than overwritten, so
+// a stale snapshot cannot roll a receipt back; every other field is
+// last-writer-wins. A caller cannot lower attention through Save.
+//
 // The write is atomic (see atomicfile.Write). Several goroutines reach Save
 // without holding a shared lock, and a half-written record is one LoadAll
 // skips — the session disappears. The rename buys atomicity, not durability.
@@ -71,10 +85,9 @@ func (s *Store) cleanupTempFiles() {
 // mutators. See Manager.snapshotAndUnlock and its callers for the pattern.
 func (s *Store) Save(session Session) error {
 	path := filepath.Join(s.dataDir, session.ID+".json")
-	data, err := json.MarshalIndent(&session, "", "  ")
-	if err != nil {
-		return err
-	}
+
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 
 	// Preserve the mode of an existing record so a user who tightened (or
 	// loosened) it does not have it reset on every save.
@@ -83,7 +96,40 @@ func (s *Store) Save(session Session) error {
 		mode = fi.Mode().Perm()
 	}
 
+	session.Attention = mergeAttention(session.Attention, persistedAttention(path))
+
+	data, err := json.MarshalIndent(&session, "", "  ")
+	if err != nil {
+		return err
+	}
+
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+// persistedAttention reads just the attention member of an existing session
+// file. Anything that stops it — no file yet, unreadable, unparseable — yields
+// the zero value, which merges as "no information" and leaves the candidate
+// untouched. Save must not fail because the record it is replacing is broken.
+func persistedAttention(path string) Attention {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// A record that does not exist yet is the ordinary case on first save
+		// and says nothing. Anything else is a read that should have worked,
+		// and it costs a receipt silently — the merge then takes the
+		// candidate's attention whole, stale or not.
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] attention probe failed for %s: %v", path, err)
+		}
+		return Attention{}
+	}
+	var probe struct {
+		Attention Attention `json:"attention"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] attention probe could not parse %s: %v", path, err)
+		return Attention{}
+	}
+	return probe.Attention
 }
 
 // Load loads a session by ID. Legacy schema (top-level "name") is migrated

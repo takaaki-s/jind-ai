@@ -4209,10 +4209,26 @@ func (d *fakeDaemon) serve(conn net.Conn) {
 	d.mu.Unlock()
 
 	resp := daemon.Response{ProtocolVersion: daemon.ProtocolVersion, Success: true}
-	if req.Action == "list" {
+	switch req.Action {
+	case "list":
 		resp.Data = json.RawMessage("[]")
+	case "attention-seen":
+		// The client decodes this one into a session.Info, so an empty Data
+		// would fail the call rather than exercise it.
+		resp.Data = json.RawMessage("{}")
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
+}
+
+// actions returns the action names the daemon has been asked for, in order.
+func (d *fakeDaemon) actions() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]string, len(d.requests))
+	for i, r := range d.requests {
+		out[i] = r.Action
+	}
+	return out
 }
 
 // first returns the request that opened the exchange — the kill or delete.
@@ -5203,7 +5219,7 @@ func TestResolveFocusSession_EmptyID_ReturnsTrue(t *testing.T) {
 		sessions: []session.Info{{ID: "a"}, {ID: "b"}},
 		cursor:   1,
 	}
-	if !m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); !resolved {
 		t.Errorf("resolveFocusSession() = false, want true (nothing pending)")
 	}
 	// Cursor must not move on the no-op path — the helper is called from
@@ -5220,7 +5236,7 @@ func TestResolveFocusSession_TargetInSessions_Switches(t *testing.T) {
 		cursor:           0,
 		currentSessionID: "a",
 	}
-	if !m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); !resolved {
 		t.Fatalf("resolveFocusSession() = false, want true (target present)")
 	}
 	if m.cursor != 1 {
@@ -5247,7 +5263,7 @@ func TestResolveFocusSession_TargetMissing_ReturnsFalse(t *testing.T) {
 		cursor:           1,
 		currentSessionID: "b",
 	}
-	if m.resolveFocusSession() {
+	if resolved, _ := m.resolveFocusSession(); resolved {
 		t.Errorf("resolveFocusSession() = true, want false (target absent)")
 	}
 	if m.focusSessionID != "ghost" {

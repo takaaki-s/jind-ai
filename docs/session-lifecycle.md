@@ -39,6 +39,64 @@ Status constants (session/session.go):
   `thinking` deliberately — see [architecture.md](architecture.md) and the
   "Codex adapter" section of [gotchas.md](gotchas.md#codex-adapter)
 
+## Completion Attention
+
+Status is the process axis: what the agent is doing now. Attention is a second,
+independent axis: whether a turn that finished is still unacknowledged. Neither
+derives from the other — a session that completed and went idle keeps its
+receipt after the operator starts the next turn, and a session that is running
+again can still be carrying one from before.
+
+```go
+Attention (persisted, internal/session/attention.go)
+├─ State          "" | "done"   // "" is the zero value, so old records need no migration
+├─ Generation     uint64        // one per applied completion
+└─ SeenGeneration uint64        // the one the operator acknowledged
+
+unseen = State == "done" && Generation > SeenGeneration   // derived, never stored
+```
+
+Transitions:
+
+| Input | Attention result |
+|---|---|
+| An applied verdict whose `Notify` is `NotifyTaskComplete` **and** whose status actually moved | `done`, `Generation + 1`, `SeenGeneration` untouched |
+| The same verdict for a turn that already landed (status did not move) | unchanged |
+| `NotifyError`, permission, prompt, tool, CWD, recovery, kill, idle fallback | unchanged |
+| `Manager.MarkSeen` (`attention-seen` / `jin session seen` / a landed TUI attach) | `SeenGeneration = Generation`; state, generation and status untouched |
+| daemon restart | unchanged — the receipt is loaded from the session file as it was. A restart is not an acknowledgement: nothing knows whether anyone looked while the daemon was down, and recovery raises no completion verdict |
+
+The predicate is the adapter's normalized verdict, not the raw event name, so
+no adapter has to know attention exists. It is applied inside the same
+`Manager.mu` critical section as the status verdict, and it is the same
+"applied transition" predicate that gates the save and the plugin
+`status_changed` event.
+
+Acknowledging is always a deliberate act, but "deliberate" includes attaching:
+in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
+pick from the switch-session popup both call `Manager.MarkSeen` once the attach
+has landed. Everything else leaves the receipt standing — cursor movement, the
+startup restore, the poll, `adoptAttachedSession`, an automatic re-attach, a
+session jind-ai just created, an external `jin session focus`, the CLI's own
+`jin session attach`, `send` and `respond`.
+
+The three env keys that ask the TUI to display a session share one field, so
+the origin travels with the ID (`envRequests.focusFromPicker`): only
+`JIN_FOCUS_SESSION`, which the switch-session popup writes, is the user
+choosing. "The attach landed" is `Model.attachedTo`: the pane names that session **and**
+is holding a live attach. Both halves matter — `switchToSession` also renders a
+placeholder for a session that is not running, which names the session without
+attaching to it, and "Press Enter to restart" is not a turn anyone has read.
+The test holds when the pane was already showing that session, and
+acknowledging is right there too: that is the one case where nothing else would
+ever clear the receipt.
+
+Two counters rather than a flag: acknowledging generation 3 while generation 4
+lands leaves 4 unseen.
+
+What that predicate gives up, and how the pair survives two concurrent saves,
+is in gotchas.md under "Session persistence".
+
 ## Session Structure
 
 ```go

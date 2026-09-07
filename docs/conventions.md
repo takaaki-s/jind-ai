@@ -190,6 +190,10 @@ yourself.
 - Lock ordering: session.Manager.mu is the central lock; auxiliary locks
   (`tmuxInitMu`, `paneSlotMu`) are always acquired BEFORE `mu` and never
   while holding it
+  - `session.Store.saveMu` is below all of them: `Store` never calls back into
+    `Manager`, so it is a leaf. It IS reached under `mu` — the two saves in
+    `startSessionTmux` keep the lock — which is safe only while that stays
+    true
   - Exception: `claude.trustMu` is taken under `mu`, because the adapter's
     `Setup()` is called from `startSessionTmux` and cannot see the lock. It is
     safe only because it is a leaf — nothing beneath it re-enters

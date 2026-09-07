@@ -42,6 +42,7 @@ const (
 	IDHelp          = "core:help"
 	IDTogglePane    = "core:toggle-pane"
 	IDSessionFilter = "core:session-filter"
+	IDMarkSeen      = "core:mark-seen"
 )
 
 const (
@@ -99,6 +100,10 @@ func CoreActions(kb KeyBindings) []Action {
 		{ID: IDDelete, Kind: KindCore, Label: "delete session", Shortcut: first(kb.Delete), NeedsSession: true},
 		{ID: IDRefresh, Kind: KindCore, Label: "refresh list", Shortcut: first(kb.Refresh)},
 		{ID: IDVscode, Kind: KindCore, Label: "open in vscode", Shortcut: first(kb.Vscode), NeedsSession: true},
+		// No Shortcut: attaching (Enter) already acknowledges, so this is for
+		// clearing a dot on a session you are not going to open. That is a
+		// deliberate errand, not something worth spending a key on.
+		{ID: IDMarkSeen, Kind: KindCore, Label: "mark completion seen", Description: "Clear the unseen-completion dot on this session", NeedsSession: true},
 		{ID: IDHelp, Kind: KindCore, Label: "shortcuts help", Shortcut: first(kb.Help)},
 		{ID: IDSessionFilter, Kind: KindCore, Label: "switch session", Description: "Fuzzy-search sessions and switch to one", Shortcut: first(kb.Search)},
 		{ID: IDTogglePane, Kind: KindCore, Label: "toggle sidebar", Shortcut: first(kb.TogglePane)},

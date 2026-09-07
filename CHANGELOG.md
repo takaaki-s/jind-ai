@@ -7,6 +7,34 @@ log.
 
 ## Unreleased
 
+### Features
+
+- **A finished turn leaves a receipt you have to acknowledge.** Session status
+  says what an agent is doing now, which is the wrong question once several are
+  running: the one that finished a second ago and the one idle since lunch both
+  read `idle`. An applied task-completion transition now also raises a
+  monotonic `attention` counter, and it stays raised until you acknowledge it.
+  Three things do: attaching to the session from the TUI, the action palette's
+  "mark completion seen", and `jin session seen <selector>`. Nothing else —
+  not moving the cursor, not the CLI's `jin session attach`, not sending the
+  next prompt, not a plugin calling `jin session focus` — so a turn that ends
+  while you are reading another session is still marked when you come back.
+
+  The TUI shows it as an orange dot in a column of its own and floats those
+  sessions to the top of their fleet. `Enter`, a second click on the row, and a
+  pick from the switch-session popup all clear it once the attach lands,
+  including when the pane was already showing that session. `list`, `info`, `new`, `wait` and
+  `seen` all carry the same `attention` object under `--json`, with `unseen`
+  derived from `generation > seen_generation` — two counters rather than a
+  flag, so a turn finishing while you acknowledge the previous one is not
+  swallowed. A session with no `attention` object has nothing outstanding, so
+  records written by earlier versions need no migration.
+
+  This is a receipt that a turn ended without an error. It makes no claim about
+  whether the work is any good. See
+  [docs/session-lifecycle.md](docs/session-lifecycle.md#completion-attention),
+  or `jin docs show orchestration` for the orchestration-facing version.
+
 ### Fixes
 
 - **Codex sessions no longer report the `permission` status.** Codex raises
@@ -37,6 +65,15 @@ log.
   which is the rule the no-adapter fallback already followed. Affects every
   agent kind. Claude Code and opencode sessions are
   unchanged.
+
+### Breaking changes
+
+- **The IPC protocol is now v3.** `session.Info` gained the optional
+  `attention` object, which `new`, `list`, `get` and `set-description` all
+  return, and
+  the idempotent `attention-seen` action was added. A CLI and daemon at
+  different versions refuse each other with the existing guidance — run `jin
+  daemon restart` after updating.
 
 ## 0.11.0
 

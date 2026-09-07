@@ -173,6 +173,9 @@ type Model struct {
 
 	// Focus after create
 	focusSessionID string // Session ID to focus after creation
+	// focusFromPicker marks focusSessionID as an explicit attach rather than a
+	// switch something else asked for (see consumeEnvRequests).
+	focusFromPicker bool
 
 	// Reswitch after kill. Holds the session whose Kill was issued, not a bare
 	// "something needs reswitching" bit: only a sessionsMsg that actually
@@ -645,23 +648,51 @@ func (m *Model) pollAttachedSessionCmd() tea.Cmd {
 // after tmux pane operations (ZoomPane).
 type resizeSettledMsg struct{}
 
-// resolveFocusSession completes a pending focus switch. Returns true if
-// nothing was pending or the target was found and switched (clearing
-// focusSessionID + refreshing JIN_CURSOR_SESSION). Returns false with
-// focusSessionID retained if the target is not yet in m.sessions; callers
-// decide whether to keep it armed for retry (envTick fast path) or clear
-// and give up (sessionsMsg slow path, already ran against a fresh List).
-func (m *Model) resolveFocusSession() bool {
+// resolveFocusSession completes a pending focus switch. The bool is true if
+// nothing was pending or the target was found and switched (clearing the
+// pending focus + refreshing JIN_CURSOR_SESSION). It is false with the pending
+// focus retained if the target is not yet in m.sessions; callers decide whether
+// to keep it armed for retry (envTick fast path) or clear and give up
+// (sessionsMsg slow path, already ran against a fresh List).
+//
+// The Cmd is non-nil only when this acknowledged a completion receipt: the list
+// has to be refetched for the dot to go.
+func (m *Model) resolveFocusSession() (bool, tea.Cmd) {
 	if m.focusSessionID == "" {
-		return true
+		return true, nil
 	}
 	if !m.moveCursorToSession(m.focusSessionID) {
-		return false
+		return false, nil
 	}
+	id, fromPicker := m.focusSessionID, m.focusFromPicker
 	m.currentSessionID = "" // Force reset so switchToSession runs even when the cursor was already on this session.
-	m.switchToSession(m.focusSessionID)
+	m.switchToSession(id)
+	m.clearPendingFocus()
+
+	// cursorSession rather than id: it refuses a session on its way out.
+	if fromPicker && m.attachedTo(id) {
+		if sess, ok := m.cursorSession(); ok && m.acknowledgeAttention(sess.ID, sess.Description) {
+			return true, m.fetchSessions
+		}
+	}
+	return true, nil
+}
+
+// attachedTo reports that the display pane is holding a live attach to this
+// session — how both explicit-attach paths test switchToSession, which returns
+// nothing. Both halves carry weight: currentSessionID is what switchToSession
+// writes once it has done something, and displayLocalAttach separates that from
+// the placeholder it renders for a session that is not running, where "Press
+// Enter to restart" is not a turn anyone has read.
+func (m Model) attachedTo(id string) bool {
+	return m.currentSessionID == id && m.displayLocalAttach
+}
+
+// clearPendingFocus drops the pending focus and its origin together: a
+// focusFromPicker left standing would acknowledge the next request's session.
+func (m *Model) clearPendingFocus() {
 	m.focusSessionID = ""
-	return true
+	m.focusFromPicker = false
 }
 
 // buildInnerAttachCmd assembles the shell command the display pane runs to
@@ -1011,6 +1042,12 @@ func (m Model) handleSelectSession() (tea.Model, tea.Cmd) {
 			m.currentSessionID = ""
 		}
 		m.switchToSession(sess.ID)
+		if m.attachedTo(sess.ID) {
+			// True as well when the pane already showed this session, and that
+			// is where it matters most: nothing else would ever clear that
+			// receipt.
+			m.acknowledgeAttention(sess.ID, sess.Description)
+		}
 		if m.displayPaneID != "" {
 			_ = m.tmuxClient.SelectPane(m.displayPaneID)
 		}
@@ -1349,8 +1386,9 @@ type confirmAnswer struct {
 // writes no result, and the empty result is the "do nothing" case everywhere
 // else too.
 type envRequests struct {
-	focusSessionID string
-	answer         confirmAnswer
+	focusSessionID  string
+	focusFromPicker bool // see consumeEnvRequests
+	answer          confirmAnswer
 }
 
 // consumeEnvRequests drains the popup→parent env handshake for one tick.
@@ -1366,9 +1404,23 @@ func consumeEnvRequests(consume func(key string) string) envRequests {
 	// Any popup that wants the parent TUI to focus a session pushes the ID here.
 	// JIN_CREATED_SESSION, JIN_NOTIFY_SESSION and JIN_FOCUS_SESSION all share the
 	// same downstream (switchToSession) via focusSessionID.
-	for _, key := range []string{"JIN_CREATED_SESSION", "JIN_NOTIFY_SESSION", "JIN_FOCUS_SESSION"} {
-		if id := consume(key); id != "" {
+	//
+	// Only JIN_FOCUS_SESSION is the user picking a row (the switch-session
+	// popup); the other two are a session jind-ai just made and a plugin's
+	// `jin session focus`, so only that one counts as an explicit attach. The
+	// origin sits in the literal beside the key so the later key winning the
+	// loop cannot leave the two disagreeing.
+	for _, src := range []struct {
+		key        string
+		fromPicker bool
+	}{
+		{"JIN_CREATED_SESSION", false},
+		{"JIN_NOTIFY_SESSION", false},
+		{"JIN_FOCUS_SESSION", true},
+	} {
+		if id := consume(src.key); id != "" {
 			req.focusSessionID = id
+			req.focusFromPicker = src.fromPicker
 		}
 	}
 	// A dismissed popup (Ctrl+C) writes no result, so the prompt keys are
@@ -1403,6 +1455,7 @@ func (m Model) handleEnvTick(env map[string]string, unset func(key string)) (tea
 	req := consumeEnvRequests(consume)
 	if req.focusSessionID != "" {
 		m.focusSessionID = req.focusSessionID
+		m.focusFromPicker = req.focusFromPicker
 	}
 	// The approved destructive action runs ahead of the focus fast path
 	// below, which can return early from this tick.
@@ -1417,10 +1470,14 @@ func (m Model) handleEnvTick(env map[string]string, unset func(key string)) (tea
 	}
 	// Fast path: resolve now, or kick a fetch so the sessionsMsg slow path
 	// resolves on the next round-trip instead of after the next sessionTick
-	// (~2s). JIN_CREATED_WARNING / JIN_ACTION_ID stay in tmux env and surface
-	// on the next envTick.
-	if !m.resolveFocusSession() {
+	// (~2s). Both early returns below leave JIN_CREATED_WARNING / JIN_ACTION_ID
+	// in the tmux env, so they surface on the next envTick.
+	resolved, focusCmd := m.resolveFocusSession()
+	if !resolved {
 		return m, tea.Batch(envTickCmd(), m.fetchSessions)
+	}
+	if focusCmd != nil {
+		return m, tea.Batch(envTickCmd(), focusCmd)
 	}
 	// Non-fatal warning from the create popup (e.g. hook not allowlisted).
 	// Read alongside JIN_CREATED_SESSION so it surfaces on the same tick.
@@ -1500,6 +1557,40 @@ func (m Model) handleVscode() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleMarkSeen acknowledges the cursor session's completion receipt, so the
+// unseen dot can be cleared without leaving the TUI. Failures surface on
+// m.err.
+//
+// It refetches rather than waiting for the next poll: the dot and the
+// unseen-first partition are both derived from the list, so up to two seconds
+// would pass with the row unchanged — which reads as the action not having
+// worked.
+func (m Model) handleMarkSeen() (tea.Model, tea.Cmd) {
+	sess, ok := m.cursorSession()
+	if !ok {
+		return m, nil
+	}
+	if !m.acknowledgeAttention(sess.ID, sess.Description) {
+		return m, nil
+	}
+	return m, m.fetchSessions
+}
+
+// acknowledgeAttention clears the session's completion receipt and reports
+// whether the daemon took it. A failure surfaces on m.err: where this runs as
+// part of an attach the attach itself succeeded, so a dot that stays put needs
+// a reason on screen.
+func (m *Model) acknowledgeAttention(id, desc string) bool {
+	if m.client == nil {
+		return false
+	}
+	if _, err := m.client.MarkSeen(id); err != nil {
+		m.err = fmt.Errorf("mark seen %s: %w", desc, err)
+		return false
+	}
+	return true
+}
+
 // handleSessionFilter opens the switch-session popup — the same popup
 // bound at the outer-tmux root key table via keybindings.search. Wired
 // here so the action palette can launch it without depending on the
@@ -1544,6 +1635,8 @@ func (m Model) dispatchAction(id string) (tea.Model, tea.Cmd) {
 		return m.handleTogglePane()
 	case action.IDSessionFilter:
 		return m.handleSessionFilter()
+	case action.IDMarkSeen:
+		return m.handleMarkSeen()
 	}
 	// Plugin palette IDs are three-segment ("plugin:<name>:<action>");
 	// anything else — a core ID that missed the switch above, or a stale
@@ -1819,7 +1912,15 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sessionsMsg:
-		m.sessions = msg
+		// The unseen-first partition reorders the list under the cursor, and it
+		// does so on a two-second poll nobody asked for. Follow the session the
+		// cursor was on by ID rather than leaving it on an index that now names
+		// a different row.
+		cursorID := ""
+		if prev := m.getDisplaySessions(); m.cursor >= 0 && m.cursor < len(prev) {
+			cursorID = prev[m.cursor].ID
+		}
+		m.sessions = partitionUnseenFirst(msg)
 		m.err = nil
 
 		// Check whether any deleting session has resolved: either the record
@@ -1852,10 +1953,17 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// relaunched TUI selects whatever the right pane is showing. Runs once per
 		// startup; if the target no longer exists between runs, IndexFunc returns
 		// -1 and the cursor keeps its default.
+		// An ID that no longer resolves falls through to the clamp below,
+		// which is the pre-existing behaviour for a session that disappeared
+		// between polls.
+		wantID := cursorID
 		if m.pendingCursorRestore {
 			m.pendingCursorRestore = false
+			wantID = m.currentSessionID
+		}
+		if wantID != "" {
 			if i := slices.IndexFunc(m.getDisplaySessions(), func(s session.Info) bool {
-				return s.ID == m.currentSessionID
+				return s.ID == wantID
 			}); i >= 0 {
 				m.cursor = i
 			}
@@ -1875,11 +1983,12 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// popup selection and this frame); in that case clear the pending
 		// target so subsequent ticks don't spin on a ghost ID.
 		if m.focusSessionID != "" {
-			if !m.resolveFocusSession() {
-				m.focusSessionID = ""
+			resolved, focusCmd := m.resolveFocusSession()
+			if !resolved {
+				m.clearPendingFocus()
 				m.writeCursorEnv()
 			}
-			return m, nil
+			return m, focusCmd
 		}
 		// Session list changed: clamp scroll so we cannot land past the last
 		// card, and ensure the cursor's card stays in view.
@@ -2278,9 +2387,14 @@ func (m Model) renderListHeader(sessions []session.Info, width int) string {
 }
 
 // sessionRowLead is the fixed prefix width of a session row: cursor bar (2) +
-// status icon cell (2) + separator (1). What is left of the row belongs to the
-// name, so every name starts in the same column and the list reads as a table.
-const sessionRowLead = 5
+// attention cell (2) + status icon cell (2) + separator (1). What is left of
+// the row belongs to the name, so every name starts in the same column and the
+// list reads as a table.
+//
+// The attention cell holds its two columns whether or not it has a dot to
+// draw: a cell that collapsed when empty would shift every name on the row the
+// moment a turn finished.
+const sessionRowLead = 7
 
 // sanitizeRowText takes out of a string everything that could break the
 // fixed-height block it is about to be drawn in. Every piece of text this file
@@ -2419,9 +2533,9 @@ func sessionNameLines(sess session.Info, avail, lines int) []string {
 
 // renderSession renders a single session as one list row of two lines:
 //
-//	[cursor bar 2][status icon 2][sep 1][name                  ]
-//	[cursor bar 2][    blank    ][sep 1][repo ....... branch   ]
-//	└────────── sessionRowLead ────────┘
+//	[cursor bar 2][attention 2][status icon 2][sep 1][name                  ]
+//	[cursor bar 2][   blank   ][    blank    ][sep 1][repo ....... branch   ]
+//	└───────────────── sessionRowLead ───────────────┘
 //
 // It always returns exactly sessionRowHeight lines. That is what makes
 // sessionRowHeight a constant: content can no longer change a row's height, so
@@ -2435,8 +2549,8 @@ func sessionNameLines(sess session.Info, avail, lines int) []string {
 //     the same line. The branch alone would leave a gap that is empty rather
 //     than a channel.
 //   - The pair cannot share line one. Real session names run to 38 columns in
-//     Japanese, and 38 + a 12-column branch + sessionRowLead needs 55 the left
-//     pane does not have.
+//     Japanese, and 38 + a 12-column branch + sessionRowLead needs more than the
+//     left pane has.
 //   - It gives the row a third level of hierarchy (coloured icon, white name,
 //     grey metadata), which is what lets a screen of sessions be scanned rather
 //     than read.
@@ -2508,13 +2622,20 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 	// guard above guarantees at least one column here.
 	avail := width - sessionRowLead
 	nameStyled := withBg(nameStyle).Render(sessionNameText(sess, avail))
-	// Four columns narrower than the detail pane gave this pair, so a branch
-	// that used to fit whole may now be cut — renderRepoBranch keeps its tail,
-	// which is the identifying half.
+	// A narrower budget than the detail pane gives this pair (which spends only
+	// detailIndentWidth), so a branch that fits there may be cut here —
+	// renderRepoBranch keeps its tail, which is the identifying half.
 	metaStyled := renderRepoBranch(sess, avail, withBg(helpStyle))
 
 	var b strings.Builder
 	b.WriteString(cursorBar)
+	// Its own column rather than a second meaning loaded onto the status icon:
+	// a session can be running with an unacknowledged completion from before.
+	if sess.Attention.Unseen {
+		b.WriteString(withBg(attentionStyle).Render(padIcon(attentionGlyph)))
+	} else {
+		b.WriteString(padBg(2))
+	}
 	b.WriteString(withBg(statusStyle).Render(padIcon(statusIcon)))
 	b.WriteString(padBg(1))
 	b.WriteString(nameStyled)
@@ -2919,6 +3040,11 @@ func getStatusDisplay(status session.Status) (icon, label string, style lipgloss
 	}
 }
 
+// attentionGlyph is the unseen-completion dot. Padded through padIcon like a
+// status icon so both cells are two columns wide however the terminal measures
+// the rune.
+const attentionGlyph = "●"
+
 // padIcon pads a status icon to a fixed 2-column cell, measured with
 // ansi.StringWidth. Icons already 2 columns or wider are returned
 // unchanged.
@@ -2931,6 +3057,45 @@ func padIcon(icon string) string {
 		return icon + strings.Repeat(" ", 2-w)
 	}
 	return icon
+}
+
+// partitionUnseenFirst reorders sessions so that, inside each fleet, the ones
+// holding an unseen completion come first. Order is preserved in both halves
+// and no session crosses a fleet boundary, so the daemon's canonical order
+// (session.SortInfos) still decides everything else.
+//
+// Display-only, and applied where the poll's result is installed rather than
+// in session.SortInfos: the CLI's list order and the switch-session popup's
+// ranking are contracts of their own.
+//
+// Fleets are emitted in the order they first appear in the input rather than
+// re-sorted, because that is the one property this function must not have an
+// opinion about — groupSessionsByFleet decides fleet order downstream.
+func partitionUnseenFirst(sessions []session.Info) []session.Info {
+	fleetOrder := make([]string, 0, len(sessions))
+	byFleet := make(map[string][]session.Info, len(sessions))
+	for _, sess := range sessions {
+		if _, seen := byFleet[sess.Fleet]; !seen {
+			fleetOrder = append(fleetOrder, sess.Fleet)
+		}
+		byFleet[sess.Fleet] = append(byFleet[sess.Fleet], sess)
+	}
+
+	out := make([]session.Info, 0, len(sessions))
+	for _, fleet := range fleetOrder {
+		members := byFleet[fleet]
+		for _, sess := range members {
+			if sess.Attention.Unseen {
+				out = append(out, sess)
+			}
+		}
+		for _, sess := range members {
+			if !sess.Attention.Unseen {
+				out = append(out, sess)
+			}
+		}
+	}
+	return out
 }
 
 // fleetGroup represents a group of sessions belonging to the same fleet.

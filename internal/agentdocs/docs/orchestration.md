@@ -214,6 +214,36 @@ sleep 30
 jin session result <sel> --last 3   # new entries → still working, status is stale
 ```
 
+## Which one finished
+
+Status answers "what is this session doing now", which is the wrong question
+once you are running several: they all read `idle`, whether they finished a
+second ago or have been sitting there since you created them.
+
+`attention` answers the other one. A turn that ends without an error leaves a
+receipt, and it stays until something explicitly acknowledges it:
+
+```bash
+# every session holding a completion nobody has acknowledged
+jin session list --json | jq -r '.[] | select(.attention.unseen) | .description'
+```
+
+`unseen` is `attention.generation > attention.seen_generation`. A session with
+no `attention` object has nothing outstanding. Acknowledge one when you have
+collected its work:
+
+```bash
+jin session seen "task-api"
+```
+
+Nothing acknowledges implicitly — not `wait`, not `result`, not `send` — so a
+turn that finishes while you are reading another session's output is still
+there when you come back. Two counters rather than a flag for the same reason:
+acknowledging generation 3 while generation 4 lands leaves 4 outstanding.
+
+The receipt says a turn ended without an error. It says nothing about whether
+the work is any good — that is the next section.
+
 ## Accepting the work
 
 Do not forward a child's report as your own conclusion. For code changes,
@@ -259,6 +289,10 @@ done
 
 Creating them all first lets the sessions provision in parallel; the second
 loop then only waits out whatever is left.
+
+Waiting on each in turn burns the timeout in the order you wrote, not the
+order they finish. When the order matters, poll the receipts instead and
+acknowledge each as you collect it — see [Which one finished](#which-one-finished).
 
 Give each a distinct `--description`: that is what makes them addressable.
 Use `--fleet <name>` to group related sessions.

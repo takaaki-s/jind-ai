@@ -14,6 +14,7 @@ func TestCoreActions_LabelStable(t *testing.T) {
 		IDDelete:        "delete session",
 		IDRefresh:       "refresh list",
 		IDVscode:        "open in vscode",
+		IDMarkSeen:      "mark completion seen",
 		IDHelp:          "shortcuts help",
 		IDSessionFilter: "switch session",
 		IDTogglePane:    "toggle sidebar",
@@ -79,6 +80,7 @@ func TestCoreActions_NeedsSession(t *testing.T) {
 		IDDelete:        true,
 		IDRefresh:       false,
 		IDVscode:        true,
+		IDMarkSeen:      true,
 		IDHelp:          false,
 		IDTogglePane:    false,
 		IDSessionFilter: false,
@@ -88,6 +90,36 @@ func TestCoreActions_NeedsSession(t *testing.T) {
 		if a.NeedsSession != want[a.ID] {
 			t.Errorf("action %q: NeedsSession = %v, want %v", a.ID, a.NeedsSession, want[a.ID])
 		}
+	}
+}
+
+// Acknowledging a completion has no key of its own — the palette is the way
+// in. KeyBindings has no field for it, so the only way one could appear is
+// somebody wiring it to another action's key, which would fire on that key too.
+func TestCoreActions_MarkSeenHasNoShortcut(t *testing.T) {
+	kb := KeyBindings{
+		New:        []string{"n"},
+		Kill:       []string{"x"},
+		Delete:     []string{"d"},
+		Refresh:    []string{"r"},
+		Vscode:     []string{"v"},
+		Help:       []string{"?"},
+		TogglePane: []string{"M-\\"},
+		Search:     []string{"M-f"},
+	}
+
+	var found bool
+	for _, a := range CoreActions(kb) {
+		if a.ID != IDMarkSeen {
+			continue
+		}
+		found = true
+		if a.Shortcut != "" {
+			t.Errorf("Shortcut = %q, want empty", a.Shortcut)
+		}
+	}
+	if !found {
+		t.Fatalf("%q is missing from CoreActions", IDMarkSeen)
 	}
 }
 

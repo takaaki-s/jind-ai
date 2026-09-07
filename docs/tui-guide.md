@@ -98,6 +98,25 @@ After popup completion, core popups return results to the parent TUI via environ
 - Do not use raw ANSI codes
 - Specify colors with lipgloss.Color()
 
+## Session Row Layout
+
+A session row is exactly `sessionRowHeight` (2) lines over a fixed
+`sessionRowLead` prefix; the column figure is on `renderSession` in
+`model.go`, next to the code that draws it.
+
+Every scroll offset, viewport clamp and mouse hit-test is derived from
+`sessionRowHeight`, and every name column from `sessionRowLead`. A change to
+either moves both `renderSession` and the geometry helpers together — the
+tests in `model_test.go` are written against the constants rather than against
+literals so they follow.
+
+The list is also partitioned so that, inside each fleet, sessions holding an
+unseen completion come first (`partitionUnseenFirst`, applied where the poll's
+result is installed). Because that reorders rows under the cursor on a
+two-second poll, the `sessionsMsg` branch captures the cursor's session ID
+before installing the new slice and restores the cursor by ID afterwards. The
+startup `pendingCursorRestore` keeps its precedence over that.
+
 ## Adding a New Popup
 
 1. Create a new `.go` file in `internal/tui/` and implement an independent `tea.Model`
@@ -143,8 +162,9 @@ intentional.
 ## Action Palette
 
 The action palette is a searchable popup that unifies every action a user
-might want to trigger from the TUI: the 8 built-in actions (new / kill /
-delete / refresh / vscode / help / switch session / toggle sidebar) plus
+might want to trigger from the TUI: the 9 built-in actions (new / kill /
+delete / refresh / vscode / mark completion seen / help / switch session /
+toggle sidebar) plus
 any `plugin:*` action from installed plugins, all in one
 fuzzy-searchable list (via [sahilm/fuzzy](https://github.com/sahilm/fuzzy),
 same engine as the switch-session picker — matched runes are underlined in
@@ -156,6 +176,13 @@ The default trigger is `M-p` (Alt+p). Once open, each row shows its Label
 alongside a Shortcut column — this doubles as a live reference for the
 direct keys documented above, so users don't need to keep checking this doc
 once they've learned a shortcut from the palette itself.
+
+"mark completion seen" is the one core action with no key of its own — see
+`CoreActions` for why. It is not the only way to acknowledge from the TUI: a
+landed attach does it too (`handleSelectSession`, and a pick from the
+switch-session popup via `resolveFocusSession`). All three refetch the list
+rather than waiting for the next poll, because the dot and the unseen-first
+partition are both derived from it.
 
 Override or disable the trigger the same way as `toggle_pane`:
 
