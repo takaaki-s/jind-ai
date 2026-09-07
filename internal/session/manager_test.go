@@ -3140,6 +3140,8 @@ func TestManager_RepoName_ProvisionAsync(t *testing.T) {
 				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
+			case isTestResolveCommit(args):
+				return []byte(testReviewBaseOID + "\n"), nil
 			case len(args) >= 1 && args[0] == "rev-parse":
 				return nil, errors.New("exit status 1")
 			case len(args) >= 5 && args[0] == "worktree" && args[1] == "add":
@@ -3571,6 +3573,8 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
+			case isTestResolveCommit(args):
+				return []byte(testReviewBaseOID + "\n"), nil
 			case len(args) >= 1 && args[0] == "rev-parse":
 				// Branch does not exist — no collision.
 				return nil, errors.New("exit status 1")
@@ -3613,7 +3617,7 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 	}
 
 	// Assert AddWorktree used the auto-generated branch (jin/<8hex>),
-	// the resolved worktree path, and origin/main as the base ref.
+	// the resolved worktree path, and the immutable OID as the base ref.
 	addCall := runner.findCall("worktree", "add")
 	if addCall == nil {
 		t.Fatal("expected `git worktree add ...` to be called")
@@ -3636,8 +3640,8 @@ func TestManager_CreateWithOptions_Worktree_HappyPath(t *testing.T) {
 	if addCall[4] != sess.WorkDir {
 		t.Errorf("worktree add path = %q, want %q", addCall[4], sess.WorkDir)
 	}
-	if addCall[5] != "origin/main" {
-		t.Errorf("worktree add baseRef = %q, want origin/main", addCall[5])
+	if addCall[5] != testReviewBaseOID {
+		t.Errorf("worktree add baseRef = %q, want %q", addCall[5], testReviewBaseOID)
 	}
 }
 
@@ -3680,6 +3684,8 @@ func TestManager_CreateWithOptions_Worktree_RollsBackOnWorkDirCollision(t *testi
 				return nil, nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
+			case isTestResolveCommit(args):
+				return []byte(testReviewBaseOID + "\n"), nil
 			case len(args) >= 1 && args[0] == "rev-parse":
 				// Branch does not exist — override-path pre-check passes.
 				return nil, errors.New("exit status 1")

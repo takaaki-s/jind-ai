@@ -167,6 +167,23 @@ fails the response: an adapter with no reader, a read error, and an agent that
 has said nothing all leave the two fields empty and `success: true`. Clients
 that need to distinguish those must use `result`.
 
+`new`, `list`, and `get` project immutable review evidence through the optional
+`Info.review_base` object (protocol v4):
+
+```json
+{
+  "review_base": {
+    "requested_ref": "origin/main",
+    "commit_oid": "0123456789abcdef0123456789abcdef01234567"
+  }
+}
+```
+
+For a newly created session without a jind-ai-managed worktree, the object
+instead contains `"unavailable_reason":"not_managed_worktree"`. Its absence
+means a legacy/unknown record; clients must not infer a base from the current
+branch or a later merge-base.
+
 ## Async completion
 
 `new`, `delete` and `plugin-run` accept the request, return an acknowledgement,

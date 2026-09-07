@@ -109,6 +109,10 @@ Session (persisted)
 ├─ Status                Status
 ├─ LastActiveAt          time.Time
 ├─ ErrorMessage          string    // Error message (e.g., on startup failure)
+├─ ReviewBase                      // Immutable review evidence; zero only for legacy records
+│  ├─ RequestedRef       string    // Fully-qualified ref resolved at managed-worktree creation
+│  ├─ CommitOID          string    // Full 40/64-character commit object ID
+│  └─ UnavailableReason  string    // `not_managed_worktree` for newly created ordinary sessions
 ├─ AgentKind             string    // Adapter identifier ("claude" etc.); always non-empty in persisted form
 ├─ AgentSessionID        string    // Adapter-side persistent id (CC --session-id / --resume value)
 ├─ AgentSessionStarted   bool      // Flipped once the agent has spawned (at spawn, not on hook arrival)
@@ -173,24 +177,32 @@ Legacy `Name` field is migrated on daemon startup: `store.Load()` reads the raw 
 
 ## Worktree Creation (`opts.Worktree`)
 
-When `CreateWithOptions` is called with `Worktree: true`, an additional block runs before the common session-creation path (duplicate-directory check, name assignment, `Session` construction):
+When `CreateWithOptions` is called with `Worktree: true`, provisioning records
+an immutable review base before the session becomes usable:
 
-1. Validate `opts.WorkDir` is a git root (`git.IsGitRoot`); resolve the base branch (`opts.WorktreeBase` → detected default branch → `WorktreeConfig.DefaultBranch`)
-2. Derive the worktree name/branch and resolve the worktree path from `WorktreeConfig.BaseDir`
-3. `git worktree add <path> origin/<base>` — cuts the branch from the locally cached `origin/<base>` (no fetch is performed; users who need a fresher tip run `git fetch` in the source repo beforehand or via the post-create hook). On success, sets `worktreeCreated = true` and registers a `defer` that rolls the worktree/branch back (`RemoveWorktree` + `DeleteBranch`) if the function later returns an error
-4. **Post-create hook** (see below) — runs synchronously, still inside the rollback window opened in step 3
-5. `opts.WorkDir` is rewritten to the new worktree path, and the common session-creation path resumes
+1. Validate `opts.WorkDir` is a git root (`git.IsGitRoot`); select the base branch (`opts.WorktreeBase` → detected default branch → `WorktreeConfig.DefaultBranch`)
+2. Resolve the resulting `origin/<base>` locally with `git rev-parse <ref>^{commit}`. The result must be a full SHA-1 or SHA-256 object ID; resolution failure aborts creation. No fetch is performed
+3. Derive the worktree name/branch and resolve the worktree path from `WorktreeConfig.BaseDir`
+4. `git worktree add <path> <resolved-oid>` — the OID, rather than the moving branch ref, guarantees the checkout and recorded review base agree. On success, a later failure rolls the worktree and branch back (`RemoveWorktree` + `DeleteBranch`)
+5. **Post-create hook** (see below) — runs synchronously, still inside the rollback window opened in step 4
+6. Persist `ReviewBase{RequestedRef, CommitOID}` together with the final worktree path. The field is assigned once; `Store.Save` also preserves the first value against stale snapshots
+
+New sessions created without `Worktree: true` persist
+`UnavailableReason=not_managed_worktree`. This includes sessions pointed at a
+worktree created outside jind-ai: its true creation point was not observed, so
+jind-ai does not guess it. Records written before this field existed retain the
+zero value and are not backfilled.
 
 ### Post-create hook (`.jin/worktree-post-create.sh`)
 
-Runs after the worktree is created (step 3) and before Claude Code starts. `StartBackground` is a separate call the caller makes after `CreateWithOptions` returns, so the hook always finishes first:
+Runs after the worktree is created (step 4) and before the agent starts. `StartBackground` is a separate call the caller makes after `CreateWithOptions` returns, so the hook always finishes first:
 
 1. **Discover**: look for `.jin/worktree-post-create.sh` at the original repository root. Missing → skip silently, worktree creation proceeds unchanged.
 2. **Verify** against the allowlist (`internal/worktreehook`, SHA256-tracked like direnv):
    - Not yet allowed, or the script's content changed since it was allowed → skip with a warning (session creation still succeeds); the user must run `jin worktree allow`
    - Allowed and unchanged → run
 3. **Run**: `bash <script>` executes with `cwd` set to the new worktree; default timeout 300s (`worktree.hook_timeout`). Exceeding the timeout kills the process (`exec.CommandContext`'s default cancel behavior).
-4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 3 `defer` — the worktree and its branch are rolled back, leaving no partial state
+4. **On failure** (non-zero exit or timeout): `CreateWithOptions` returns an error, which triggers the step 4 rollback — the worktree and its branch are removed, leaving no partial state
 5. Skipped without running when: no script is present, `opts.NoHook` (`--no-hook`), or `worktree.hook_enabled: false`
 
 stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` regardless of outcome. See README.md ("Worktree Post-Create Hook") for the script's environment variables and the allow model.

@@ -52,6 +52,12 @@ type Session struct {
 	// dropped when the session is deleted.
 	CreationWarning string `json:"creation_warning,omitempty"`
 
+	// ReviewBase is the immutable commit from which a jind-ai-managed
+	// worktree was created. It is separate from dynamic branch information:
+	// CurrentBranch may move, while review evidence must keep the same base.
+	// The zero value means a legacy record for which no evidence was observed.
+	ReviewBase ReviewBase `json:"review_base,omitzero"`
+
 	// AgentKind identifies the adapter (registry key) that owns this session.
 	// Always non-empty in persisted form; the store migration backfills legacy
 	// records with "claude".
@@ -129,20 +135,21 @@ type Session struct {
 
 // Info returns session information for display
 type Info struct {
-	ID                string    `json:"id"`
-	Description       string    `json:"description"`
-	DescriptionLocked bool      `json:"description_locked,omitempty"`
-	WorkDir           string    `json:"work_dir"`
-	Status            Status    `json:"status"`
-	CreatedAt         time.Time `json:"created_at"`
-	LastActiveAt      time.Time `json:"last_active_at,omitzero"`
-	ErrorMessage      string    `json:"error_message,omitempty"`
-	CreationWarning   string    `json:"creation_warning,omitempty"` // Non-fatal warning from async provisioning (see Session.CreationWarning)
-	AgentKind         string    `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
-	AgentSessionID    string    `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
-	Model             string    `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
-	TmuxWindowName    string    `json:"tmux_window_name,omitempty"` // tmux window name
-	Fleet             string    `json:"fleet"`                      // Fleet name for session grouping
+	ID                string     `json:"id"`
+	Description       string     `json:"description"`
+	DescriptionLocked bool       `json:"description_locked,omitempty"`
+	WorkDir           string     `json:"work_dir"`
+	Status            Status     `json:"status"`
+	CreatedAt         time.Time  `json:"created_at"`
+	LastActiveAt      time.Time  `json:"last_active_at,omitzero"`
+	ErrorMessage      string     `json:"error_message,omitempty"`
+	CreationWarning   string     `json:"creation_warning,omitempty"` // Non-fatal warning from async provisioning (see Session.CreationWarning)
+	ReviewBase        ReviewBase `json:"review_base,omitzero"`       // Immutable base of a managed worktree; zero means legacy/unknown
+	AgentKind         string     `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
+	AgentSessionID    string     `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
+	Model             string     `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
+	TmuxWindowName    string     `json:"tmux_window_name,omitempty"` // tmux window name
+	Fleet             string     `json:"fleet"`                      // Fleet name for session grouping
 
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
@@ -192,6 +199,7 @@ func (s *Session) ToInfo() Info {
 		LastActiveAt:      s.LastActiveAt,
 		ErrorMessage:      s.ErrorMessage,
 		CreationWarning:   s.CreationWarning,
+		ReviewBase:        s.ReviewBase,
 		AgentKind:         s.AgentKind,
 		AgentSessionID:    s.AgentSessionID,
 		Model:             s.Model,

@@ -7,6 +7,44 @@ import (
 	"testing"
 )
 
+func TestClient_ResolveCommit_ReturnsFullObjectID(t *testing.T) {
+	const oid = "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	mock := &mockRunner{out: []byte(oid + "\n")}
+	c := NewClientWithRunner(mock)
+
+	got, err := c.ResolveCommit("/repo", "origin/main")
+	if err != nil {
+		t.Fatalf("ResolveCommit failed: %v", err)
+	}
+	if got != strings.ToLower(oid) {
+		t.Errorf("ResolveCommit = %q, want %q", got, strings.ToLower(oid))
+	}
+	wantArgs := []string{"rev-parse", "--verify", "--quiet", "--end-of-options", "origin/main^{commit}"}
+	if !reflect.DeepEqual(mock.lastArgs, wantArgs) {
+		t.Errorf("Runner args = %v, want %v", mock.lastArgs, wantArgs)
+	}
+}
+
+func TestClient_ResolveCommit_RejectsInvalidResults(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "unresolved", err: errors.New("exit status 1")},
+		{name: "abbreviated", out: "deadbeef\n"},
+		{name: "non hexadecimal", out: "gggggggggggggggggggggggggggggggggggggggg\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := NewClientWithRunner(&mockRunner{out: []byte(tt.out), err: tt.err})
+			if _, err := c.ResolveCommit("/repo", "origin/missing"); err == nil {
+				t.Fatal("ResolveCommit succeeded, want error")
+			}
+		})
+	}
+}
+
 func TestClient_DetectDefaultBranch_ParsesOriginHEAD(t *testing.T) {
 	mock := &mockRunner{out: []byte("refs/remotes/origin/main\n")}
 	c := NewClientWithRunner(mock)

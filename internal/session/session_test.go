@@ -22,6 +22,10 @@ func TestToInfo_CopiesAllFields(t *testing.T) {
 		Fleet:               "backend",
 		TmuxWindowName:      "jin_test-id-123",
 		TmuxPaneID:          "%42",
+		ReviewBase: ReviewBase{
+			RequestedRef: "origin/main",
+			CommitOID:    testReviewBaseOID,
+		},
 
 		// Runtime fields (should NOT appear in Info but CurrentWorkDir/CurrentBranch are mapped)
 		LastOutputTime: now.Add(-1 * time.Minute),
@@ -64,6 +68,9 @@ func TestToInfo_CopiesAllFields(t *testing.T) {
 	}
 	if info.Fleet != s.Fleet {
 		t.Errorf("Fleet: got %q, want %q", info.Fleet, s.Fleet)
+	}
+	if info.ReviewBase != s.ReviewBase {
+		t.Errorf("ReviewBase: got %+v, want %+v", info.ReviewBase, s.ReviewBase)
 	}
 	if info.CurrentWorkDir != s.CurrentWorkDir {
 		t.Errorf("CurrentWorkDir: got %q, want %q", info.CurrentWorkDir, s.CurrentWorkDir)
@@ -118,6 +125,10 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 		Fleet:               "frontend",
 		TmuxWindowName:      "jin_round-trip-id",
 		TmuxPaneID:          "%99",
+		ReviewBase: ReviewBase{
+			RequestedRef: "origin/main",
+			CommitOID:    testReviewBaseOID,
+		},
 	}
 
 	data, err := json.Marshal(original)
@@ -169,6 +180,31 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 	}
 	if restored.TmuxPaneID != original.TmuxPaneID {
 		t.Errorf("TmuxPaneID: got %q, want %q", restored.TmuxPaneID, original.TmuxPaneID)
+	}
+	if restored.ReviewBase != original.ReviewBase {
+		t.Errorf("ReviewBase: got %+v, want %+v", restored.ReviewBase, original.ReviewBase)
+	}
+}
+
+func TestReviewBase_InfoJSONProjection(t *testing.T) {
+	info := (&Session{
+		ReviewBase: ReviewBase{
+			RequestedRef: "origin/main",
+			CommitOID:    testReviewBaseOID,
+		},
+	}).ToInfo()
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("Marshal Info: %v", err)
+	}
+	var doc struct {
+		ReviewBase ReviewBase `json:"review_base"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("Unmarshal Info JSON: %v", err)
+	}
+	if doc.ReviewBase != info.ReviewBase {
+		t.Errorf("JSON review_base = %+v, want %+v", doc.ReviewBase, info.ReviewBase)
 	}
 }
 

@@ -5,6 +5,45 @@ import (
 	"strings"
 )
 
+// ResolveCommit resolves ref to a full commit object ID. The ^{commit} peel
+// rejects tags or objects that do not ultimately name a commit, while
+// --end-of-options prevents a user-controlled ref from being parsed as a git
+// option. No fetch is performed: callers only resolve repository state they
+// already have.
+func (c *Client) ResolveCommit(repoDir, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", fmt.Errorf("commit ref is required")
+	}
+	output, err := c.r.Run(repoDir,
+		"rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return "", fmt.Errorf("git rev-parse %q: %s", ref, detail)
+	}
+
+	oid := strings.TrimSpace(string(output))
+	if !isFullObjectID(oid) {
+		return "", fmt.Errorf("git rev-parse %q returned non-full object ID %q", ref, oid)
+	}
+	return strings.ToLower(oid), nil
+}
+
+// Git repositories may use SHA-1 (40 hexadecimal characters) or SHA-256 (64).
+func isFullObjectID(oid string) bool {
+	if len(oid) != 40 && len(oid) != 64 {
+		return false
+	}
+	for _, r := range oid {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // DetectDefaultBranch returns the branch name that origin/HEAD points at
 // (typically "main" or "master"). Depends on the local clone having a
 // symbolic ref for origin/HEAD; if it does not, git prints an error and this
@@ -36,8 +75,8 @@ func (c *Client) BranchExists(repoDir, branch string) bool {
 }
 
 // AddWorktree runs `git worktree add -b <branch> <worktreePath> <baseRef>`.
-// baseRef is usually "origin/<default-branch>" so the new branch starts from
-// a freshly fetched remote tip.
+// Callers pass the full commit OID they resolved from the requested base, so
+// the checkout cannot race with a moving branch ref.
 func (c *Client) AddWorktree(repoDir, branch, worktreePath, baseRef string) error {
 	output, err := c.r.Run(repoDir, "worktree", "add", "-b", branch, worktreePath, baseRef)
 	if err != nil {

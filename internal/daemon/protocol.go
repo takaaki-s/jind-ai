@@ -17,4 +17,5 @@ package daemon
 // fully-provisioned session; Session/Info gained CreationWarning.
 // v3: session.Info responses can include completion attention; add the
 // idempotent attention-seen action.
-const ProtocolVersion = 3
+// v4: session.Info responses can include an immutable review_base projection.
+const ProtocolVersion = 4
