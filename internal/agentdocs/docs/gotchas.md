@@ -37,7 +37,8 @@ transcript was found. For a codex or opencode child use `session result`
 instead.
 
 What works for every kind: `new`, `send`, `wait`, `kill`, `delete`, `list`,
-`info`, and status (`idle` / `thinking` / `permission`).
+`info`, and status (`idle` / `thinking`; `permission` on claude and opencode
+only — see "Waiting on an approval" below).
 
 When the result is empty, or the limits below say you cannot trust it, go to
 the artifacts:
@@ -138,9 +139,10 @@ with blank ones. Neither is missing data you can recover by asking again.
   collection depends on that, so after a resume prefer a full read over
   trusting `--since` to be complete.
 - **Waiting on an approval.** No sample of how Codex records a pending
-  permission prompt exists, so do not expect a result to show that the child
-  is blocked on one. The session's status is what tells you that — wait with
-  `--until idle,permission`.
+  permission prompt exists, so do not expect a result to show that the child is
+  blocked on one. The status will not tell you either — see "Statuses" in the
+  `orchestration` doc for what a codex child reports instead, and what to do
+  about it.
 
 ## An opencode row shows no last message, and that is not a failure
 

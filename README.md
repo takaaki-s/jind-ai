@@ -192,6 +192,13 @@ Session states are detected via Claude Code [hooks](https://docs.anthropic.com/e
 | `idle` | ○ | `Stop` hook, or a 30s no-hook fallback | Waiting for input |
 | `stopped` | ■ | Process death detection | Stopped |
 
+**A `codex` session never reaches `permission`.** Codex raises its approval
+hook when an approval path opens, which is not the same as a human being asked,
+and nothing in the payload jin receives says which it was — so that adapter
+maps it to `thinking`. A codex session genuinely waiting on an approval reads
+as `thinking`, `jin session respond` cannot answer it, and no timer moves it:
+attach to the pane. Claude Code and opencode are unaffected.
+
 ## CLI Commands
 
 ### Daemon management

@@ -34,7 +34,10 @@ Status constants (session/session.go):
 - `running`    - Running (initial state before any hook is received)
 - `idle`       - Waiting for input (Stop hook)
 - `thinking`   - Processing (UserPromptSubmit hook)
-- `permission` - Waiting for permission (Notification hook)
+- `permission` - Waiting for permission (Notification hook). Not reachable
+  from a hook on a codex session: that adapter maps `PermissionRequest` to
+  `thinking` deliberately — see [architecture.md](architecture.md) and the
+  "Codex adapter" section of [gotchas.md](gotchas.md#codex-adapter)
 
 ## Session Structure
 
@@ -170,6 +173,11 @@ stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` r
      daemon start and reaches the same verdict, so restarting does not clear it
      either — only driving the agent by hand does (attaching to the pane, or
      stopping and restarting the session, whose SessionStart writes idle)
+   - The Codex adapter answers the same signal with one narrow correction: a
+     persisted `permission` becomes `thinking`, and every other status gets a
+     false verdict. It reads no rollout, so the verdict restates the persisted
+     value rather than re-deriving one — see "Codex adapter" in
+     [gotchas.md](gotchas.md#codex-adapter)
 4. Pane dead → StatusStopped (TmuxWindowName preserved for RespawnPane).
    Killed sessions land here too, since a kill leaves the pane dead rather
    than destroying it
@@ -177,6 +185,20 @@ stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` r
 
 A decision is re-validated before it is applied, and dropped when the session
 was deleted, started, or killed while the (unlocked) probes ran.
+
+The adapter's verdict takes one more check: it is withheld when the session's
+Status has moved since the snapshot, and the step-1 fallback — which already
+recomputes from live status — decides instead. The verdict was derived before
+the probes, so a hook that landed during them is the fresher report. What the
+check is worth depends on the adapter: one that re-reads the agent would
+reconverge on the next hook anyway, but one answering from the persisted value
+alone (the Codex branch above) has nothing to reconverge with, and a `Stop`
+overwritten by it would stay overwritten — the next restart reads the result
+back and re-derives it identically, no timer clears it, and `send` refuses it.
+
+The check compares Status values, so a hook that rewrites the same status is
+invisible to it. Detecting every write would need a counter on the write path,
+the way `killSeq` does for kills.
 
 Known residual: a recovered session whose status ends up "running" (no
 hook-derived status persisted and no transcript verdict) stays "running"

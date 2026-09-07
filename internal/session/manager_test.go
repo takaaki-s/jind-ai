@@ -1937,7 +1937,9 @@ type recoverVerdictSource struct {
 
 func (s *recoverVerdictSource) Interpret(sig StatusSignal) (StatusUpdate, bool) {
 	if sig.Kind != "recover" {
-		return StatusUpdate{}, false
+		// Hooks go to the shared fake: a recovery test that fires one needs
+		// the same mapping every other test in this file assumes.
+		return fakeStatusSource{}.Interpret(sig)
 	}
 	s.lastSig = sig
 	return s.verdict, s.ok
@@ -1981,6 +1983,51 @@ func TestManager_RecoverTmuxSessions_RecoverVerdictApplied(t *testing.T) {
 	}
 	if s := source.lastSig.Payload["agent_session_id"]; s != agentSessionID {
 		t.Errorf("agent_session_id payload = %q, want %q", s, agentSessionID)
+	}
+}
+
+// TestManager_RecoverTmuxSessions_HookDuringProbeBeatsVerdict pins the guard
+// in applyRecovery: a hook that lands while the probes run outranks the
+// adapter's verdict, which was derived from the pre-probe snapshot.
+//
+// mock.onHasSession is the seam that makes the race deterministic — the probe
+// phase calls it exactly once per session, between snapshotForRecovery and
+// applyRecovery. What runs there is the real HandleHookEvent path, so the test
+// fails if that path stops moving Status.
+//
+// TestManager_RecoverTmuxSessions_RecoverVerdictApplied above is the control:
+// with nothing moving in the window, the verdict still wins.
+func TestManager_RecoverTmuxSessions_HookDuringProbeBeatsVerdict(t *testing.T) {
+	mgr, mock, _ := newTestManager(t)
+
+	source := &recoverVerdictSource{
+		verdict: StatusUpdate{Status: StatusThinking},
+		ok:      true,
+	}
+	mgr.SetAgentResolver(&fakeAgentResolver{
+		agents: map[string]Agent{"claude": &recoverVerdictAgent{source: source}},
+	})
+
+	sess := setupLivePaneSession(t, mgr, mock, "%21", StatusPermission)
+
+	// The agent finished its turn while the daemon was still deciding what to
+	// recover.
+	mock.onHasSession = func(string) {
+		mgr.HandleHookEvent(sess.AgentSessionID, sess.ID, "Stop", "", "", "")
+	}
+
+	mgr.RecoverTmuxSessions()
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.Status != StatusIdle {
+		t.Errorf("Status = %q, want %q: the Stop that landed during the probe "+
+			"is fresher than a verdict derived before it", got.Status, StatusIdle)
+	}
+	if source.lastSig.Kind != "recover" {
+		t.Fatal("the adapter was never asked for a verdict; the test would pass for the wrong reason")
 	}
 }
 

@@ -176,7 +176,10 @@ type recoverDecision struct {
 	// killSeq is Session.killSeq at snapshot time. Apply compares it with the
 	// live counter to notice a Kill that landed while the probes ran — a kill
 	// keeps the window standing, so windowName cannot catch that on its own.
-	killSeq   uint64
+	killSeq uint64
+	// atProbe is Session.Status at snapshot time; apply compares it with the
+	// live value to decide whether the verdict is still current.
+	atProbe   Status
 	outcome   recoverOutcome
 	fromDisk  Status
 	verdict   StatusUpdate
@@ -218,6 +221,7 @@ func (m *Manager) decideRecovery(snaps []Session, tc tmux.Runner) []recoverDecis
 			id:         snap.ID,
 			windowName: snap.TmuxWindowName,
 			killSeq:    snap.killSeq,
+			atProbe:    snap.Status,
 			fromDisk:   snap.PersistedStatus,
 		}
 		switch {
@@ -345,12 +349,18 @@ func (m *Manager) applyRecovery(decisions []recoverDecision) (saves []Session, m
 				debugLog("[RECOVER] Session %s: delete interrupted with live pane, marked stopped (retry via `jin session delete`)", live.Description)
 				continue
 			}
-			if d.verdictOK {
-				// The adapter's verdict wins; only Status is applied — see
-				// the "recover" contract on StatusSignal. It was derived at
-				// probe time, so it can override a status a hook set during
-				// the probe window; accepted, since both read the same
-				// agent-side data and the next hook reconverges.
+			// The verdict was derived from the pre-probe snapshot, so a hook
+			// that landed since outranks it. An adapter may answer "recover"
+			// from the persisted value alone, and such a verdict has nothing
+			// agent-side to reconverge with: see the recovery section of
+			// docs/session-lifecycle.md for what it costs to let it win.
+			//
+			// The comparison is by value, so a hook that rewrites the same
+			// status is invisible here — unlike killSeq above, which exists
+			// because Status could not stand in for detecting a kill either.
+			if d.verdictOK && live.Status == d.atProbe {
+				// Only Status is applied — see the "recover" contract on
+				// StatusSignal.
 				live.Status = d.verdict.Status
 			} else {
 				// Fallback: the hook-driven status persisted

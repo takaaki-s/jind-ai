@@ -44,6 +44,7 @@ jin session wait fix-login --until idle,permission --timeout 600 --json
 
 # 4b. If it came back `permission`, answer it. `send` refuses a blocked
 #     session; `respond` drives the dialog and returns once it is gone.
+#     Neither happens on a codex child — see Statuses below.
 jin session result fix-login --json              # what is being asked
 jin session respond fix-login --option 1
 
@@ -184,6 +185,15 @@ whether a resume keeps writing to the same log was never measured, and
 Terminal for a turn: `idle` (finished) and `permission` (blocked, waiting to be
 answered — `jin session respond`, not `send`). `stopped` means the process is
 gone.
+
+**`permission` never appears on a `codex` session.** That adapter maps Codex's
+approval hook to `thinking` — the event reports that an approval path opened,
+not that a human was asked — and it cannot read Codex's dialog either, so
+`respond` refuses it. For a codex child, `--until idle,permission` is
+effectively `--until idle`. One really blocked on an approval sits at
+`thinking` and stays there: no timer moves a `thinking` session, so your `wait`
+spends its whole `--timeout` and the child is still blocked afterwards. Attach
+to the pane and answer it.
 
 `stopped` is the one status worth a second look. Nothing re-derives it from
 the world, so a stop recorded by mistake stays until a hook disagrees — and an

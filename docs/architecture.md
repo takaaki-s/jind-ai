@@ -152,11 +152,18 @@ The Claude Code adapter's mapping is documented in
 - `Stop` → StatusIdle + task-complete notification
 - `Notification(permission_prompt)` → StatusPermission + permission notification
 
-The Codex adapter's mapping mirrors the same shape:
+The Codex adapter's mapping mirrors the same shape, with one deliberate
+divergence:
 
 - `UserPromptSubmit` / `PreToolUse` / `PostToolUse` → StatusThinking
-- `PermissionRequest` → StatusPermission + permission notification
+- `PermissionRequest` → StatusThinking, no notification
 - `Stop` → StatusIdle + task-complete notification
+
+`PermissionRequest` does not map to StatusPermission despite the name: nothing
+reaching the adapter reports that a human was asked. Why that follows from the
+payload, what it gives up (a codex session never reaching `permission`), and
+what has not been measured are under "Codex adapter" in
+[gotchas.md](gotchas.md#codex-adapter).
 
 The opencode adapter consumes the same canonical names, but they are
 produced by the bundled plugin rather than by the agent. The plugin

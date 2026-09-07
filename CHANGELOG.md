@@ -5,6 +5,39 @@ attaches them to the corresponding [GitHub Release](https://github.com/takaaki-s
 This file is the curated overview — highlights per release, not a per-commit
 log.
 
+## Unreleased
+
+### Fixes
+
+- **Codex sessions no longer report the `permission` status.** Codex raises
+  its approval hook when an approval path opens, which is not the same as a
+  human being asked — and nothing in the payload jin receives says which it
+  was. jind-ai mapped that hook to the `permission` status anyway, so a session
+  whose approval resolved without anyone answering kept claiming it was waiting
+  on you. The status has no timer behind it, so it stayed until some later hook
+  happened to disagree, and `jin session respond` could not clear it: that
+  adapter deliberately does not read Codex's dialog.
+
+  The hook now maps to `thinking`, with no notification, and daemon-restart
+  recovery rewrites a `permission` left on disk by an earlier version to
+  `thinking` as well.
+
+  **This changes what orchestration sees on codex sessions**, and only on
+  codex: `jin session wait --until idle,permission` returns only on `idle`, no
+  `permission` `JIN_NOTIFY_KIND` is dispatched to plugins, and a codex child
+  that really is waiting on an approval reads as `thinking` and stays there —
+  no timer moves a `thinking` session — so answer it by attaching to the pane.
+
+- **Daemon-restart recovery no longer discards a hook that arrives while it is
+  probing.** Recovery asks the agent adapter to re-derive a stale status, and
+  that answer is computed from a snapshot taken before the tmux probes run. It
+  was then applied even when a hook had moved the session in the meantime, so a
+  turn that ended mid-recovery could be overwritten by the older reading. The
+  answer is now withheld whenever the live status has moved since the snapshot,
+  which is the rule the no-adapter fallback already followed. Affects every
+  agent kind. Claude Code and opencode sessions are
+  unchanged.
+
 ## 0.11.0
 
 ### Fixes

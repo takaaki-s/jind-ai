@@ -1519,6 +1519,44 @@ Common pitfalls and caveats that agents tend to fall into.
   Codex sandbox prompt shown on the first launch in a given cwd; it is
   unrelated to `/hooks` and answered independently.
 
+- **`PermissionRequest` maps to `thinking`, not `permission`.** The event names
+  an approval path being entered; it does not report that a human was asked.
+  Nothing downstream can narrow it either: `jin hook` parses five fields off the
+  hook's stdin JSON (`session_id`, `hook_event_name`, `notification_type`,
+  `cwd`, `stop_reason`) and Manager forwards four of them, so a reviewer or a
+  decision — if Codex reported one — is dropped before the mapping runs.
+
+  Stickiness does not separate the two: neither leaves on a timer, since the 30s
+  no-hook fallback fires only from `running`. What separates them is what acts on
+  the claim. Nothing reads `thinking` as more than "a turn is under way", while
+  three things read `permission` as "a human is being waited on": a permission
+  `JIN_NOTIFY_KIND` goes to plugins, `wait --until idle,permission` returns as
+  if the turn had reached a decision point, and `respond` is pointed at a session
+  this adapter cannot drive — `DetectBlock` returns `BlockNone` always
+  (`internal/agent/codex/agent.go`; Codex's approval dialog has not been
+  measured). `Stop` stays the only authoritative idle transition.
+
+  **What that gives up:** a codex session never reaches `permission` from a hook,
+  so `jin session wait --until permission` will not fire for one and no
+  `permission` `JIN_NOTIFY_KIND` reaches plugins on a codex session. A human
+  approval that really is waiting reads as `thinking`, which stretches that
+  status past the "Processing" gloss in
+  [session-lifecycle.md](session-lifecycle.md).
+
+  **What is not measured:** which Codex approval paths resolve without asking a
+  human, and whether an approval is always followed by another hook. No recording
+  of that payload exists in this repo (90 tracked files under a `testdata/`
+  directory; the only `permission*` ones are Claude pane captures), so the cases
+  in `status_test.go` are synthetic event orderings, not fixtures.
+
+  Recovery carries the other half: the adapter's `"recover"` branch normalises a
+  **persisted** `permission` to `thinking` and returns a false verdict for every
+  other status, since `Interpret` can no longer produce the value and
+  `applyRecovery`'s fallback would restore it verbatim on each restart. That
+  verdict re-derives nothing from the agent, which is what `applyRecovery`'s
+  live-status guard is for — see the recovery section of
+  [session-lifecycle.md](session-lifecycle.md#recovery-on-daemon-restart).
+
 - **jind-ai forces two `-c` overrides on every Codex spawn** —
   `disable_paste_burst=true` so a large input is not folded into a
   `[Pasted text …]` placeholder that hides the prompt tail from verify, and
