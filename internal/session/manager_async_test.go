@@ -582,6 +582,8 @@ func hookFailGitRunner() *scriptedGitRunner {
 				return []byte("refs/remotes/origin/main\n"), nil
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 				return nil, nil
+			case isTestResolveCommit(args):
+				return []byte(testReviewBaseOID + "\n"), nil
 			case len(args) >= 1 && args[0] == "rev-parse":
 				return nil, fmt.Errorf("exit status 1")
 			case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":

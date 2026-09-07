@@ -257,6 +257,14 @@ func TestHandleNew_ConcurrentSerializedByCreateMu(t *testing.T) {
 // leads to MarkCreationFailed rather than an early-return failure elsewhere.
 type failingAddWorktreeRunner struct{}
 
+const daemonTestReviewBaseOID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func isDaemonTestResolveCommit(args []string) bool {
+	return len(args) == 5 && args[0] == "rev-parse" &&
+		args[1] == "--verify" && args[2] == "--quiet" &&
+		args[3] == "--end-of-options" && args[4] == "origin/main^{commit}"
+}
+
 func (failingAddWorktreeRunner) Run(dir string, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
 	switch {
@@ -264,6 +272,8 @@ func (failingAddWorktreeRunner) Run(dir string, args ...string) ([]byte, error) 
 		return []byte("refs/remotes/origin/main\n"), nil
 	case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 		return nil, nil
+	case isDaemonTestResolveCommit(args):
+		return []byte(daemonTestReviewBaseOID + "\n"), nil
 	case len(args) >= 1 && args[0] == "rev-parse":
 		return nil, errors.New("exit status 1") // branch does not exist
 	case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":
@@ -290,6 +300,8 @@ func (r *overlapDetectingRunner) Run(dir string, args ...string) ([]byte, error)
 		return []byte("refs/remotes/origin/main\n"), nil
 	case len(args) >= 2 && args[0] == "worktree" && args[1] == "prune":
 		return nil, nil
+	case isDaemonTestResolveCommit(args):
+		return []byte(daemonTestReviewBaseOID + "\n"), nil
 	case len(args) >= 1 && args[0] == "rev-parse":
 		return nil, errors.New("exit status 1")
 	case len(args) >= 2 && args[0] == "worktree" && args[1] == "add":

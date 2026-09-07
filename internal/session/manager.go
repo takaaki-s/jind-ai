@@ -543,6 +543,7 @@ type CreateOptions struct {
 type worktreeProvisioning struct {
 	worktreePath string
 	branch       string
+	reviewBase   ReviewBase
 	warning      string
 	undo         func()
 }
@@ -575,6 +576,11 @@ func (m *Manager) provisionWorktree(sessionID string, opts CreateOptions) (workt
 		} else {
 			base = detected
 		}
+	}
+	requestedBaseRef := "origin/" + base
+	resolvedBaseOID, err := m.gitClient.ResolveCommit(opts.WorkDir, requestedBaseRef)
+	if err != nil {
+		return out, fmt.Errorf("resolving worktree base %q: %w", requestedBaseRef, err)
 	}
 
 	originalRepoDir := opts.WorkDir
@@ -633,7 +639,10 @@ func (m *Manager) provisionWorktree(sessionID string, opts CreateOptions) (workt
 		return out, fmt.Errorf("creating worktree parent dir: %w", err)
 	}
 
-	if err := m.gitClient.AddWorktree(originalRepoDir, branch, worktreePath, "origin/"+base); err != nil {
+	// Create from the exact object we resolved above. Reusing the moving ref
+	// here would let a concurrent branch update make the checkout disagree
+	// with the review evidence we persist.
+	if err := m.gitClient.AddWorktree(originalRepoDir, branch, worktreePath, resolvedBaseOID); err != nil {
 		return out, fmt.Errorf("git worktree add: %w", err)
 	}
 
@@ -699,6 +708,10 @@ func (m *Manager) provisionWorktree(sessionID string, opts CreateOptions) (workt
 
 	out.worktreePath = worktreePath
 	out.branch = branch
+	out.reviewBase = ReviewBase{
+		RequestedRef: requestedBaseRef,
+		CommitOID:    resolvedBaseOID,
+	}
 	out.warning = hookWarning
 	out.undo = undo
 	return out, nil
@@ -765,6 +778,14 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 		// root at this point), which yields the same repo name the final
 		// worktree path will; ProvisionAsync recomputes it anyway.
 		RepoName: ResolveRepoName(opts.WorkDir),
+	}
+	if !opts.Worktree {
+		// A session opened in a normal directory (or pointed at a worktree
+		// created elsewhere) has no creation point observed by jind-ai. Record
+		// the limitation explicitly instead of inferring a merge-base later.
+		session.ReviewBase = ReviewBase{
+			UnavailableReason: ReviewBaseUnavailableNotManagedWorktree,
+		}
 	}
 
 	m.mu.Lock()
@@ -841,7 +862,13 @@ func (m *Manager) ProvisionAsync(sess *Session, opts CreateOptions) (string, err
 		prov.undo()
 		return "", fmt.Errorf("session already exists for directory: %s (session: %s)", prov.worktreePath, s.Description)
 	}
+	if !live.ReviewBase.IsZero() {
+		m.mu.Unlock()
+		prov.undo()
+		return "", fmt.Errorf("session %s already has an immutable review base", sess.ID)
+	}
 	live.WorkDir = prov.worktreePath
+	live.ReviewBase = prov.reviewBase
 	// Recomputed against the final path rather than left on ReserveCreation's
 	// seed. The two agree in every reachable case today, so this changes nothing
 	// on its own; it keeps the pair honest, since WorkDir is being reassigned on

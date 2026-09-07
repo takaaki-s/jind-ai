@@ -97,6 +97,7 @@ func (s *Store) Save(session Session) error {
 	}
 
 	session.Attention = mergeAttention(session.Attention, persistedAttention(path))
+	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
 
 	data, err := json.MarshalIndent(&session, "", "  ")
 	if err != nil {
@@ -104,6 +105,27 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+// persistedReviewBase reads the immutable creation evidence already on disk.
+// A missing or unreadable record contributes no evidence, matching the first
+// Save case. Once present, Save always keeps it over the caller's snapshot.
+func persistedReviewBase(path string) ReviewBase {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] review base probe failed for %s: %v", path, err)
+		}
+		return ReviewBase{}
+	}
+	var probe struct {
+		ReviewBase ReviewBase `json:"review_base"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] review base probe could not parse %s: %v", path, err)
+		return ReviewBase{}
+	}
+	return probe.ReviewBase
 }
 
 // persistedAttention reads just the attention member of an existing session

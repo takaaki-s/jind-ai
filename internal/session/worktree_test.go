@@ -278,4 +278,7 @@ func TestProvisionWorktree_PlacesWorktreesUnderTheStateDirTheManagerWasBuiltOver
 	if addCall[4] != want {
 		t.Errorf("`git worktree add` path = %q, want %q", addCall[4], want)
 	}
+	if addCall[5] != testReviewBaseOID {
+		t.Errorf("`git worktree add` base = %q, want immutable OID %q", addCall[5], testReviewBaseOID)
+	}
 }
