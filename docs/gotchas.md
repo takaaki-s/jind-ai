@@ -1853,16 +1853,20 @@ Common pitfalls and caveats that agents tend to fall into.
 
   Completion attention is exempted rather than fixed. `Store.Save` serialises
   its read/merge/write with a private Store mutex and merges the candidate's
-  attention with what is on disk component-wise: `done` beats `none`, and both
-  counters take their maximum. Attention has no reset or decrement, so the
-  merge is associative, commutative and idempotent, and the result is the later
-  of the two whichever order they land in. This protects attention from *any*
-  stale full-session snapshot — a description or CWD save carrying an old copy
-  included — and repairs nothing else.
+  attention with what is on disk: the larger generation owns the state; within
+  one generation `ready-for-review` beats `done`; and both receipt counters
+  take their maximum. This protects attention from *any* stale full-session
+  snapshot — including a review result for the prior completion — while still
+  letting a newer completion reset readiness to `done`.
+
+  Review facts have the same protection. The larger attention generation wins,
+  then the later `observed_at` within that generation. A pending marker for a
+  new completion therefore prevents an old available result from returning,
+  and a status/CWD save cannot roll a completed assessment back.
 
   A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
   one, and assert the file did not regress
-  (`internal/session/store_attention_test.go`).
+  (`internal/session/store_attention_test.go`, `review_facts_test.go`).
 
 - **An acknowledgement whose save fails survives only until the daemon
   restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and

@@ -8,7 +8,9 @@ const ReviewBaseUnavailableNotManagedWorktree = "not_managed_worktree"
 
 // ReviewBase is the immutable starting point for reviewing one session's
 // managed worktree. RequestedRef records the fully-qualified ref jind-ai
-// resolved at creation time; CommitOID is the full object ID returned by git.
+// resolved at creation time; CommitOID is the full object ID returned by git;
+// WorktreePath is the checkout jind-ai created. The path is evidence too:
+// Session.WorkDir may later follow an agent into a different repository.
 //
 // A non-empty UnavailableReason is an explicit negative result for a newly
 // created session. The zero value is reserved for legacy records whose review
@@ -16,6 +18,7 @@ const ReviewBaseUnavailableNotManagedWorktree = "not_managed_worktree"
 type ReviewBase struct {
 	RequestedRef      string `json:"requested_ref,omitempty"`
 	CommitOID         string `json:"commit_oid,omitempty"`
+	WorktreePath      string `json:"worktree_path,omitempty"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 

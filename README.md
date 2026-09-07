@@ -285,8 +285,10 @@ A session's status says what its agent is doing right now. That is a poor way
 to find the session that finished while you were reading another one: it went
 `idle`, and so did every session that has been sitting there all afternoon.
 
-So a finished turn also leaves a receipt. The TUI marks the session with an
-orange dot and floats it to the top of its fleet.
+So a finished turn also leaves a receipt. The TUI marks it with an orange dot.
+For a managed worktree, jind-ai then compares the worktree with the exact base
+recorded at creation; a non-empty local delta changes the mark to a green
+diamond. Either mark floats the session to the top of its fleet.
 
 Three things clear it, and all three are you saying you looked: **attaching to
 the session from the TUI** (`Enter`, a second click on the row, or picking it in
@@ -298,11 +300,21 @@ not sending the next prompt, not a plugin calling `jin session focus`. A turn
 that finishes while you are reading a different session is still marked when you
 come back.
 
-The receipt says a turn ended without an error. It says nothing about whether
-the work is any good.
+`done` says only that a turn ended without an error. `ready-for-review` adds one
+bounded fact: the managed worktree has a non-empty local delta from its recorded
+base. It is not approval, a test result, or a claim that the work is good.
+
+Assessment happens on completion. Refresh the cached counts explicitly with:
+
+```bash
+jin session review <selector>
+```
+
+This is local and read-only: it does not fetch, run tests, or retain filenames
+or patch contents.
 
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
-`seen` — carries it:
+`seen`, `review` — carries the attention and, once assessed, `review_facts`.
 
 ```json
 {

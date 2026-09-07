@@ -325,6 +325,14 @@ Who touches it:
 - The TUI renders one fixed-width cell for it and floats unseen sessions to the
   top of their fleet. It is display-only there: `session.SortInfos`, the CLI
   list order and the switch-session popup ranking are unchanged.
+- For managed worktrees, an applied completion schedules a bounded git
+  assessment against `Session.ReviewBase`. A non-empty delta promotes that
+  generation from `done` to `ready-for-review`; an orange dot means completed
+  and a green diamond means locally reviewable. This is not an approval or a
+  test result.
+- `Session.ReviewFacts` stores only aggregate local evidence and is refreshed
+  by completion or the explicit `review-refresh` / `jin session review` path.
+  `Manager.List` remains free of git subprocesses.
 
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).

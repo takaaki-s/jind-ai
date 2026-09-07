@@ -459,6 +459,25 @@ func (c *Client) MarkSeen(id string) (*session.Info, error) {
 	return &info, nil
 }
 
+// RefreshReview recomputes and returns the bounded local review facts for a
+// session. It never fetches or runs repository checks.
+func (c *Client) RefreshReview(id string) (*session.Info, error) {
+	data, _ := json.Marshal(IDRequest{ID: id})
+	resp, err := c.send(Request{Action: "review-refresh", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+
+	var info session.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler

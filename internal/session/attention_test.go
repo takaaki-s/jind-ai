@@ -16,6 +16,7 @@ func TestAttention_Unseen(t *testing.T) {
 		{"done and unacknowledged", Attention{State: AttentionDone, Generation: 1}, true},
 		{"done and acknowledged", Attention{State: AttentionDone, Generation: 1, SeenGeneration: 1}, false},
 		{"completion after seen", Attention{State: AttentionDone, Generation: 2, SeenGeneration: 1}, true},
+		{"ready and unacknowledged", Attention{State: AttentionReadyForReview, Generation: 2, SeenGeneration: 1}, true},
 		// A generation without the state is not a receipt. Nothing produces
 		// this, and the derivation must not invent one from a stray counter.
 		{"generation without state", Attention{Generation: 3}, false},
@@ -26,6 +27,30 @@ func TestAttention_Unseen(t *testing.T) {
 				t.Errorf("Unseen() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAttention_ReviewAssessmentAndNextCompletion(t *testing.T) {
+	a := Attention{State: AttentionDone, Generation: 3}
+	a = a.readyForReview(3)
+	if a.State != AttentionReadyForReview || !a.Unseen() {
+		t.Fatalf("ready assessment = %+v", a)
+	}
+	a = a.completed()
+	if a.State != AttentionDone || a.Generation != 4 {
+		t.Fatalf("next completion = %+v, want done generation 4", a)
+	}
+}
+
+func TestMergeAttention_ReadyWinsOnlyWithinItsGeneration(t *testing.T) {
+	ready := Attention{State: AttentionReadyForReview, Generation: 2}
+	doneSame := Attention{State: AttentionDone, Generation: 2}
+	if got := mergeAttention(ready, doneSame); got.State != AttentionReadyForReview {
+		t.Fatalf("same-generation merge = %+v, want ready", got)
+	}
+	doneNewer := Attention{State: AttentionDone, Generation: 3}
+	if got := mergeAttention(ready, doneNewer); got != doneNewer {
+		t.Fatalf("new-generation merge = %+v, want %+v", got, doneNewer)
 	}
 }
 

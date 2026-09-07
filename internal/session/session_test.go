@@ -25,6 +25,7 @@ func TestToInfo_CopiesAllFields(t *testing.T) {
 		ReviewBase: ReviewBase{
 			RequestedRef: "origin/main",
 			CommitOID:    testReviewBaseOID,
+			WorktreePath: "/home/user/project",
 		},
 
 		// Runtime fields (should NOT appear in Info but CurrentWorkDir/CurrentBranch are mapped)
@@ -128,6 +129,7 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 		ReviewBase: ReviewBase{
 			RequestedRef: "origin/main",
 			CommitOID:    testReviewBaseOID,
+			WorktreePath: "/tmp/work",
 		},
 	}
 
@@ -191,6 +193,7 @@ func TestReviewBase_InfoJSONProjection(t *testing.T) {
 		ReviewBase: ReviewBase{
 			RequestedRef: "origin/main",
 			CommitOID:    testReviewBaseOID,
+			WorktreePath: "/tmp/worktree",
 		},
 	}).ToInfo()
 	data, err := json.Marshal(info)

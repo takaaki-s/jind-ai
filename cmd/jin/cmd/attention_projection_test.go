@@ -12,8 +12,8 @@ import (
 // attention object must be identical in all of them. A projection that drifted
 // between them would break scripts that read one and act on another.
 //
-// The five here are the whole population: `grep -n "func render.*JSON"
-// cmd/jin/cmd/*.go` plus seen.go's direct writeJSON, filtered to those taking
+// The six here are the whole population: `grep -n "func render.*JSON"
+// cmd/jin/cmd/*.go` plus seen/review's direct writeJSON, filtered to those taking
 // a *session.Info or []session.Info. The rest (kill/delete, send, respond,
 // output, result, daemon) print shapes of their own and carry no attention.
 func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
@@ -26,6 +26,12 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 			Generation:     4,
 			SeenGeneration: 3,
 			Unseen:         true,
+		},
+		ReviewFacts: session.ReviewFacts{
+			Status: session.ReviewFactsAvailable, AttentionGeneration: 4,
+			BaseCommit:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			HeadCommit:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			ChangedFiles: 2, Additions: 5, Deletions: 1,
 		},
 	}
 
@@ -55,6 +61,11 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 			err := writeJSON(&buf, &info)
 			return buf.String(), err
 		},
+		"review": func() (string, error) {
+			var buf bytes.Buffer
+			err := writeJSON(&buf, &info)
+			return buf.String(), err
+		},
 	}
 
 	want := map[string]any{
@@ -79,8 +90,30 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 					t.Errorf("attention[%q] = %v, want %v", k, got[k], v)
 				}
 			}
+			review := reviewFactsObjectIn(t, out)
+			if review["status"] != "available" || review["changed_files"] != float64(2) ||
+				review["attention_generation"] != float64(4) {
+				t.Errorf("review_facts = %v", review)
+			}
 		})
 	}
+}
+
+func reviewFactsObjectIn(t *testing.T, out string) map[string]any {
+	t.Helper()
+	var single struct {
+		ReviewFacts map[string]any `json:"review_facts"`
+	}
+	if err := json.Unmarshal([]byte(out), &single); err == nil && single.ReviewFacts != nil {
+		return single.ReviewFacts
+	}
+	var listed []struct {
+		ReviewFacts map[string]any `json:"review_facts"`
+	}
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed) != 1 {
+		t.Fatalf("review facts missing from output: %s", out)
+	}
+	return listed[0].ReviewFacts
 }
 
 // attentionObjectIn digs the attention object out of whichever shape the

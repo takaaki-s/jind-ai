@@ -49,11 +49,12 @@ again can still be carrying one from before.
 
 ```go
 Attention (persisted, internal/session/attention.go)
-├─ State          "" | "done"   // "" is the zero value, so old records need no migration
+├─ State          "" | "done" | "ready-for-review"
+│                            // "" is the zero value, so old records need no migration
 ├─ Generation     uint64        // one per applied completion
 └─ SeenGeneration uint64        // the one the operator acknowledged
 
-unseen = State == "done" && Generation > SeenGeneration   // derived, never stored
+unseen = State != "" && Generation > SeenGeneration   // derived, never stored
 ```
 
 Transitions:
@@ -61,6 +62,7 @@ Transitions:
 | Input | Attention result |
 |---|---|
 | An applied verdict whose `Notify` is `NotifyTaskComplete` **and** whose status actually moved | `done`, `Generation + 1`, `SeenGeneration` untouched |
+| The bounded local review assessment finds a non-empty delta for that same generation | `ready-for-review`; generation and seen cursor untouched |
 | The same verdict for a turn that already landed (status did not move) | unchanged |
 | `NotifyError`, permission, prompt, tool, CWD, recovery, kill, idle fallback | unchanged |
 | `Manager.MarkSeen` (`attention-seen` / `jin session seen` / a landed TUI attach) | `SeenGeneration = Generation`; state, generation and status untouched |
@@ -71,6 +73,23 @@ no adapter has to know attention exists. It is applied inside the same
 `Manager.mu` critical section as the status verdict, and it is the same
 "applied transition" predicate that gates the save and the plugin
 `status_changed` event.
+
+For a jind-ai-managed worktree, the completion transition also schedules a
+bounded local comparison with its immutable `ReviewBase`. The git subprocesses
+run outside `Manager.mu`, under one shared five-second deadline, a four-worker
+concurrency cap, per-command output caps, and a 10,000-path cap. They never
+fetch, invoke a shell, external diff drivers or textconv, and never run project
+checks. A non-empty final delta promotes the same attention generation to
+`ready-for-review`; no delta or unavailable evidence leaves it at `done`.
+
+The persisted `ReviewFacts` cache records base/head/branch, changed, binary and
+untracked file counts, additions/deletions, commit count and observation time.
+It is refreshed only on completion or `jin session review`; `Manager.List`
+performs no git work. Sessions not created as managed worktrees explicitly
+report `not_managed_worktree`, and legacy records remain `legacy_unknown`
+instead of synthesizing a base. Managed records created by protocol v4 have a
+commit but no immutable checkout path; they report `worktree_path_unknown`
+rather than guessing from the mutable `Session.WorkDir`.
 
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
@@ -112,7 +131,15 @@ Session (persisted)
 ├─ ReviewBase                      // Immutable review evidence; zero only for legacy records
 │  ├─ RequestedRef       string    // Fully-qualified ref resolved at managed-worktree creation
 │  ├─ CommitOID          string    // Full 40/64-character commit object ID
+│  ├─ WorktreePath       string    // Immutable path of the checkout jind-ai created
 │  └─ UnavailableReason  string    // `not_managed_worktree` for newly created ordinary sessions
+├─ Attention                       // Completion generation, state and seen cursor
+├─ ReviewFacts                     // Bounded cached comparison for one attention generation
+│  ├─ Status              string   // pending | available | unavailable
+│  ├─ AttentionGeneration uint64
+│  ├─ BaseCommit/HeadCommit/Branch
+│  ├─ ChangedFiles/Additions/Deletions/BinaryFiles/UntrackedFiles/CommitCount
+│  └─ ObservedAt           time.Time
 ├─ AgentKind             string    // Adapter identifier ("claude" etc.); always non-empty in persisted form
 ├─ AgentSessionID        string    // Adapter-side persistent id (CC --session-id / --resume value)
 ├─ AgentSessionStarted   bool      // Flipped once the agent has spawned (at spawn, not on hook arrival)
@@ -185,7 +212,7 @@ an immutable review base before the session becomes usable:
 3. Derive the worktree name/branch and resolve the worktree path from `WorktreeConfig.BaseDir`
 4. `git worktree add <path> <resolved-oid>` — the OID, rather than the moving branch ref, guarantees the checkout and recorded review base agree. On success, a later failure rolls the worktree and branch back (`RemoveWorktree` + `DeleteBranch`)
 5. **Post-create hook** (see below) — runs synchronously, still inside the rollback window opened in step 4
-6. Persist `ReviewBase{RequestedRef, CommitOID}` together with the final worktree path. The field is assigned once; `Store.Save` also preserves the first value against stale snapshots
+6. Persist `ReviewBase{RequestedRef, CommitOID, WorktreePath}`. The field is assigned once; `Store.Save` also preserves the first value against stale snapshots
 
 New sessions created without `Worktree: true` persist
 `UnavailableReason=not_managed_worktree`. This includes sessions pointed at a

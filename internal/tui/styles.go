@@ -54,6 +54,10 @@ var (
 			Foreground(warningColor).
 			Bold(true)
 
+	reviewReadyStyle = lipgloss.NewStyle().
+				Foreground(successColor).
+				Bold(true)
+
 	// Status styles - Tokyo Night inspired
 	thinkingStyle = lipgloss.NewStyle().
 			Foreground(purpleColor).
