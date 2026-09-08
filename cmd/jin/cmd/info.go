@@ -78,6 +78,13 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 		}
 		fmt.Fprintln(tw)
 	}
+	if info.CheckReport.Status != "" {
+		fmt.Fprintf(tw, "Checks:\t%s (%s)", info.CheckReport.Status, info.CheckReport.Source)
+		if info.CheckReport.Stale {
+			fmt.Fprint(tw, " — stale")
+		}
+		fmt.Fprintln(tw)
+	}
 
 	fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format("2006-01-02 15:04:05"))
 	if !info.LastActiveAt.IsZero() {

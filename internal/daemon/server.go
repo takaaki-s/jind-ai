@@ -315,6 +315,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleAttentionSeen(req.Data)
 	case "review-refresh":
 		return s.handleReviewRefresh(req.Data)
+	case "check-report":
+		return s.handleCheckReport(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -882,6 +884,11 @@ type IDRequest struct {
 	ID string `json:"id"`
 }
 
+type CheckReportRequest struct {
+	ID     string              `json:"id"`
+	Status session.CheckStatus `json:"status"`
+}
+
 // handleAttentionSeen acknowledges a session's completion receipt.
 //
 // Deliberately absent from readOnlyActions: a timeout leaves the outcome
@@ -918,6 +925,26 @@ func (s *Server) handleReviewRefresh(data json.RawMessage) Response {
 	}
 
 	info, err := s.manager.RefreshReview(req.ID)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	respData, _ := json.Marshal(info)
+	return Response{Success: true, Data: respData}
+}
+
+// handleCheckReport accepts an explicit aggregate result. It is deliberately
+// absent from readOnlyActions: reporting persists evidence, and a timed-out
+// request may have committed it.
+func (s *Server) handleCheckReport(data json.RawMessage) Response {
+	var req CheckReportRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+
+	info, err := s.manager.ReportChecks(req.ID, req.Status)
 	if err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}

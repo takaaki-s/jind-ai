@@ -20,4 +20,6 @@ package daemon
 // v4: session.Info responses can include an immutable review_base projection.
 // v5: session.Info responses can include cached review_facts; add the bounded
 // review-refresh action and ready-for-review attention state.
-const ProtocolVersion = 5
+// v6: review_facts include a workspace fingerprint; session.Info can include a
+// reported check_report; add the check-report action and checks-failed state.
+const ProtocolVersion = 6

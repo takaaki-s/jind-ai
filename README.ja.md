@@ -178,11 +178,12 @@ TUI 内で `n` キーを押してセッション作成、`Enter` でアタッチ
 `jin session respond` では応答できず、タイマーで解除されることもありません。pane に
 アタッチして操作してください。Claude Code と opencode は影響を受けません。
 
-TUI の一覧では、この列の左隣にもう 1 列あります。オレンジの ● は**ステータスではなく**、
-まだ確認していない完了ターンがあることを表します。TUI からそのセッションに attach する
-と消えます。アクションパレットの「mark completion seen」と
-`jin session seen <selector>` でも消えます。消えない操作を含む詳細は
-[完了したターン](#完了したターン)にあります。
+TUI の一覧では、この列の左隣にもう 1 列あります。これは**ステータスではありません**。
+オレンジの ● は未確認の完了ターン、緑の ◆ は空でないローカルレビュー差分、赤の ✕ は
+現在の workspace fingerprint に対して明示的に報告されたチェック失敗を表します。
+TUI からそのセッションに attach すると印は消えます。アクションパレットの
+「mark completion seen」と `jin session seen <selector>` でも消えます。
+消えない操作を含む詳細は[完了したターン](#完了したターン)にあります。
 
 ## CLI コマンド
 
@@ -243,6 +244,10 @@ jin session output <session-name> --last 3
 # 完了したターンを確認済みにする（TUI のドットを消す）
 jin session seen <session-name>
 
+# jind-ai の外で実行したチェック結果を報告する
+jin session check-report <session-name> passed
+jin session check-report <session-name> failed
+
 # セッション終了
 jin session kill <session-name>
 
@@ -264,9 +269,10 @@ jin cleanup stopped --dry-run   # 削除対象の確認
 
 そこで、ターンが終わると受領印が残ります。TUI はそのセッションにオレンジのドットを付けます。
 managed worktree では、作成時に記録した正確な基点との差分も確認し、ローカルの変更があれば
-緑の菱形へ変えます。どちらの印もセッションを fleet 内の先頭へ浮かせます。
+緑の菱形へ変えます。現在の workspace に対するチェック失敗が報告されると赤の ✕ に変わります。
+どの印もセッションを fleet 内の先頭へ浮かせます。
 
-ドットを消すのは 3 つで、どれも「自分が見た」と言う操作です:
+印を消すのは 3 つで、どれも「自分が見た」と言う操作です:
 **TUI からそのセッションに attach する**（`Enter`、行の 2 度目のクリック、
 switch-session ポップアップでの選択）、アクションパレットの
 「mark completion seen」、`jin session seen <selector>`。
@@ -276,8 +282,9 @@ switch-session ポップアップでの選択）、アクションパレット�
 読んでいる間に終わったターンは、戻ってきたときにまだ印が付いています。
 
 `done` は「ターンがエラーなく終わった」ことだけを表します。`ready-for-review` はさらに、
-managed worktree に記録済み基点からのローカル差分があることを表します。承認、テスト結果、
-成果物の品質判定ではありません。
+managed worktree に記録済み基点からのローカル差分があることを表します。赤の ✕ は、その
+workspace fingerprint に対して明示的に報告されたチェックが失敗したことを表します。
+いずれも承認や成果物の品質判定ではありません。
 
 完了時に自動評価されます。キャッシュした集計は次のコマンドで明示的に更新できます:
 
@@ -287,16 +294,30 @@ jin session review <selector>
 
 これはローカルの読み取り専用操作です。fetch、テスト実行、ファイル名やpatch本文の保存は行いません。
 
+jind-ai はリポジトリのテスト方法を推測しません。適切なチェックを自分で、または連携機能から
+実行したあと、集約結果を `jin session check-report <selector> passed|failed` で報告します。
+報告時にはローカルの workspace fingerprint を更新して、その結果を現在の内容に紐付けます。
+その後の完了または `session review` で異なる内容が観測されると結果は `stale` になり、
+古い、または状態不明のチェック結果は `ready-for-review` を妨げません。
+
 `--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
-`seen` / `review` — のいずれにもattentionが載り、評価後は`review_facts`も載ります:
+`seen` / `review` / `check-report` — のいずれにもattentionが載り、評価後は
+`review_facts` と `check_report` も載ります:
 
 ```json
 {
   "attention": {
-    "state": "done",
+    "state": "checks-failed",
     "generation": 4,
     "seen_generation": 3,
     "unseen": true
+  },
+  "check_report": {
+    "source": "reported",
+    "status": "failed",
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "reported_at": "2026-09-08T12:00:00Z",
+    "stale": false
   }
 }
 ```

@@ -99,6 +99,8 @@ func (s *Store) Save(session Session) error {
 	session.Attention = mergeAttention(session.Attention, persistedAttention(path))
 	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
+	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
+	session.Attention = reconcileCheckAttention(session.Attention, session.ReviewFacts, session.CheckReport)
 
 	data, err := json.MarshalIndent(&session, "", "  ")
 	if err != nil {
@@ -106,6 +108,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedCheckReport(path string) CheckReport {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] check report probe failed for %s: %v", path, err)
+		}
+		return CheckReport{}
+	}
+	var probe struct {
+		CheckReport CheckReport `json:"check_report"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] check report probe could not parse %s: %v", path, err)
+		return CheckReport{}
+	}
+	return probe.CheckReport
 }
 
 func persistedReviewFacts(path string) ReviewFacts {

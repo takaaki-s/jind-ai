@@ -18,6 +18,9 @@ const (
 	// AttentionReadyForReview records that the completed generation has a
 	// non-empty, locally inspected delta from its immutable review base.
 	AttentionReadyForReview AttentionState = "ready-for-review"
+	// AttentionChecksFailed records that the latest reported aggregate checks
+	// failed for the currently observed workspace fingerprint.
+	AttentionChecksFailed AttentionState = "checks-failed"
 )
 
 // Attention is the persisted completion receipt. Generation counts applied
@@ -46,7 +49,7 @@ type AttentionInfo struct {
 
 // Unseen reports a completion the operator has not acknowledged.
 func (a Attention) Unseen() bool {
-	return (a.State == AttentionDone || a.State == AttentionReadyForReview) &&
+	return (a.State == AttentionDone || a.State == AttentionReadyForReview || a.State == AttentionChecksFailed) &&
 		a.Generation > a.SeenGeneration
 }
 
@@ -96,7 +99,9 @@ func mergeAttention(a, b Attention) Attention {
 		// snapshot observed ready-for-review, a stale done snapshot cannot undo
 		// it. A later completion has a larger generation and takes the branch
 		// above, resetting the state to done as intended.
-		if a.State == AttentionReadyForReview || b.State == AttentionReadyForReview {
+		if a.State == AttentionChecksFailed || b.State == AttentionChecksFailed {
+			state = AttentionChecksFailed
+		} else if a.State == AttentionReadyForReview || b.State == AttentionReadyForReview {
 			state = AttentionReadyForReview
 		} else if a.State == AttentionDone || b.State == AttentionDone {
 			state = AttentionDone

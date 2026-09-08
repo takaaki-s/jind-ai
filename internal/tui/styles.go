@@ -58,6 +58,10 @@ var (
 				Foreground(successColor).
 				Bold(true)
 
+	checksFailedStyle = lipgloss.NewStyle().
+				Foreground(errorColor).
+				Bold(true)
+
 	// Status styles - Tokyo Night inspired
 	thinkingStyle = lipgloss.NewStyle().
 			Foreground(purpleColor).
