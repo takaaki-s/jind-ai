@@ -317,6 +317,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleReviewRefresh(req.Data)
 	case "check-report":
 		return s.handleCheckReport(req.Data)
+	case "review-disposition":
+		return s.handleReviewDisposition(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -889,6 +891,11 @@ type CheckReportRequest struct {
 	Status session.CheckStatus `json:"status"`
 }
 
+type ReviewDispositionRequest struct {
+	ID       string                 `json:"id"`
+	Decision session.ReviewDecision `json:"decision"`
+}
+
 // handleAttentionSeen acknowledges a session's completion receipt.
 //
 // Deliberately absent from readOnlyActions: a timeout leaves the outcome
@@ -945,6 +952,25 @@ func (s *Server) handleCheckReport(data json.RawMessage) Response {
 	}
 
 	info, err := s.manager.ReportChecks(req.ID, req.Status)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	respData, _ := json.Marshal(info)
+	return Response{Success: true, Data: respData}
+}
+
+// handleReviewDisposition accepts an explicit human decision. It is absent
+// from readOnlyActions because a timeout may have persisted the decision.
+func (s *Server) handleReviewDisposition(data json.RawMessage) Response {
+	var req ReviewDispositionRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+
+	info, err := s.manager.ReportReviewDisposition(req.ID, req.Decision)
 	if err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}

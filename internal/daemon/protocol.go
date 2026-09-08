@@ -22,4 +22,6 @@ package daemon
 // review-refresh action and ready-for-review attention state.
 // v6: review_facts include a workspace fingerprint; session.Info can include a
 // reported check_report; add the check-report action and checks-failed state.
-const ProtocolVersion = 6
+// v7: session.Info can include a fingerprint-bound review_disposition; add the
+// review-disposition action.
+const ProtocolVersion = 7

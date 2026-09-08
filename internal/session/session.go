@@ -103,6 +103,11 @@ type Session struct {
 	// caller. Its freshness is derived from ReviewFacts, without I/O on reads.
 	CheckReport CheckReport `json:"check_report,omitzero"`
 
+	// ReviewDisposition is the latest explicit human review decision. It is
+	// bound to ReviewFacts by workspace fingerprint and never implies merge or
+	// cleanup authorization.
+	ReviewDisposition ReviewDisposition `json:"review_disposition,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -163,9 +168,10 @@ type Info struct {
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
 	// none/seen.
-	Attention   AttentionInfo   `json:"attention,omitzero"`
-	ReviewFacts ReviewFacts     `json:"review_facts,omitzero"`
-	CheckReport CheckReportInfo `json:"check_report,omitzero"`
+	Attention         AttentionInfo         `json:"attention,omitzero"`
+	ReviewFacts       ReviewFacts           `json:"review_facts,omitzero"`
+	CheckReport       CheckReportInfo       `json:"check_report,omitzero"`
+	ReviewDisposition ReviewDispositionInfo `json:"review_disposition,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -220,6 +226,7 @@ func (s *Session) ToInfo() Info {
 		Attention:         attention.toInfo(),
 		ReviewFacts:       s.ReviewFacts,
 		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
+		ReviewDisposition: s.ReviewDisposition.toInfo(s.ReviewFacts),
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,

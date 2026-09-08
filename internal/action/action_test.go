@@ -9,15 +9,17 @@ import (
 
 func TestCoreActions_LabelStable(t *testing.T) {
 	want := map[string]string{
-		IDNew:           "new session",
-		IDKill:          "kill session",
-		IDDelete:        "delete session",
-		IDRefresh:       "refresh list",
-		IDVscode:        "open in vscode",
-		IDMarkSeen:      "mark completion seen",
-		IDHelp:          "shortcuts help",
-		IDSessionFilter: "switch session",
-		IDTogglePane:    "toggle sidebar",
+		IDNew:            "new session",
+		IDKill:           "kill session",
+		IDDelete:         "delete session",
+		IDRefresh:        "refresh list",
+		IDVscode:         "open in vscode",
+		IDMarkSeen:       "mark completion seen",
+		IDMarkReviewed:   "mark reviewed",
+		IDRequestChanges: "request changes",
+		IDHelp:           "shortcuts help",
+		IDSessionFilter:  "switch session",
+		IDTogglePane:     "toggle sidebar",
 	}
 
 	actions := CoreActions(KeyBindings{})
@@ -75,15 +77,17 @@ func TestCoreActions_EmptyKeyBindings(t *testing.T) {
 
 func TestCoreActions_NeedsSession(t *testing.T) {
 	want := map[string]bool{
-		IDNew:           false,
-		IDKill:          true,
-		IDDelete:        true,
-		IDRefresh:       false,
-		IDVscode:        true,
-		IDMarkSeen:      true,
-		IDHelp:          false,
-		IDTogglePane:    false,
-		IDSessionFilter: false,
+		IDNew:            false,
+		IDKill:           true,
+		IDDelete:         true,
+		IDRefresh:        false,
+		IDVscode:         true,
+		IDMarkSeen:       true,
+		IDMarkReviewed:   true,
+		IDRequestChanges: true,
+		IDHelp:           false,
+		IDTogglePane:     false,
+		IDSessionFilter:  false,
 	}
 
 	for _, a := range CoreActions(KeyBindings{}) {

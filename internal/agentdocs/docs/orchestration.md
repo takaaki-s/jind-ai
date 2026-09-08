@@ -248,6 +248,18 @@ non-empty delta from the creation-time base. Refresh it with
 result, or evidence that the implementation is correct — that is the next
 section.
 
+After you inspect that exact workspace, persist the human decision separately:
+
+```bash
+jin session review-disposition fix-login reviewed
+# or
+jin session review-disposition fix-login changes-requested
+```
+
+The command refreshes the workspace fingerprint first. Later content changes
+make the decision stale. It does not mark attention seen, merge, delete, or
+clean up the session.
+
 ## Accepting the work
 
 Do not forward a child's report as your own conclusion. For code changes,

@@ -87,7 +87,8 @@ checks. A non-empty final delta promotes the same attention generation to
 The persisted `ReviewFacts` cache records base/head/branch, a content-bound
 workspace fingerprint, changed, binary and untracked file counts,
 additions/deletions, commit count and observation time. It is refreshed only on
-completion, `jin session review`, or `jin session check-report`;
+completion, `jin session review`, `jin session check-report`, or
+`jin session review-disposition`;
 `Manager.List` performs no git work. Sessions not created as managed worktrees explicitly
 report `not_managed_worktree`, and legacy records remain `legacy_unknown`
 instead of synthesizing a base. Managed records created by protocol v4 have a
@@ -100,6 +101,15 @@ claim with `source=reported` and the observed fingerprint. jind-ai does not
 discover commands or execute tests. `CheckReportInfo.stale` is derived by
 comparing cached fingerprints, so list/info/TUI reads remain I/O-free. A stale
 or unknown report never produces `checks-failed`.
+
+`jin session review-disposition <selector> reviewed|changes-requested` is the
+explicit human review-decision path. Like check reporting, it refreshes bounded
+review facts and binds the claim to their workspace fingerprint. Unlike
+attention, it has no acknowledgement cursor: `seen` means only that a handoff
+was opened, while a current disposition means one exact non-empty workspace was
+assessed. Changed or unavailable later evidence projects the prior decision as
+stale. Recording either decision changes no attention generation or process
+status and grants no merge, delete, or cleanup permission.
 
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a

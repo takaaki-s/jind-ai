@@ -583,6 +583,10 @@ type worktreeDirtyMsg struct {
 	name      string
 }
 
+type reviewDispositionMsg struct {
+	err error
+}
+
 // Commands
 func (m *Model) fetchSessions() tea.Msg {
 	sessions, err := m.client.List()
@@ -1576,6 +1580,24 @@ func (m Model) handleMarkSeen() (tea.Model, tea.Cmd) {
 	return m, m.fetchSessions
 }
 
+// handleReviewDisposition records a decision for the cursor session and
+// refreshes immediately so the detail pane reflects the postcondition. It is
+// intentionally not a destructive confirmation path: no merge or cleanup is
+// coupled to a decision.
+func (m Model) handleReviewDisposition(decision session.ReviewDecision) (tea.Model, tea.Cmd) {
+	sess, ok := m.cursorSession()
+	if !ok || m.client == nil {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		_, err := m.client.ReportReviewDisposition(sess.ID, decision)
+		if err != nil {
+			err = fmt.Errorf("record review decision for %s: %w", sess.Description, err)
+		}
+		return reviewDispositionMsg{err: err}
+	}
+}
+
 // acknowledgeAttention clears the session's completion receipt and reports
 // whether the daemon took it. A failure surfaces on m.err: where this runs as
 // part of an attach the attach itself succeeded, so a dot that stays put needs
@@ -1637,6 +1659,10 @@ func (m Model) dispatchAction(id string) (tea.Model, tea.Cmd) {
 		return m.handleSessionFilter()
 	case action.IDMarkSeen:
 		return m.handleMarkSeen()
+	case action.IDMarkReviewed:
+		return m.handleReviewDisposition(session.ReviewDecisionReviewed)
+	case action.IDRequestChanges:
+		return m.handleReviewDisposition(session.ReviewDecisionChangesRequested)
 	}
 	// Plugin palette IDs are three-segment ("plugin:<name>:<action>");
 	// anything else — a core ID that missed the switch above, or a stale
@@ -2068,6 +2094,13 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deleteErrMsg:
 		delete(m.deletingIDs, msg.sessionID)
 		m.err = msg.err
+
+	case reviewDispositionMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		return m, m.fetchSessions
 
 	case errMsg:
 		m.processingMsg = ""
@@ -2741,12 +2774,30 @@ func (m Model) renderDetailPane(sess session.Info, width int) string {
 	// from here, and a line that outgrows it would wrap and cost the pane a row.
 	statusCluster := statusStyle.Render(truncateString(padIcon(icon)+" "+label, avail))
 	statusLine := detailIndent + statusCluster
+	var disposition string
+	if sess.ReviewDisposition.Decision != "" {
+		disposition = string(sess.ReviewDisposition.Decision)
+		if sess.ReviewDisposition.Stale {
+			disposition += " (stale)"
+		}
+	}
+	// Prefer the decision over agent kind when both do not fit: it is the
+	// actionable review state this line has nowhere else to show.
+	rightLabels := []string{}
+	if sess.AgentKind != "" && disposition != "" {
+		rightLabels = append(rightLabels, sess.AgentKind+" · "+disposition)
+	}
+	if disposition != "" {
+		rightLabels = append(rightLabels, disposition)
+	}
 	if sess.AgentKind != "" {
-		// Below two columns of gap the kind reads as part of the label, so it
-		// is dropped whole — the label is never shortened to make it fit.
-		gap := avail - lipgloss.Width(statusCluster) - lipgloss.Width(sess.AgentKind)
+		rightLabels = append(rightLabels, sess.AgentKind)
+	}
+	for _, rightLabel := range rightLabels {
+		gap := avail - lipgloss.Width(statusCluster) - lipgloss.Width(rightLabel)
 		if gap >= 2 {
-			statusLine += strings.Repeat(" ", gap) + helpStyle.Render(sess.AgentKind)
+			statusLine += strings.Repeat(" ", gap) + helpStyle.Render(rightLabel)
+			break
 		}
 	}
 	lines = append(lines, statusLine)

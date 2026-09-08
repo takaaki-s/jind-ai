@@ -4216,6 +4216,8 @@ func (d *fakeDaemon) serve(conn net.Conn) {
 		// The client decodes this one into a session.Info, so an empty Data
 		// would fail the call rather than exercise it.
 		resp.Data = json.RawMessage("{}")
+	case "review-disposition":
+		resp.Data = json.RawMessage("{}")
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }

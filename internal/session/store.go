@@ -100,6 +100,7 @@ func (s *Store) Save(session Session) error {
 	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
+	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
 	session.Attention = reconcileCheckAttention(session.Attention, session.ReviewFacts, session.CheckReport)
 
 	data, err := json.MarshalIndent(&session, "", "  ")
@@ -108,6 +109,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedReviewDisposition(path string) ReviewDisposition {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] review disposition probe failed for %s: %v", path, err)
+		}
+		return ReviewDisposition{}
+	}
+	var probe struct {
+		ReviewDisposition ReviewDisposition `json:"review_disposition"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] review disposition probe could not parse %s: %v", path, err)
+		return ReviewDisposition{}
+	}
+	return probe.ReviewDisposition
 }
 
 func persistedCheckReport(path string) CheckReport {

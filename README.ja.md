@@ -247,6 +247,8 @@ jin session seen <session-name>
 # jind-ai の外で実行したチェック結果を報告する
 jin session check-report <session-name> passed
 jin session check-report <session-name> failed
+jin session review-disposition <session-name> reviewed
+jin session review-disposition <session-name> changes-requested
 
 # セッション終了
 jin session kill <session-name>
@@ -300,9 +302,19 @@ jind-ai はリポジトリのテスト方法を推測しません。適切なチ
 その後の完了または `session review` で異なる内容が観測されると結果は `stale` になり、
 古い、または状態不明のチェック結果は `ready-for-review` を妨げません。
 
+好みの diff ツールで変更を確認したら、
+`jin session review-disposition <selector> reviewed|changes-requested` で人間の判定を
+記録できます。daemon は先にローカルの
+review facts を更新し、fingerprint を取得できる空でない workspace に対してだけ判定を
+受け付けます。その後に異なる内容が観測されると判定は stale になります。これは
+seen/unseen attention とは独立しており、session の merge、delete、cleanup は行いません。
+同じ 2 操作は TUI のアクションパレットからも選べます。patch 全体の表示は editor、git
+ツール、または plugin に任せます。
+
 `--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
-`seen` / `review` / `check-report` — のいずれにもattentionが載り、評価後は
-`review_facts` と `check_report` も載ります:
+`seen` / `review` / `check-report` / `review-disposition` — のいずれにも
+attentionが載り、評価後は `review_facts` / `check_report` / `review_disposition`
+も載ります:
 
 ```json
 {
@@ -317,6 +329,13 @@ jind-ai はリポジトリのテスト方法を推測しません。適切なチ
     "status": "failed",
     "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
     "reported_at": "2026-09-08T12:00:00Z",
+    "stale": false
+  },
+  "review_disposition": {
+    "source": "reported",
+    "decision": "reviewed",
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "reported_at": "2026-09-09T12:00:00Z",
     "stale": false
   }
 }

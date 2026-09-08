@@ -1871,10 +1871,14 @@ Common pitfalls and caveats that agents tend to fall into.
   This prevents a late stale snapshot from replacing a newer pass/failure or
   resurrecting `checks-failed` after its workspace fingerprint became stale.
 
+  Review dispositions are likewise merged by `reported_at`. Their stale bit is
+  projected from the current cached workspace fingerprint rather than stored,
+  so a late status save cannot revive an older human decision as current.
+
   A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
   one, and assert the file did not regress
   (`internal/session/store_attention_test.go`, `review_facts_test.go`,
-  `check_report_test.go`).
+  `check_report_test.go`, `review_disposition_test.go`).
 
 - **An acknowledgement whose save fails survives only until the daemon
   restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and
