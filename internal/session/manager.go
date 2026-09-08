@@ -2176,6 +2176,67 @@ func (m *Manager) ReportChecks(id string, status CheckStatus) (Info, error) {
 	return saved.ToInfo(), err
 }
 
+// ReportReviewDisposition stores one explicit human review decision for the
+// exact non-empty workspace observed at acceptance time. It neither marks the
+// completion seen nor authorizes merge, deletion, or worktree cleanup.
+func (m *Manager) ReportReviewDisposition(id string, decision ReviewDecision) (Info, error) {
+	if decision != ReviewDecisionReviewed && decision != ReviewDecisionChangesRequested {
+		return Info{}, fmt.Errorf("invalid review decision %q (want reviewed or changes-requested)", decision)
+	}
+
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	generation := sess.Attention.Generation
+	m.mu.RUnlock()
+	if generation == 0 {
+		return Info{}, fmt.Errorf("session has no completed turn to review")
+	}
+
+	if _, err := m.RefreshReview(id); err != nil {
+		if errors.Is(err, errReviewSuperseded) {
+			return Info{}, fmt.Errorf("session completed another turn while the review decision was reported; retry")
+		}
+		return Info{}, err
+	}
+
+	m.mu.Lock()
+	live, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	if live.Attention.Generation != generation {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session completed another turn while the review decision was reported; retry")
+	}
+	if live.ReviewFacts.Status != ReviewFactsAvailable || live.ReviewFacts.WorkspaceFingerprint == "" {
+		reason := live.ReviewFacts.UnavailableReason
+		if reason == "" {
+			reason = string(live.ReviewFacts.Status)
+		}
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("workspace fingerprint unavailable: %s", reason)
+	}
+	if live.ReviewFacts.ChangedFiles == 0 {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("workspace has no changes to review")
+	}
+	live.ReviewDisposition = ReviewDisposition{
+		Source:               ReviewDispositionSourceReported,
+		Decision:             decision,
+		WorkspaceFingerprint: live.ReviewFacts.WorkspaceFingerprint,
+		ReportedAt:           time.Now(),
+	}
+	saved := m.snapshotAndUnlock(live)
+
+	err := m.store.Save(saved)
+	return saved.ToInfo(), err
+}
+
 func (m *Manager) queueReviewInspection(id string, generation uint64) {
 	go func() {
 		if _, err := m.inspectAndApplyReview(id, generation); err != nil &&

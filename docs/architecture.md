@@ -332,7 +332,8 @@ Who touches it:
   test result.
 - `Session.ReviewFacts` stores only aggregate local evidence and is refreshed
   by completion, explicit `review-refresh` / `jin session review`, or the
-  check-report path below. `Manager.List` remains free of git subprocesses.
+  check-report and review-disposition paths below. `Manager.List` remains free
+  of git subprocesses.
 - `jin session check-report <selector> passed|failed` accepts only an explicit
   aggregate result (`source=reported`). The manager refreshes review evidence
   first and binds the report to its content-based workspace fingerprint; it
@@ -340,6 +341,12 @@ Who touches it:
   Different or unavailable later evidence makes the report stale, so it no
   longer overrides `ready-for-review`/`done`. Staleness is derived from cached
   fields and adds no work to `Manager.List`.
+- `jin session review-disposition <selector> reviewed|changes-requested`
+  records a human decision after refreshing the same bounded evidence. It is
+  accepted only for a non-empty fingerprinted workspace, becomes stale when
+  cached evidence changes fingerprint, and remains independent of attention,
+  checks, merge, deletion, and cleanup. The TUI action palette invokes this
+  endpoint; jind-ai does not add a competing full-patch renderer.
 
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).

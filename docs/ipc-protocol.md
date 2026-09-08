@@ -154,6 +154,7 @@ it alone.
 | `attention-seen` | `IDRequest` | Acknowledge a session's completion receipt; returns the postcondition `session.Info`. Idempotent, changes no process status |
 | `review-refresh` | `IDRequest` | Run a bounded, local-only review assessment and return the updated `session.Info` |
 | `check-report` | `CheckReportRequest` (`id`, `status`: `passed` or `failed`) | Refresh local review evidence, bind an explicit aggregate check result to its workspace fingerprint, and return updated `session.Info` |
+| `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -194,7 +195,8 @@ assessment reports `worktree_path_unknown` for it rather than using the mutable
 
 Protocol v5 adds the optional `Info.review_facts` cache and the
 `ready-for-review` attention state. Protocol v6 adds its workspace fingerprint,
-the optional `Info.check_report`, and `checks-failed`. A settled
+the optional `Info.check_report`, and `checks-failed`. Protocol v7 adds the
+optional fingerprint-bound `Info.review_disposition`. A settled
 managed-worktree example is:
 
 ```json
@@ -225,6 +227,13 @@ managed-worktree example is:
     "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
     "reported_at": "2026-09-08T12:00:00Z",
     "stale": false
+  },
+  "review_disposition": {
+    "source": "reported",
+    "decision": "reviewed",
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "reported_at": "2026-09-09T12:00:00Z",
+    "stale": false
   }
 }
 ```
@@ -236,6 +245,10 @@ are persisted. `review-refresh` performs no fetch and runs no repository tests.
 `check-report` also never runs tests: `source=reported` means the caller owns
 that execution. `check_report.stale` is derived from cached fingerprints;
 unknown or stale reports do not produce `checks-failed`.
+`review-disposition` similarly stores an explicit human claim only after a
+fresh, non-empty local assessment. `review_disposition.stale` is derived from
+the cached fingerprint. It neither acknowledges attention nor triggers merge
+or cleanup.
 
 ## Async completion
 
@@ -497,14 +510,19 @@ v6 follows it again: `check-report` alone is a new action, but adding
 `workspace_fingerprint` to `review_facts`, `check_report` to `session.Info`, and
 `checks-failed` to its attention projection changes existing response shapes.
 
+v7 follows the same rule: `review-disposition` alone is a new action, while the
+new optional `review_disposition` object changes the existing `session.Info`
+response shape.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
 safe.
 
-`review-refresh` and `check-report` are also absent from `readOnlyActions`.
-Both persist evidence, so a timeout has an unknown outcome; retrying recomputes
-the bounded local observation and converges on the latest report.
+`review-refresh`, `check-report`, and `review-disposition` are also absent from
+`readOnlyActions`. All persist evidence, so a timeout has an unknown outcome;
+retrying recomputes the bounded local observation and converges on the latest
+report or decision.
 
 ## Adding a New Action
 

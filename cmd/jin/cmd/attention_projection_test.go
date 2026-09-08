@@ -12,7 +12,7 @@ import (
 // attention object must be identical in all of them. A projection that drifted
 // between them would break scripts that read one and act on another.
 //
-// The six here are the whole population: `grep -n "func render.*JSON"
+// The eight here are the whole population: `grep -n "func render.*JSON"
 // cmd/jin/cmd/*.go` plus seen/review's direct writeJSON, filtered to those taking
 // a *session.Info or []session.Info. The rest (kill/delete, send, respond,
 // output, result, daemon) print shapes of their own and carry no attention.
@@ -32,6 +32,10 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 			BaseCommit:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			HeadCommit:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			ChangedFiles: 2, Additions: 5, Deletions: 1,
+		},
+		ReviewDisposition: session.ReviewDispositionInfo{
+			Source: session.ReviewDispositionSourceReported, Decision: session.ReviewDecisionReviewed,
+			WorkspaceFingerprint: "fingerprint", Stale: false,
 		},
 	}
 
@@ -66,6 +70,16 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 			err := writeJSON(&buf, &info)
 			return buf.String(), err
 		},
+		"check-report": func() (string, error) {
+			var buf bytes.Buffer
+			err := writeJSON(&buf, &info)
+			return buf.String(), err
+		},
+		"review-disposition": func() (string, error) {
+			var buf bytes.Buffer
+			err := writeJSON(&buf, &info)
+			return buf.String(), err
+		},
 	}
 
 	want := map[string]any{
@@ -95,8 +109,30 @@ func TestAttentionProjection_AgreesAcrossEverySessionRenderer(t *testing.T) {
 				review["attention_generation"] != float64(4) {
 				t.Errorf("review_facts = %v", review)
 			}
+			disposition := reviewDispositionObjectIn(t, out)
+			if disposition["source"] != "reported" || disposition["decision"] != "reviewed" ||
+				disposition["stale"] != false {
+				t.Errorf("review_disposition = %v", disposition)
+			}
 		})
 	}
+}
+
+func reviewDispositionObjectIn(t *testing.T, out string) map[string]any {
+	t.Helper()
+	var single struct {
+		ReviewDisposition map[string]any `json:"review_disposition"`
+	}
+	if err := json.Unmarshal([]byte(out), &single); err == nil && single.ReviewDisposition != nil {
+		return single.ReviewDisposition
+	}
+	var listed []struct {
+		ReviewDisposition map[string]any `json:"review_disposition"`
+	}
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed) != 1 {
+		t.Fatalf("review disposition missing from output: %s", out)
+	}
+	return listed[0].ReviewDisposition
 }
 
 func reviewFactsObjectIn(t *testing.T, out string) map[string]any {

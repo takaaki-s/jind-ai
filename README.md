@@ -270,6 +270,8 @@ jin session seen <session-name>
 # Report checks that you ran outside jind-ai
 jin session check-report <session-name> passed
 jin session check-report <session-name> failed
+jin session review-disposition <session-name> reviewed
+jin session review-disposition <session-name> changes-requested
 
 # Kill a session
 jin session kill <session-name>
@@ -327,9 +329,18 @@ local workspace fingerprint first. A later completion or `session review` that
 observes different contents marks the report stale, and a stale/unknown report
 does not block `ready-for-review`.
 
+After inspecting the change in your preferred diff tool, record the human
+decision with `jin session review-disposition <selector> reviewed|changes-requested`.
+The daemon refreshes the local review facts first
+and accepts a decision only for a non-empty workspace with a fingerprint. The
+decision becomes stale when later review evidence observes different contents.
+It is independent of seen/unseen attention and never merges, deletes, or cleans
+up a session. The same two decisions are available in the TUI action palette;
+full diff display remains the job of your editor, git tooling, or a plugin.
+
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
-`seen`, `review`, `check-report` — carries the attention and, once assessed,
-`review_facts` and `check_report`.
+`seen`, `review`, `check-report`, `review-disposition` — carries the attention
+and, once assessed, `review_facts`, `check_report`, and `review_disposition`.
 
 ```json
 {
@@ -344,6 +355,13 @@ Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
     "status": "failed",
     "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
     "reported_at": "2026-09-08T12:00:00Z",
+    "stale": false
+  },
+  "review_disposition": {
+    "source": "reported",
+    "decision": "reviewed",
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "reported_at": "2026-09-09T12:00:00Z",
     "stale": false
   }
 }

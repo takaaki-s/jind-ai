@@ -162,9 +162,9 @@ intentional.
 ## Action Palette
 
 The action palette is a searchable popup that unifies every action a user
-might want to trigger from the TUI: the 9 built-in actions (new / kill /
-delete / refresh / vscode / mark completion seen / help / switch session /
-toggle sidebar) plus
+might want to trigger from the TUI: the 11 built-in actions (new / kill /
+delete / refresh / vscode / mark completion seen / mark reviewed / request
+changes / help / switch session / toggle sidebar) plus
 any `plugin:*` action from installed plugins, all in one
 fuzzy-searchable list (via [sahilm/fuzzy](https://github.com/sahilm/fuzzy),
 same engine as the switch-session picker — matched runes are underlined in
@@ -177,8 +177,8 @@ alongside a Shortcut column — this doubles as a live reference for the
 direct keys documented above, so users don't need to keep checking this doc
 once they've learned a shortcut from the palette itself.
 
-"mark completion seen" is the one core action with no key of its own — see
-`CoreActions` for why. It is not the only way to acknowledge from the TUI: a
+The completion and review-recording actions have no keys of their own — see
+`CoreActions` for why. "mark completion seen" is not the only way to acknowledge from the TUI: a
 landed attach does it too (`handleSelectSession`, and a pick from the
 switch-session popup via `resolveFocusSession`). All three refetch the list
 rather than waiting for the next poll, because the dot and the unseen-first

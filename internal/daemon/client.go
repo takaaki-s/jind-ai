@@ -498,6 +498,25 @@ func (c *Client) ReportChecks(id string, status session.CheckStatus) (*session.I
 	return &info, nil
 }
 
+// ReportReviewDisposition records a human decision bound by the daemon to a
+// freshly observed, non-empty workspace.
+func (c *Client) ReportReviewDisposition(id string, decision session.ReviewDecision) (*session.Info, error) {
+	data, _ := json.Marshal(ReviewDispositionRequest{ID: id, Decision: decision})
+	resp, err := c.send(Request{Action: "review-disposition", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+
+	var info session.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler
