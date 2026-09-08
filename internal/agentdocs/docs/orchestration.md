@@ -241,8 +241,12 @@ turn that finishes while you are reading another session's output is still
 there when you come back. Two counters rather than a flag for the same reason:
 acknowledging generation 3 while generation 4 lands leaves 4 outstanding.
 
-The receipt says a turn ended without an error. It says nothing about whether
-the work is any good — that is the next section.
+`done` says a turn ended without an error. For a managed worktree,
+`ready-for-review` additionally says a bounded local comparison found a
+non-empty delta from the creation-time base. Refresh it with
+`jin session review <selector> --json`. Neither state is approval, a test
+result, or evidence that the implementation is correct — that is the next
+section.
 
 ## Accepting the work
 

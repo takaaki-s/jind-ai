@@ -60,6 +60,24 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 	if info.CurrentBranch != "" {
 		fmt.Fprintf(tw, "Branch:\t%s\n", info.CurrentBranch)
 	}
+	if info.Attention.State != session.AttentionNone {
+		fmt.Fprintf(tw, "Attention:\t%s", info.Attention.State)
+		if info.Attention.Unseen {
+			fmt.Fprint(tw, " (unseen)")
+		}
+		fmt.Fprintln(tw)
+	}
+	if info.ReviewFacts.Status != "" {
+		fmt.Fprintf(tw, "Review:\t%s", info.ReviewFacts.Status)
+		if info.ReviewFacts.Status == session.ReviewFactsAvailable {
+			fmt.Fprintf(tw, " — %d files, +%d -%d, %d commits",
+				info.ReviewFacts.ChangedFiles, info.ReviewFacts.Additions,
+				info.ReviewFacts.Deletions, info.ReviewFacts.CommitCount)
+		} else if info.ReviewFacts.UnavailableReason != "" {
+			fmt.Fprintf(tw, " — %s", info.ReviewFacts.UnavailableReason)
+		}
+		fmt.Fprintln(tw)
+	}
 
 	fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format("2006-01-02 15:04:05"))
 	if !info.LastActiveAt.IsZero() {

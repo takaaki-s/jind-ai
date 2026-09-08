@@ -18,4 +18,6 @@ package daemon
 // v3: session.Info responses can include completion attention; add the
 // idempotent attention-seen action.
 // v4: session.Info responses can include an immutable review_base projection.
-const ProtocolVersion = 4
+// v5: session.Info responses can include cached review_facts; add the bounded
+// review-refresh action and ready-for-review attention state.
+const ProtocolVersion = 5

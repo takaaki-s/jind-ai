@@ -2632,7 +2632,8 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 	// Its own column rather than a second meaning loaded onto the status icon:
 	// a session can be running with an unacknowledged completion from before.
 	if sess.Attention.Unseen {
-		b.WriteString(withBg(attentionStyle).Render(padIcon(attentionGlyph)))
+		glyph, style := attentionDisplay(sess.Attention.State)
+		b.WriteString(withBg(style).Render(padIcon(glyph)))
 	} else {
 		b.WriteString(padBg(2))
 	}
@@ -3044,6 +3045,18 @@ func getStatusDisplay(status session.Status) (icon, label string, style lipgloss
 // status icon so both cells are two columns wide however the terminal measures
 // the rune.
 const attentionGlyph = "●"
+
+// reviewReadyGlyph distinguishes an assessed, non-empty worktree delta from a
+// turn that merely completed. Colour reinforces the distinction but the glyph
+// keeps it legible in monochrome terminals.
+const reviewReadyGlyph = "◆"
+
+func attentionDisplay(state session.AttentionState) (string, lipgloss.Style) {
+	if state == session.AttentionReadyForReview {
+		return reviewReadyGlyph, reviewReadyStyle
+	}
+	return attentionGlyph, attentionStyle
+}
 
 // padIcon pads a status icon to a fixed 2-column cell, measured with
 // ansi.StringWidth. Icons already 2 columns or wider are returned

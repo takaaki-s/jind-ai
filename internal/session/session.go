@@ -94,6 +94,11 @@ type Session struct {
 	// no attention migration.
 	Attention Attention `json:"attention,omitzero"`
 
+	// ReviewFacts is the latest bounded local comparison against ReviewBase.
+	// It is populated only on completion or an explicit refresh, never by the
+	// list polling path.
+	ReviewFacts ReviewFacts `json:"review_facts,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -154,7 +159,8 @@ type Info struct {
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
 	// none/seen.
-	Attention AttentionInfo `json:"attention,omitzero"`
+	Attention   AttentionInfo `json:"attention,omitzero"`
+	ReviewFacts ReviewFacts   `json:"review_facts,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -206,6 +212,7 @@ func (s *Session) ToInfo() Info {
 		TmuxWindowName:    s.TmuxWindowName,
 		Fleet:             s.Fleet,
 		Attention:         s.Attention.toInfo(),
+		ReviewFacts:       s.ReviewFacts,
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,

@@ -28,6 +28,12 @@ import (
 
 var debugLog = debug.NewLogger("daemon-debug.log")
 
+const reviewProbeConcurrency = 4
+
+// One deadline covers every git command in an assessment, including time
+// waiting for the global review slot. Tests may shorten it.
+var reviewProbeTimeout = 5 * time.Second
+
 // ErrWorktreeDirty is returned when a git worktree has uncommitted changes
 // and force removal was not requested.
 var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
@@ -56,6 +62,7 @@ type Manager struct {
 	stateDir       string
 	identity       jinenv.Identity // the jin the agents this Manager starts are told to call back into; handed in whole, never re-derived from the process
 	tmuxSocketName string          // "" ⇒ tmux.SocketName; tests set an isolated name so ensureTmuxClient does not touch the shared "jin" server
+	reviewSem      chan struct{}   // bounds completion-triggered and explicit git inspections together
 }
 
 // Identity is the jin the agents this Manager starts are told to call back
@@ -492,6 +499,7 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 		gitClient: git.NewClient(),
 		stateDir:  stateDir,
 		identity:  identity,
+		reviewSem: make(chan struct{}, reviewProbeConcurrency),
 	}
 
 	// Load existing sessions
@@ -711,6 +719,7 @@ func (m *Manager) provisionWorktree(sessionID string, opts CreateOptions) (workt
 	out.reviewBase = ReviewBase{
 		RequestedRef: requestedBaseRef,
 		CommitOID:    resolvedBaseOID,
+		WorktreePath: worktreePath,
 	}
 	out.warning = hookWarning
 	out.undo = undo
@@ -2089,6 +2098,136 @@ func (m *Manager) MarkSeen(id string) (Info, error) {
 	return saved.ToInfo(), err
 }
 
+// RefreshReview explicitly recomputes the bounded local comparison for a
+// session's current completion generation. The same worker is used by the
+// asynchronous completion path; neither route adds git work to List/Get.
+func (m *Manager) RefreshReview(id string) (Info, error) {
+	m.mu.Lock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	generation := sess.Attention.Generation
+	sess.ReviewFacts = pendingReviewFacts(generation, time.Now())
+	pending := m.snapshotAndUnlock(sess)
+	if err := m.store.Save(pending); err != nil {
+		return pending.ToInfo(), err
+	}
+	return m.inspectAndApplyReview(id, generation)
+}
+
+func (m *Manager) queueReviewInspection(id string, generation uint64) {
+	go func() {
+		if _, err := m.inspectAndApplyReview(id, generation); err != nil &&
+			!errors.Is(err, errReviewSuperseded) {
+			debugLog("[REVIEW] Session %s: %v", id, err)
+		}
+	}()
+}
+
+var errReviewSuperseded = errors.New("review assessment superseded")
+
+// inspectAndApplyReview snapshots all inputs under the manager lock, performs
+// every filesystem/subprocess operation outside it, then applies only if the
+// completion generation is still current.
+func (m *Manager) inspectAndApplyReview(id string, generation uint64) (Info, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	base := sess.ReviewBase
+	client := m.gitClient
+	m.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), reviewProbeTimeout)
+	defer cancel()
+
+	facts := ReviewFacts{
+		Status:              ReviewFactsUnavailable,
+		AttentionGeneration: generation,
+	}
+	switch {
+	case base.CommitOID == "" && base.UnavailableReason != "":
+		facts.UnavailableReason = base.UnavailableReason
+	case base.CommitOID == "":
+		facts.UnavailableReason = ReviewUnavailableLegacyUnknown
+	case base.WorktreePath == "":
+		// Protocol-v4 records have a trustworthy commit but no immutable path.
+		// Session.WorkDir may have followed the agent into another git root, so
+		// using it here would turn a guess into review evidence.
+		facts.UnavailableReason = ReviewUnavailableWorktreePath
+	default:
+		select {
+		case m.reviewSem <- struct{}{}:
+			defer func() { <-m.reviewSem }()
+		case <-ctx.Done():
+			facts.UnavailableReason = ReviewUnavailableProbeTimeout
+		}
+		if facts.UnavailableReason == "" {
+			summary, err := client.InspectReview(ctx, base.WorktreePath, base.CommitOID)
+			if err != nil {
+				facts.UnavailableReason = reviewProbeUnavailableReason(err)
+				debugLog("[REVIEW] Session %s probe failed: %v", id, err)
+			} else {
+				facts.Status = ReviewFactsAvailable
+				facts.BaseCommit = summary.BaseCommit
+				facts.HeadCommit = summary.HeadCommit
+				facts.Branch = summary.Branch
+				facts.ChangedFiles = summary.ChangedFiles
+				facts.Additions = summary.Additions
+				facts.Deletions = summary.Deletions
+				facts.BinaryFiles = summary.BinaryFiles
+				facts.UntrackedFiles = summary.UntrackedFiles
+				facts.CommitCount = summary.CommitCount
+			}
+		}
+	}
+	facts.ObservedAt = time.Now()
+
+	m.mu.Lock()
+	live, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	if live.Attention.Generation != generation {
+		info := live.ToInfo()
+		m.mu.Unlock()
+		return info, errReviewSuperseded
+	}
+	if live.ReviewFacts.AttentionGeneration == generation &&
+		live.ReviewFacts.ObservedAt.After(facts.ObservedAt) {
+		info := live.ToInfo()
+		m.mu.Unlock()
+		return info, errReviewSuperseded
+	}
+	live.ReviewFacts = facts
+	if facts.Status == ReviewFactsAvailable && facts.ChangedFiles > 0 &&
+		(live.Status == StatusIdle || live.Status == StatusStopped) {
+		live.Attention = live.Attention.readyForReview(generation)
+	}
+	saved := m.snapshotAndUnlock(live)
+
+	err := m.store.Save(saved)
+	return saved.ToInfo(), err
+}
+
+func reviewProbeUnavailableReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return ReviewUnavailableProbeTimeout
+	case errors.Is(err, git.ErrOutputLimit):
+		return ReviewUnavailableOutputLimit
+	case errors.Is(err, git.ErrReviewFileLimit):
+		return ReviewUnavailableTooManyFiles
+	default:
+		return ReviewUnavailableProbeFailed
+	}
+}
+
 // SetStatusWithError updates the status and error message of a session
 func (m *Manager) SetStatusWithError(id string, status Status, errMsg string) {
 	m.mu.Lock()
@@ -3069,6 +3208,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 	oldStatus := session.Status
 	sessionID := session.ID
 	sessionName := session.Description
+	reviewGeneration := uint64(0)
 
 	// Update AgentSessionID if it changed (an adapter may re-key it, e.g. CC
 	// assigns its own UUID when we started with an empty one). This write is the
@@ -3209,6 +3349,22 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		// up is in docs/gotchas.md, under "Session persistence".
 		if upd.Notify == NotifyTaskComplete && oldStatus != session.Status {
 			session.Attention = session.Attention.completed()
+			generation := session.Attention.Generation
+			if session.ReviewBase.CommitOID != "" {
+				reviewGeneration = generation
+				session.ReviewFacts = pendingReviewFacts(generation, time.Now())
+			} else {
+				reason := session.ReviewBase.UnavailableReason
+				if reason == "" {
+					reason = ReviewUnavailableLegacyUnknown
+				}
+				session.ReviewFacts = ReviewFacts{
+					Status:              ReviewFactsUnavailable,
+					UnavailableReason:   reason,
+					AttentionGeneration: generation,
+					ObservedAt:          time.Now(),
+				}
+			}
 		}
 	}
 
@@ -3251,6 +3407,10 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		if cwdChanged {
 			debugLog("[HOOK] Session %s: CWD updated to %s", sessionName, cwd)
 		}
+	}
+
+	if reviewGeneration != 0 {
+		m.queueReviewInspection(sessionID, reviewGeneration)
 	}
 
 	if pluginDisp != nil && updOK && oldStatus != saved.Status {

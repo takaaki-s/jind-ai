@@ -313,6 +313,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleSetDescription(req.Data)
 	case "attention-seen":
 		return s.handleAttentionSeen(req.Data)
+	case "review-refresh":
+		return s.handleReviewRefresh(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -899,6 +901,26 @@ func (s *Server) handleAttentionSeen(data json.RawMessage) Response {
 		return Response{Success: false, Error: err.Error()}
 	}
 
+	respData, _ := json.Marshal(info)
+	return Response{Success: true, Data: respData}
+}
+
+// handleReviewRefresh runs the same bounded inspection completion schedules,
+// but synchronously so the caller receives the refreshed facts. The manager
+// owns the timeout and concurrency cap.
+func (s *Server) handleReviewRefresh(data json.RawMessage) Response {
+	var req IDRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+
+	info, err := s.manager.RefreshReview(req.ID)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
 	respData, _ := json.Marshal(info)
 	return Response{Success: true, Data: respData}
 }

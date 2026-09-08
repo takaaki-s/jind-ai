@@ -76,7 +76,7 @@ func TestCreateWithOptions_PersistsResolvedReviewBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWithOptions: %v", err)
 	}
-	want := ReviewBase{RequestedRef: "origin/main", CommitOID: testReviewBaseOID}
+	want := ReviewBase{RequestedRef: "origin/main", CommitOID: testReviewBaseOID, WorktreePath: sess.WorkDir}
 	if sess.ReviewBase != want {
 		t.Errorf("Session.ReviewBase = %+v, want %+v", sess.ReviewBase, want)
 	}
@@ -195,6 +195,9 @@ func TestManagedWorktree_ReviewBaseSurvivesRefMovementAndRestart(t *testing.T) {
 	if sess.ReviewBase.CommitOID != baseOID {
 		t.Fatalf("ReviewBase.CommitOID = %q, want initial base %q", sess.ReviewBase.CommitOID, baseOID)
 	}
+	if sess.ReviewBase.WorktreePath != sess.WorkDir {
+		t.Fatalf("ReviewBase.WorktreePath = %q, want %q", sess.ReviewBase.WorktreePath, sess.WorkDir)
+	}
 	if got := runReviewBaseGit(t, sess.WorkDir, "rev-parse", "HEAD"); got != baseOID {
 		t.Fatalf("worktree HEAD = %q, want persisted review base %q", got, baseOID)
 	}
@@ -222,6 +225,9 @@ func TestManagedWorktree_ReviewBaseSurvivesRefMovementAndRestart(t *testing.T) {
 	}
 	if got.ReviewBase.CommitOID != baseOID {
 		t.Errorf("ReviewBase after ref movement/restart = %q, want %q", got.ReviewBase.CommitOID, baseOID)
+	}
+	if got.ReviewBase.WorktreePath != sess.WorkDir {
+		t.Errorf("ReviewBase path after restart = %q, want %q", got.ReviewBase.WorktreePath, sess.WorkDir)
 	}
 	// Resume and recovery paths save Session snapshots through the same Store
 	// invariant. Exercise another post-restart mutation and load once more.

@@ -152,6 +152,7 @@ it alone.
 | `result` | `ResultRequest` | Fetch structured transcript entries from the session's own agent adapter (orchestration; fails for a kind with no reader) |
 | `set-description` | `SetDescriptionRequest` | Update session description (empty resets to auto-generated) |
 | `attention-seen` | `IDRequest` | Acknowledge a session's completion receipt; returns the postcondition `session.Info`. Idempotent, changes no process status |
+| `review-refresh` | `IDRequest` | Run a bounded, local-only review assessment and return the updated `session.Info` |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -168,13 +169,15 @@ has said nothing all leave the two fields empty and `success: true`. Clients
 that need to distinguish those must use `result`.
 
 `new`, `list`, and `get` project immutable review evidence through the optional
-`Info.review_base` object (protocol v4):
+`Info.review_base` object (introduced in protocol v4; protocol v5 adds the
+immutable `worktree_path` needed to inspect the correct checkout):
 
 ```json
 {
   "review_base": {
     "requested_ref": "origin/main",
-    "commit_oid": "0123456789abcdef0123456789abcdef01234567"
+    "commit_oid": "0123456789abcdef0123456789abcdef01234567",
+    "worktree_path": "/home/me/.local/state/jind-ai/worktrees/jin-example"
   }
 }
 ```
@@ -183,6 +186,42 @@ For a newly created session without a jind-ai-managed worktree, the object
 instead contains `"unavailable_reason":"not_managed_worktree"`. Its absence
 means a legacy/unknown record; clients must not infer a base from the current
 branch or a later merge-base.
+
+A protocol-v4 managed record may have a commit but no `worktree_path`. Review
+assessment reports `worktree_path_unknown` for it rather than using the mutable
+`Session.WorkDir`, which can follow an agent into a different repository.
+
+Protocol v5 adds the optional `Info.review_facts` cache and the
+`ready-for-review` attention state. A settled managed-worktree example is:
+
+```json
+{
+  "attention": {
+    "state": "ready-for-review",
+    "generation": 2,
+    "seen_generation": 1,
+    "unseen": true
+  },
+  "review_facts": {
+    "status": "available",
+    "attention_generation": 2,
+    "base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+    "branch": "jin/example",
+    "changed_files": 4,
+    "additions": 31,
+    "deletions": 8,
+    "untracked_files": 1,
+    "commit_count": 2,
+    "observed_at": "2026-09-07T12:00:00Z"
+  }
+}
+```
+
+`status` is `pending`, `available`, or `unavailable`. Unavailable facts carry a
+machine-readable `unavailable_reason`; callers must not replace them with a
+current merge-base. Facts are bounded counts only: no filenames or patch text
+are persisted. `review-refresh` performs no fetch and runs no repository tests.
 
 ## Async completion
 

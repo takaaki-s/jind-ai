@@ -98,6 +98,7 @@ func (s *Store) Save(session Session) error {
 
 	session.Attention = mergeAttention(session.Attention, persistedAttention(path))
 	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
+	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 
 	data, err := json.MarshalIndent(&session, "", "  ")
 	if err != nil {
@@ -105,6 +106,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedReviewFacts(path string) ReviewFacts {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] review facts probe failed for %s: %v", path, err)
+		}
+		return ReviewFacts{}
+	}
+	var probe struct {
+		ReviewFacts ReviewFacts `json:"review_facts"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] review facts probe could not parse %s: %v", path, err)
+		return ReviewFacts{}
+	}
+	return probe.ReviewFacts
 }
 
 // persistedReviewBase reads the immutable creation evidence already on disk.
