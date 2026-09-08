@@ -37,7 +37,7 @@ func TestClientReportChecks_SendsActionAndDecodesInfo(t *testing.T) {
 		},
 		CheckReport: session.CheckReportInfo{
 			Source: session.CheckSourceReported, Status: session.CheckStatusFailed,
-			WorkspaceFingerprint: "fingerprint", ReportedAt: time.Unix(20, 0),
+			WorkspaceFingerprint: "fingerprint", ReportedAt: time.Unix(20, 0).UTC(),
 		},
 	}
 	data, _ := json.Marshal(want)
