@@ -1854,19 +1854,27 @@ Common pitfalls and caveats that agents tend to fall into.
   Completion attention is exempted rather than fixed. `Store.Save` serialises
   its read/merge/write with a private Store mutex and merges the candidate's
   attention with what is on disk: the larger generation owns the state; within
-  one generation `ready-for-review` beats `done`; and both receipt counters
-  take their maximum. This protects attention from *any* stale full-session
-  snapshot — including a review result for the prior completion — while still
-  letting a newer completion reset readiness to `done`.
+  one generation `checks-failed` beats `ready-for-review`, which beats `done`;
+  and both receipt counters take their maximum. After merging, current review
+  facts and the latest reported checks reconcile that priority, so a newer
+  passing report or a changed workspace can demote an old failure again. This
+  protects attention from *any* stale full-session snapshot — including a
+  review result for the prior completion — while still letting a newer
+  completion reset readiness to `done`.
 
   Review facts have the same protection. The larger attention generation wins,
   then the later `observed_at` within that generation. A pending marker for a
   new completion therefore prevents an old available result from returning,
   and a status/CWD save cannot roll a completed assessment back.
 
+  Reported checks are merged by `reported_at` before attention is reconciled.
+  This prevents a late stale snapshot from replacing a newer pass/failure or
+  resurrecting `checks-failed` after its workspace fingerprint became stale.
+
   A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
   one, and assert the file did not regress
-  (`internal/session/store_attention_test.go`, `review_facts_test.go`).
+  (`internal/session/store_attention_test.go`, `review_facts_test.go`,
+  `check_report_test.go`).
 
 - **An acknowledgement whose save fails survives only until the daemon
   restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and

@@ -49,7 +49,7 @@ again can still be carrying one from before.
 
 ```go
 Attention (persisted, internal/session/attention.go)
-├─ State          "" | "done" | "ready-for-review"
+├─ State          "" | "done" | "ready-for-review" | "checks-failed"
 │                            // "" is the zero value, so old records need no migration
 ├─ Generation     uint64        // one per applied completion
 └─ SeenGeneration uint64        // the one the operator acknowledged
@@ -63,6 +63,8 @@ Transitions:
 |---|---|
 | An applied verdict whose `Notify` is `NotifyTaskComplete` **and** whose status actually moved | `done`, `Generation + 1`, `SeenGeneration` untouched |
 | The bounded local review assessment finds a non-empty delta for that same generation | `ready-for-review`; generation and seen cursor untouched |
+| An explicitly reported aggregate failure matches the current workspace fingerprint | `checks-failed`; generation and seen cursor untouched |
+| New review evidence has a different fingerprint, or a passing report replaces the failure | the failed report no longer blocks; `ready-for-review` for a non-empty available delta, otherwise `done` |
 | The same verdict for a turn that already landed (status did not move) | unchanged |
 | `NotifyError`, permission, prompt, tool, CWD, recovery, kill, idle fallback | unchanged |
 | `Manager.MarkSeen` (`attention-seen` / `jin session seen` / a landed TUI attach) | `SeenGeneration = Generation`; state, generation and status untouched |
@@ -82,14 +84,22 @@ fetch, invoke a shell, external diff drivers or textconv, and never run project
 checks. A non-empty final delta promotes the same attention generation to
 `ready-for-review`; no delta or unavailable evidence leaves it at `done`.
 
-The persisted `ReviewFacts` cache records base/head/branch, changed, binary and
-untracked file counts, additions/deletions, commit count and observation time.
-It is refreshed only on completion or `jin session review`; `Manager.List`
-performs no git work. Sessions not created as managed worktrees explicitly
+The persisted `ReviewFacts` cache records base/head/branch, a content-bound
+workspace fingerprint, changed, binary and untracked file counts,
+additions/deletions, commit count and observation time. It is refreshed only on
+completion, `jin session review`, or `jin session check-report`;
+`Manager.List` performs no git work. Sessions not created as managed worktrees explicitly
 report `not_managed_worktree`, and legacy records remain `legacy_unknown`
 instead of synthesizing a base. Managed records created by protocol v4 have a
 commit but no immutable checkout path; they report `worktree_path_unknown`
 rather than guessing from the mutable `Session.WorkDir`.
+
+`jin session check-report <selector> passed|failed` is the only check-ingestion
+path. It refreshes the same bounded local evidence, then persists the aggregate
+claim with `source=reported` and the observed fingerprint. jind-ai does not
+discover commands or execute tests. `CheckReportInfo.stale` is derived by
+comparing cached fingerprints, so list/info/TUI reads remain I/O-free. A stale
+or unknown report never produces `checks-failed`.
 
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
@@ -137,9 +147,14 @@ Session (persisted)
 ├─ ReviewFacts                     // Bounded cached comparison for one attention generation
 │  ├─ Status              string   // pending | available | unavailable
 │  ├─ AttentionGeneration uint64
-│  ├─ BaseCommit/HeadCommit/Branch
+│  ├─ BaseCommit/HeadCommit/Branch/WorkspaceFingerprint
 │  ├─ ChangedFiles/Additions/Deletions/BinaryFiles/UntrackedFiles/CommitCount
 │  └─ ObservedAt           time.Time
+├─ CheckReport                     // Latest explicit aggregate check claim
+│  ├─ Source               string  // reported
+│  ├─ Status               string  // passed | failed
+│  ├─ WorkspaceFingerprint string
+│  └─ ReportedAt           time.Time
 ├─ AgentKind             string    // Adapter identifier ("claude" etc.); always non-empty in persisted form
 ├─ AgentSessionID        string    // Adapter-side persistent id (CC --session-id / --resume value)
 ├─ AgentSessionStarted   bool      // Flipped once the agent has spawned (at spawn, not on hook arrival)

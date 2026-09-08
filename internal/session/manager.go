@@ -2117,6 +2117,65 @@ func (m *Manager) RefreshReview(id string) (Info, error) {
 	return m.inspectAndApplyReview(id, generation)
 }
 
+// ReportChecks stores one aggregate result supplied explicitly by a caller.
+// It refreshes the local review evidence first so the report is bound to the
+// workspace as it exists at acceptance time; it never discovers or executes
+// repository checks itself.
+func (m *Manager) ReportChecks(id string, status CheckStatus) (Info, error) {
+	if status != CheckStatusPassed && status != CheckStatusFailed {
+		return Info{}, fmt.Errorf("invalid check status %q (want passed or failed)", status)
+	}
+
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	generation := sess.Attention.Generation
+	m.mu.RUnlock()
+	if generation == 0 {
+		return Info{}, fmt.Errorf("session has no completed turn to report checks for")
+	}
+
+	if _, err := m.RefreshReview(id); err != nil {
+		if errors.Is(err, errReviewSuperseded) {
+			return Info{}, fmt.Errorf("session completed another turn while checks were reported; retry")
+		}
+		return Info{}, err
+	}
+
+	m.mu.Lock()
+	live, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session not found: %s", id)
+	}
+	if live.Attention.Generation != generation {
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("session completed another turn while checks were reported; retry")
+	}
+	if live.ReviewFacts.Status != ReviewFactsAvailable || live.ReviewFacts.WorkspaceFingerprint == "" {
+		reason := live.ReviewFacts.UnavailableReason
+		if reason == "" {
+			reason = string(live.ReviewFacts.Status)
+		}
+		m.mu.Unlock()
+		return Info{}, fmt.Errorf("workspace fingerprint unavailable: %s", reason)
+	}
+	live.CheckReport = CheckReport{
+		Source:               CheckSourceReported,
+		Status:               status,
+		WorkspaceFingerprint: live.ReviewFacts.WorkspaceFingerprint,
+		ReportedAt:           time.Now(),
+	}
+	live.Attention = reconcileCheckAttention(live.Attention, live.ReviewFacts, live.CheckReport)
+	saved := m.snapshotAndUnlock(live)
+
+	err := m.store.Save(saved)
+	return saved.ToInfo(), err
+}
+
 func (m *Manager) queueReviewInspection(id string, generation uint64) {
 	go func() {
 		if _, err := m.inspectAndApplyReview(id, generation); err != nil &&
@@ -2176,6 +2235,7 @@ func (m *Manager) inspectAndApplyReview(id string, generation uint64) (Info, err
 				facts.BaseCommit = summary.BaseCommit
 				facts.HeadCommit = summary.HeadCommit
 				facts.Branch = summary.Branch
+				facts.WorkspaceFingerprint = summary.WorkspaceFingerprint
 				facts.ChangedFiles = summary.ChangedFiles
 				facts.Additions = summary.Additions
 				facts.Deletions = summary.Deletions
@@ -2209,6 +2269,7 @@ func (m *Manager) inspectAndApplyReview(id string, generation uint64) (Info, err
 		(live.Status == StatusIdle || live.Status == StatusStopped) {
 		live.Attention = live.Attention.readyForReview(generation)
 	}
+	live.Attention = reconcileCheckAttention(live.Attention, live.ReviewFacts, live.CheckReport)
 	saved := m.snapshotAndUnlock(live)
 
 	err := m.store.Save(saved)

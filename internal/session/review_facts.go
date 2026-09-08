@@ -26,19 +26,20 @@ const (
 // AttentionGeneration binds the cache to the completion it assessed, while
 // ObservedAt orders repeated refreshes of that same generation.
 type ReviewFacts struct {
-	Status              ReviewFactsStatus `json:"status"`
-	UnavailableReason   string            `json:"unavailable_reason,omitempty"`
-	AttentionGeneration uint64            `json:"attention_generation"`
-	BaseCommit          string            `json:"base_commit,omitempty"`
-	HeadCommit          string            `json:"head_commit,omitempty"`
-	Branch              string            `json:"branch,omitempty"`
-	ChangedFiles        int               `json:"changed_files,omitempty"`
-	Additions           int               `json:"additions,omitempty"`
-	Deletions           int               `json:"deletions,omitempty"`
-	BinaryFiles         int               `json:"binary_files,omitempty"`
-	UntrackedFiles      int               `json:"untracked_files,omitempty"`
-	CommitCount         int               `json:"commit_count,omitempty"`
-	ObservedAt          time.Time         `json:"observed_at,omitzero"`
+	Status               ReviewFactsStatus `json:"status"`
+	UnavailableReason    string            `json:"unavailable_reason,omitempty"`
+	AttentionGeneration  uint64            `json:"attention_generation"`
+	BaseCommit           string            `json:"base_commit,omitempty"`
+	HeadCommit           string            `json:"head_commit,omitempty"`
+	Branch               string            `json:"branch,omitempty"`
+	WorkspaceFingerprint string            `json:"workspace_fingerprint,omitempty"`
+	ChangedFiles         int               `json:"changed_files,omitempty"`
+	Additions            int               `json:"additions,omitempty"`
+	Deletions            int               `json:"deletions,omitempty"`
+	BinaryFiles          int               `json:"binary_files,omitempty"`
+	UntrackedFiles       int               `json:"untracked_files,omitempty"`
+	CommitCount          int               `json:"commit_count,omitempty"`
+	ObservedAt           time.Time         `json:"observed_at,omitzero"`
 }
 
 func (f ReviewFacts) IsZero() bool { return f == (ReviewFacts{}) }

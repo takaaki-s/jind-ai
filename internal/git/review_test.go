@@ -56,6 +56,31 @@ func TestInspectReview_CountsCommittedWorkingBinaryAndUntrackedChanges(t *testin
 	if got.CommitCount != 1 {
 		t.Errorf("CommitCount = %d, want 1", got.CommitCount)
 	}
+	if got.WorkspaceFingerprint == "" {
+		t.Fatal("WorkspaceFingerprint is empty")
+	}
+
+	unchanged, err := NewClient().InspectReview(context.Background(), repo, base)
+	if err != nil {
+		t.Fatalf("second InspectReview: %v", err)
+	}
+	if unchanged.WorkspaceFingerprint != got.WorkspaceFingerprint {
+		t.Fatal("fingerprint changed without a workspace change")
+	}
+
+	// Keep the path and numstat counts the same while changing bytes. A
+	// count-only fingerprint would miss this and leave a check report current.
+	writeReviewFile(t, repo, "tracked.txt", []byte("other one\nother two\n"))
+	changed, err := NewClient().InspectReview(context.Background(), repo, base)
+	if err != nil {
+		t.Fatalf("InspectReview after same-shape edit: %v", err)
+	}
+	if changed.ChangedFiles != got.ChangedFiles || changed.Additions != got.Additions || changed.Deletions != got.Deletions {
+		t.Fatalf("same-shape edit changed counts: before=%+v after=%+v", got, changed)
+	}
+	if changed.WorkspaceFingerprint == got.WorkspaceFingerprint {
+		t.Fatal("fingerprint did not change when file bytes changed")
+	}
 }
 
 func TestInspectReview_RejectsInvalidBaseBeforeRunningGit(t *testing.T) {
@@ -66,6 +91,31 @@ func TestInspectReview_RejectsInvalidBaseBeforeRunningGit(t *testing.T) {
 	}
 	if runner.lastArgs != nil {
 		t.Fatalf("git ran with args %v", runner.lastArgs)
+	}
+}
+
+func TestInspectReview_FingerprintsDeletedTrackedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	runReviewGit(t, repo, "init")
+	runReviewGit(t, repo, "config", "user.email", "test@example.com")
+	runReviewGit(t, repo, "config", "user.name", "Test User")
+	writeReviewFile(t, repo, "deleted.txt", []byte("before\n"))
+	runReviewGit(t, repo, "add", "--", "deleted.txt")
+	runReviewGit(t, repo, "commit", "-m", "base")
+	base := runReviewGit(t, repo, "rev-parse", "HEAD")
+	if err := os.Remove(filepath.Join(repo, "deleted.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := NewClient().InspectReview(context.Background(), repo, base)
+	if err != nil {
+		t.Fatalf("InspectReview: %v", err)
+	}
+	if got.ChangedFiles != 1 || got.WorkspaceFingerprint == "" {
+		t.Fatalf("deleted-file review = %+v", got)
 	}
 }
 

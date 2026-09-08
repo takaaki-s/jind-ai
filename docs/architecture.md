@@ -331,8 +331,15 @@ Who touches it:
   and a green diamond means locally reviewable. This is not an approval or a
   test result.
 - `Session.ReviewFacts` stores only aggregate local evidence and is refreshed
-  by completion or the explicit `review-refresh` / `jin session review` path.
-  `Manager.List` remains free of git subprocesses.
+  by completion, explicit `review-refresh` / `jin session review`, or the
+  check-report path below. `Manager.List` remains free of git subprocesses.
+- `jin session check-report <selector> passed|failed` accepts only an explicit
+  aggregate result (`source=reported`). The manager refreshes review evidence
+  first and binds the report to its content-based workspace fingerprint; it
+  never discovers or runs tests. A current failure projects `checks-failed`.
+  Different or unavailable later evidence makes the report stale, so it no
+  longer overrides `ready-for-review`/`done`. Staleness is derived from cached
+  fields and adds no work to `Manager.List`.
 
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).

@@ -3051,7 +3051,14 @@ const attentionGlyph = "●"
 // keeps it legible in monochrome terminals.
 const reviewReadyGlyph = "◆"
 
+// checksFailedGlyph is the highest-priority review handoff: an explicitly
+// reported failure for the current workspace fingerprint.
+const checksFailedGlyph = "✕"
+
 func attentionDisplay(state session.AttentionState) (string, lipgloss.Style) {
+	if state == session.AttentionChecksFailed {
+		return checksFailedGlyph, checksFailedStyle
+	}
 	if state == session.AttentionReadyForReview {
 		return reviewReadyGlyph, reviewReadyStyle
 	}

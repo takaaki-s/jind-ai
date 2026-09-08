@@ -76,6 +76,16 @@ func TestRenderSession_ReadyForReviewUsesDistinctGlyph(t *testing.T) {
 	}
 }
 
+func TestRenderSession_ChecksFailedUsesDistinctGlyph(t *testing.T) {
+	m := plainModel()
+	sess := unseenInfo("s", session.DefaultFleet)
+	sess.Attention.State = session.AttentionChecksFailed
+	line := sessionRowLines(m.renderSession(sess, false, false, 40))[0]
+	if !strings.Contains(line, checksFailedGlyph) || strings.Contains(line, reviewReadyGlyph) || strings.Contains(line, attentionGlyph) {
+		t.Fatalf("row = %q, want only failed glyph %q", stripANSI(line), checksFailedGlyph)
+	}
+}
+
 // The cell is blank in exactly the two states that are not a pending
 // completion, so the dot means one thing.
 func TestRenderSession_NoDotWhenNothingIsUnseen(t *testing.T) {

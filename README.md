@@ -199,12 +199,13 @@ maps it to `thinking`. A codex session genuinely waiting on an approval reads
 as `thinking`, `jin session respond` cannot answer it, and no timer moves it:
 attach to the pane. Claude Code and opencode are unaffected.
 
-The TUI list carries one more column to the left of this one. An orange ● there
-is **not a status**: it means the session has a completed turn you have not
-acknowledged yet. Attaching to the session from the TUI clears it, as do the
-action palette's "mark completion seen" and `jin session seen <selector>` —
-[Completed turns](#completed-turns) has the rest, including what does *not*
-clear it.
+The TUI list carries one more column to the left of this one. It is **not a
+status**: orange ● is an unacknowledged completion, green ◆ is a non-empty local
+review delta, and red ✕ is an explicitly reported check failure for the current
+workspace fingerprint. Attaching to the session from the TUI clears the mark,
+as do the action palette's "mark completion seen" and
+`jin session seen <selector>` — [Completed turns](#completed-turns) has the
+rest, including what does *not* clear it.
 
 ## CLI Commands
 
@@ -266,6 +267,10 @@ jin session output <session-name> --last 3
 # Acknowledge a session's completed turn (clears its TUI dot)
 jin session seen <session-name>
 
+# Report checks that you ran outside jind-ai
+jin session check-report <session-name> passed
+jin session check-report <session-name> failed
+
 # Kill a session
 jin session kill <session-name>
 
@@ -288,7 +293,8 @@ to find the session that finished while you were reading another one: it went
 So a finished turn also leaves a receipt. The TUI marks it with an orange dot.
 For a managed worktree, jind-ai then compares the worktree with the exact base
 recorded at creation; a non-empty local delta changes the mark to a green
-diamond. Either mark floats the session to the top of its fleet.
+diamond. A current reported check failure changes it to a red cross. Any mark
+floats the session to the top of its fleet.
 
 Three things clear it, and all three are you saying you looked: **attaching to
 the session from the TUI** (`Enter`, a second click on the row, or picking it in
@@ -302,7 +308,8 @@ come back.
 
 `done` says only that a turn ended without an error. `ready-for-review` adds one
 bounded fact: the managed worktree has a non-empty local delta from its recorded
-base. It is not approval, a test result, or a claim that the work is good.
+base. A red cross means checks explicitly reported for that exact workspace
+fingerprint failed. It is still not approval or a claim that the work is good.
 
 Assessment happens on completion. Refresh the cached counts explicitly with:
 
@@ -313,16 +320,31 @@ jin session review <selector>
 This is local and read-only: it does not fetch, run tests, or retain filenames
 or patch contents.
 
+jind-ai never guesses how to test a repository. After running the appropriate
+checks yourself (or from an integration), report their aggregate result with
+`jin session check-report <selector> passed|failed`. Reporting refreshes the
+local workspace fingerprint first. A later completion or `session review` that
+observes different contents marks the report stale, and a stale/unknown report
+does not block `ready-for-review`.
+
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
-`seen`, `review` — carries the attention and, once assessed, `review_facts`.
+`seen`, `review`, `check-report` — carries the attention and, once assessed,
+`review_facts` and `check_report`.
 
 ```json
 {
   "attention": {
-    "state": "done",
+    "state": "checks-failed",
     "generation": 4,
     "seen_generation": 3,
     "unseen": true
+  },
+  "check_report": {
+    "source": "reported",
+    "status": "failed",
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "reported_at": "2026-09-08T12:00:00Z",
+    "stale": false
   }
 }
 ```

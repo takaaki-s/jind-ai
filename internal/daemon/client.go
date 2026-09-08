@@ -478,6 +478,26 @@ func (c *Client) RefreshReview(id string) (*session.Info, error) {
 	return &info, nil
 }
 
+// ReportChecks records an aggregate result supplied by the caller and returns
+// the updated session projection. The daemon binds it to fresh local review
+// evidence; it does not run checks.
+func (c *Client) ReportChecks(id string, status session.CheckStatus) (*session.Info, error) {
+	data, _ := json.Marshal(CheckReportRequest{ID: id, Status: status})
+	resp, err := c.send(Request{Action: "check-report", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+
+	var info session.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler

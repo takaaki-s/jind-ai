@@ -99,6 +99,10 @@ type Session struct {
 	// list polling path.
 	ReviewFacts ReviewFacts `json:"review_facts,omitzero"`
 
+	// CheckReport is the latest aggregate result explicitly supplied by a
+	// caller. Its freshness is derived from ReviewFacts, without I/O on reads.
+	CheckReport CheckReport `json:"check_report,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -159,8 +163,9 @@ type Info struct {
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
 	// none/seen.
-	Attention   AttentionInfo `json:"attention,omitzero"`
-	ReviewFacts ReviewFacts   `json:"review_facts,omitzero"`
+	Attention   AttentionInfo   `json:"attention,omitzero"`
+	ReviewFacts ReviewFacts     `json:"review_facts,omitzero"`
+	CheckReport CheckReportInfo `json:"check_report,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -195,6 +200,7 @@ func SortInfos(infos []Info) {
 
 // ToInfo converts Session to Info
 func (s *Session) ToInfo() Info {
+	attention := reconcileCheckAttention(s.Attention, s.ReviewFacts, s.CheckReport)
 	return Info{
 		ID:                s.ID,
 		Description:       s.Description,
@@ -211,8 +217,9 @@ func (s *Session) ToInfo() Info {
 		Model:             s.Model,
 		TmuxWindowName:    s.TmuxWindowName,
 		Fleet:             s.Fleet,
-		Attention:         s.Attention.toInfo(),
+		Attention:         attention.toInfo(),
 		ReviewFacts:       s.ReviewFacts,
+		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,
