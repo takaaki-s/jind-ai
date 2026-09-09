@@ -11,7 +11,7 @@ Community plugins are discoverable through the [plugin registry](plugin-registry
 `jin plugin ls-remote` lists them, `jin plugin install <name>` installs one
 by registry name with a commit-pinned consent screen.
 
-## Two ways a plugin runs
+## Three ways a plugin runs
 
 - **Event listener** — a manifest action subscribes to `status_changed`
   via its `on:` matcher. Good for notifications, logging, CI triggers —
@@ -29,9 +29,15 @@ by registry name with a commit-pinned consent screen.
   action run — global or session-scoped — `JIN_CALLER_TMUX_SOCKET` /
   `JIN_CALLER_TMUX_PANE` identify where the invoking CLI was launched
   from, when it sat inside a tmux client.
+- **PR handoff provider** — an action with `handoff: true`, invoked only by
+  `jin session pr-handoff <session> <plugin> [action] --confirm`. It receives a
+  bounded evidence document and idempotency key, runs synchronously, and
+  returns one bounded JSON result. It cannot declare `on`, `listener`, or
+  `popup`, and is hidden from generic action surfaces. Use `--dry-run` to run
+  every core preflight without invoking it.
 
-Both entry points execute the same action `entrypoint` with the same
-environment; only the trigger differs.
+All three execute the declared action `entrypoint`; handoff providers use the
+stricter stdin/stdout contract below.
 
 ## Manifest (`jind-ai-plugin.yaml`)
 
@@ -88,6 +94,7 @@ required. Write new manifests as v2.
 | `timeout` (top-level) | No | How long any of this plugin's actions may run; default `30s`. There is no per-action override — the dispatcher applies this one value to every action |
 | `actions[].popup.width` / `.height` | No | Per-action manifest hint for `jin pane popup --here` size (1–100, percent of terminal) |
 | `actions[].listener` | No | Marks the action as an event-only endpoint. It still fires on matching `on:` events, but is hidden from every user-facing surface (palette, help popup, shell completion). Direct invocation via `jin plugin run <plugin> <action>` remains available for debugging. Requires a non-empty `on:` — a listener with no events has no runtime purpose |
+| `actions[].handoff` | No | Marks a synchronous structured PR-handoff provider. It is hidden from ordinary action surfaces and can run only through `jin session pr-handoff`. Requires empty `on` and forbids `listener`/`popup` |
 | `on` / `popup` (top-level) | v1 only | Legacy v1 fields; forbidden in v2 (validation error). Put them under `actions[]` instead. Top-level `timeout` is **not** in this group — it stays valid in v2 (row above) |
 
 `install.source` and `install.release_asset` are mutually exclusive.
@@ -115,7 +122,7 @@ Environment variables:
 
 | Variable | Description |
 |----------|--------------|
-| `JIN_EVENT` | `status_changed` or `action` |
+| `JIN_EVENT` | `status_changed`, `action`, or `pr_handoff` |
 | `JIN_ACTION_ID` | ID of the manifest action that fired this run (`default` for v1 manifests / v2 default actions synthesised as `default`). A shared entrypoint script can dispatch on this instead of parsing argv |
 | `JIN_SESSION_ID` | Session ID |
 | `JIN_STATUS` | Current status |
@@ -125,6 +132,7 @@ Environment variables:
 | `JIN_TMUX_PANE_ID` | tmux pane ID, if known |
 | `JIN_NOTIFY_KIND` | Notification kind for this transition: `task-complete`, `error`, `permission`, or empty when the transition triggers no notification |
 | `JIN_PLUGIN_DEPTH` | Chain depth — see [Constraints](#constraints) |
+| `JIN_HANDOFF_KEY` | PR handoff only: stable idempotency key, also present in stdin JSON |
 | `JIN_SOCKET` | Daemon socket path; the `jin` CLI a plugin invokes picks this up automatically |
 | `JIN_BIN` | Absolute path of a `jin` matching the running daemon — a copy jind-ai keeps under its state directory, so it stays valid even if the binary the daemon was launched from is rebuilt or removed. Prefer `"${JIN_BIN:-jin}"` over a bare `jin` — a `jin` found on PATH may be an older install that lacks newer subcommands |
 | `JIN_DEBUG` | `1` when the daemon is running with debug logging on, so a `jin` the plugin calls back into records what it does too. Omitted — not set to `0` — otherwise |
@@ -133,6 +141,33 @@ Environment variables:
 
 The same data is also written to **stdin as JSON** (same fields, snake_case;
 caller tmux context is env-only).
+
+### PR handoff provider contract
+
+A handoff action receives a schema-versioned document containing the session
+ID, repository name when known, base/head commit IDs, branch, workspace
+fingerprint, bounded diff counts, the review time, and an optional current
+reported-check result. It never contains paths, filenames, patch text, prompts,
+transcripts, environment values, or credentials.
+
+Return exactly one JSON object on stdout:
+
+```json
+{
+  "status": "succeeded",
+  "provider": "github",
+  "id": "123",
+  "url": "https://github.com/acme/app/pull/123"
+}
+```
+
+`status` is `succeeded` or `failed`; a success requires `id` or `url`.
+URLs must be HTTP(S) without credentials, query, or fragment. stdout is capped
+at 32 KiB and each persisted field has a smaller bound. Diagnostics belong on
+stderr. Any timeout, non-zero exit, malformed/oversized result, or lost daemon
+response is an unknown external outcome: providers must implement the supplied
+idempotency key so receiving it again queries or safely converges on the same
+PR rather than creating another one.
 
 For anything beyond this thin payload, call back into jind-ai:
 

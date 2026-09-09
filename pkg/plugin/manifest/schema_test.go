@@ -371,6 +371,27 @@ func TestParseListenerAction(t *testing.T) {
 	}
 }
 
+func TestParseHandoffAction(t *testing.T) {
+	m, unknown, err := Parse([]byte(`schema_version: 2
+name: pr-provider
+version: 0.1.0
+description: structured PR provider
+jin: ">=0.11.0"
+install:
+  source: {}
+actions:
+  - id: create
+    entrypoint: ./create
+    handoff: true
+`))
+	if err != nil || len(unknown) != 0 {
+		t.Fatalf("Parse = unknown %v, err %v", unknown, err)
+	}
+	if len(m.Actions) != 1 || !m.Actions[0].Handoff {
+		t.Fatalf("Actions = %+v", m.Actions)
+	}
+}
+
 func TestParseUnknownActionField(t *testing.T) {
 	yamlDoc := []byte(`schema_version: 2
 name: hello

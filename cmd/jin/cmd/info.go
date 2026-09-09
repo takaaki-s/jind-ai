@@ -92,6 +92,17 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 		}
 		fmt.Fprintln(tw)
 	}
+	if info.PRHandoff.Status != "" {
+		fmt.Fprintf(tw, "PRHandoff:\t%s (%s:%s)", info.PRHandoff.Status,
+			info.PRHandoff.Target.Plugin, info.PRHandoff.Target.Action)
+		if info.PRHandoff.Stale {
+			fmt.Fprint(tw, " — stale")
+		}
+		if info.PRHandoff.Result.URL != "" {
+			fmt.Fprintf(tw, " — %s", info.PRHandoff.Result.URL)
+		}
+		fmt.Fprintln(tw)
+	}
 
 	fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format("2006-01-02 15:04:05"))
 	if !info.LastActiveAt.IsZero() {

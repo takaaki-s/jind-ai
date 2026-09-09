@@ -508,6 +508,18 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 		return nil, err
 	}
 	for _, s := range sessions {
+		// A daemon cannot resume an in-flight synchronous provider process. The
+		// provider may nevertheless have completed its external mutation before
+		// the daemon stopped, so fail closed to unknown and preserve the key for
+		// reconciliation rather than leaving the handoff permanently running.
+		if s.PRHandoff.Status == PRHandoffRunning {
+			s.PRHandoff.Status = PRHandoffUnknown
+			s.PRHandoff.Error = "daemon restarted while the PR handoff was running; external outcome is unknown"
+			s.PRHandoff.UpdatedAt = time.Now()
+			if err := store.Save(*s); err != nil {
+				debugLog("[LOAD] persist interrupted PR handoff for %s: %v", s.ID, err)
+			}
+		}
 		// Normalize to Stopped in memory (the process may be gone), but keep
 		// the on-disk value: recovery uses it to restore the hook-derived
 		// status of sessions whose pane turns out to still be alive.

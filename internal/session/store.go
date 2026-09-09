@@ -101,6 +101,7 @@ func (s *Store) Save(session Session) error {
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
 	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
+	session.PRHandoff = mergePRHandoff(session.PRHandoff, persistedPRHandoff(path))
 	session.Attention = reconcileCheckAttention(session.Attention, session.ReviewFacts, session.CheckReport)
 
 	data, err := json.MarshalIndent(&session, "", "  ")
@@ -109,6 +110,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedPRHandoff(path string) PRHandoff {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] PR handoff probe failed for %s: %v", path, err)
+		}
+		return PRHandoff{}
+	}
+	var probe struct {
+		PRHandoff PRHandoff `json:"pr_handoff"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] PR handoff probe could not parse %s: %v", path, err)
+		return PRHandoff{}
+	}
+	return probe.PRHandoff
 }
 
 func persistedReviewDisposition(path string) ReviewDisposition {

@@ -644,6 +644,24 @@ on:
 	}
 }
 
+func TestCheckHandoffActionMustBeExplicitOnly(t *testing.T) {
+	m := &Manifest{SchemaVersion: 2, Name: "provider", Version: "0.1.0", Jin: ">=0.11.0",
+		Install: Install{Source: &SourceInstall{}}, Actions: []Action{{
+			ID: "create", Entrypoint: "./create", Handoff: true, Listener: true,
+			On: []string{"status_changed"}, Popup: &PopupConfig{Width: 50},
+		}}}
+	findings := Check(m, CheckOptions{})
+	count := 0
+	for _, finding := range findings {
+		if finding.Rule == RuleHandoffActionOnly && finding.Severity == SeverityError {
+			count++
+		}
+	}
+	if count != 3 {
+		t.Fatalf("handoff constraint findings = %d, want 3:\n%s", count, findingsSummary(findings))
+	}
+}
+
 // TestCheckV2ActionWithEmptyIDAndEntrypoint drives the fallback branches in
 // checkActionEntrypoints / checkActionsOn / checkActionsPopup that only fire
 // when an action's ID is empty. Without this test the branches are dead

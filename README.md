@@ -273,6 +273,10 @@ jin session check-report <session-name> failed
 jin session review-disposition <session-name> reviewed
 jin session review-disposition <session-name> changes-requested
 
+# Preflight, then explicitly hand reviewed commits to a PR provider plugin
+jin session pr-handoff <session-name> <plugin> [action] --dry-run
+jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
+
 # Kill a session
 jin session kill <session-name>
 
@@ -338,9 +342,21 @@ It is independent of seen/unseen attention and never merges, deletes, or cleans
 up a session. The same two decisions are available in the TUI action palette;
 full diff display remains the job of your editor, git tooling, or a plugin.
 
+A plugin action declared with `handoff: true` can receive the reviewed commits
+through `jin session pr-handoff`. `--dry-run` refreshes and validates the
+evidence but never runs the plugin. `--confirm` is required to invoke it. The
+preflight fails closed for stale/non-reviewed evidence, failed or stale
+reported checks, detached/uncommitted-only changes, and a dirty worktree. Its
+bounded JSON payload contains commit IDs and counts, not filenames, patches,
+prompts, transcripts, or credentials. The idempotency key and provider result
+are persisted against the workspace fingerprint; timeout or malformed output
+is `unknown`, and the same key is used to reconcile/retry safely. This creates
+no merge or cleanup authority.
+
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
 `seen`, `review`, `check-report`, `review-disposition` — carries the attention
-and, once assessed, `review_facts`, `check_report`, and `review_disposition`.
+and, once assessed, `review_facts`, `check_report`, `review_disposition`, and
+the latest `pr_handoff`.
 
 ```json
 {

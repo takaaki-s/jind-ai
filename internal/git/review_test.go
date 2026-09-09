@@ -94,6 +94,26 @@ func TestInspectReview_RejectsInvalidBaseBeforeRunningGit(t *testing.T) {
 	}
 }
 
+func TestReviewWorktreeClean_IncludesUntrackedAndTrackedChanges(t *testing.T) {
+	repo := t.TempDir()
+	runReviewGit(t, repo, "init")
+	runReviewGit(t, repo, "config", "user.email", "test@example.com")
+	runReviewGit(t, repo, "config", "user.name", "Test User")
+	writeReviewFile(t, repo, "tracked.txt", []byte("base\n"))
+	runReviewGit(t, repo, "add", "--", "tracked.txt")
+	runReviewGit(t, repo, "commit", "-m", "base")
+	client := NewClient()
+	clean, err := client.ReviewWorktreeClean(context.Background(), repo)
+	if err != nil || !clean {
+		t.Fatalf("clean checkout = %v, %v", clean, err)
+	}
+	writeReviewFile(t, repo, "untracked.txt", []byte("new\n"))
+	clean, err = client.ReviewWorktreeClean(context.Background(), repo)
+	if err != nil || clean {
+		t.Fatalf("untracked checkout = %v, %v", clean, err)
+	}
+}
+
 func TestInspectReview_FingerprintsDeletedTrackedFile(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

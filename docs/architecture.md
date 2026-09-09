@@ -347,6 +347,15 @@ Who touches it:
   cached evidence changes fingerprint, and remains independent of attention,
   checks, merge, deletion, and cleanup. The TUI action palette invokes this
   endpoint; jind-ai does not add a competing full-patch renderer.
+- `jin session pr-handoff <selector> <plugin> [action] --dry-run|--confirm`
+  turns that current evidence into a narrow provider-neutral boundary. Core
+  refreshes the review facts, requires a clean immutable worktree plus a current
+  `reviewed` disposition, rejects failed/stale reported checks, and sends only
+  bounded counts and commit identifiers. A manifest-declared `handoff` action
+  owns the provider API call. Core persists the idempotency key and
+  `running`/`succeeded`/`failed`/`unknown` result; it never merges, deletes, or
+  cleans up the session. Handoff actions are excluded from ordinary plugin and
+  TUI action surfaces.
 
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).

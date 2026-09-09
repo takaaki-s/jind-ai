@@ -60,6 +60,7 @@ const (
 	RuleV2Constraint        RuleID = 20  // schema v2 forbids top-level entrypoint / on / popup
 	RuleActionsRequired     RuleID = 21  // schema v2 requires at least one action
 	RuleListenerRequiresOn  RuleID = 22  // listener: true actions must declare a non-empty on
+	RuleHandoffActionOnly   RuleID = 23  // handoff actions are explicit synchronous endpoints
 	RuleUnknownFieldWarning RuleID = 100 // synthetic; forward-compat WARN, out of the spec table range
 )
 
@@ -136,6 +137,7 @@ func Check(m *Manifest, opts CheckOptions) []Finding {
 	findings = append(findings, checkActionsOn(m)...)
 	findings = append(findings, checkActionsPopup(m)...)
 	findings = append(findings, checkListenerRequiresOn(m)...)
+	findings = append(findings, checkHandoffActions(m)...)
 	findings = append(findings, checkOn(m)...)
 	findings = append(findings, checkPopup(m)...)
 
@@ -148,6 +150,35 @@ func Check(m *Manifest, opts CheckOptions) []Finding {
 		findings = append(findings, checkReadme(opts.PluginDir)...)
 	}
 
+	return findings
+}
+
+func checkHandoffActions(m *Manifest) []Finding {
+	var findings []Finding
+	for i, a := range m.Actions {
+		if !a.Handoff {
+			continue
+		}
+		ref := actionRef(i, a.ID)
+		if a.Listener {
+			findings = append(findings, Finding{
+				Rule: RuleHandoffActionOnly, Severity: SeverityError,
+				Field: ref + ".handoff", Message: "handoff actions cannot also be listeners",
+			})
+		}
+		if len(a.On) != 0 {
+			findings = append(findings, Finding{
+				Rule: RuleHandoffActionOnly, Severity: SeverityError,
+				Field: ref + ".on", Message: "handoff actions cannot subscribe to events",
+			})
+		}
+		if a.Popup != nil {
+			findings = append(findings, Finding{
+				Rule: RuleHandoffActionOnly, Severity: SeverityError,
+				Field: ref + ".popup", Message: "handoff actions cannot open interactive popups",
+			})
+		}
+	}
 	return findings
 }
 

@@ -260,6 +260,22 @@ The command refreshes the workspace fingerprint first. Later content changes
 make the decision stale. It does not mark attention seen, merge, delete, or
 clean up the session.
 
+If a PR provider plugin is installed, preflight the exact accepted evidence
+before allowing any external mutation:
+
+```bash
+jin session pr-handoff fix-login github-pr create --dry-run
+jin session pr-handoff fix-login github-pr create --confirm \
+  --idempotency-key prh_...
+jin session info fix-login
+```
+
+The dry run neither invokes the plugin nor changes session state. Copy its
+idempotency key into the confirmed call. A timeout or malformed provider result
+is recorded as `unknown`, because the PR may already exist; retry with the same
+key. Even `succeeded` is only a handoff receipt—it does not authorize merging,
+deleting the worktree, or closing the session.
+
 ## Accepting the work
 
 Do not forward a child's report as your own conclusion. For code changes,

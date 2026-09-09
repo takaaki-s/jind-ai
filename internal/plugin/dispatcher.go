@@ -63,6 +63,10 @@ const maxDepth = 2
 // (plugin, action, session, event) tuple when the caller does not configure one.
 const DefaultDebounce = 3 * time.Second
 
+// MaxHandoffTimeout keeps the synchronous daemon request inside the client's
+// 60s request deadline. A provider may declare a tighter manifest timeout.
+const MaxHandoffTimeout = 30 * time.Second
+
 // debouncePruneThreshold caps lastFired growth: sessions come and go for the
 // daemon's whole lifetime, so once the map crosses this size expired entries
 // are swept on the next debounce check. Entries past their window carry no
@@ -250,6 +254,9 @@ func (d *EventDispatcher) RunAction(name, actionID string, ev Event, callerDepth
 						name, actionID, strings.Join(e.Manifest.ActionIDs(), ", "))
 				}
 			}
+			if a.Handoff {
+				return fmt.Errorf("plugin %s action %s is a PR handoff provider; use jin session pr-handoff", name, a.ID)
+			}
 			go d.run(e, a, ev, callerDepth+1, actx)
 			return nil
 		case StateIncompatible:
@@ -261,6 +268,75 @@ func (d *EventDispatcher) RunAction(name, actionID string, ev Event, callerDepth
 		}
 	}
 	return fmt.Errorf("plugin %s is not installed", name)
+}
+
+// ResolveHandoff validates that an installed, enabled plugin exposes the
+// requested structured handoff endpoint and returns its canonical action ID.
+// Empty actionID means the manifest's default action, matching plugin run.
+func (d *EventDispatcher) ResolveHandoff(name, actionID string) (string, error) {
+	_, action, err := d.resolveHandoff(name, actionID)
+	if err != nil {
+		return "", err
+	}
+	return action.ID, nil
+}
+
+// RunHandoff executes a handoff endpoint synchronously and returns its bounded
+// stdout. The caller owns interpretation and persistence of the JSON result.
+func (d *EventDispatcher) RunHandoff(name, actionID, key string, ev Event, payload []byte) ([]byte, error) {
+	entry, action, err := d.resolveHandoff(name, actionID)
+	if err != nil {
+		return nil, err
+	}
+	timeout := entry.Manifest.EffectiveTimeout()
+	if timeout > MaxHandoffTimeout {
+		timeout = MaxHandoffTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return ExecHandoff(ctx, ExecOptions{
+		PluginDir:  filepath.Join(d.pluginsDir, entry.Name),
+		Run:        action.Entrypoint,
+		ActionID:   action.ID,
+		Env:        ev,
+		Depth:      1,
+		Identity:   d.identity,
+		LogPath:    LogPath(d.stateDir, entry.Name),
+		Timeout:    timeout,
+		HandoffKey: key,
+	}, payload)
+}
+
+func (d *EventDispatcher) resolveHandoff(name, actionID string) (Entry, *manifest.Action, error) {
+	entries, err := d.registry.Load()
+	if err != nil {
+		return Entry{}, nil, err
+	}
+	for _, entry := range entries {
+		if entry.Name != name {
+			continue
+		}
+		switch entry.State {
+		case StateIncompatible:
+			return Entry{}, nil, fmt.Errorf("plugin %s is incompatible: %v (try: jin plugin update %s)", name, entry.Err, name)
+		case StateBroken:
+			return Entry{}, nil, fmt.Errorf("plugin %s is broken: %v", name, entry.Err)
+		case StateDisabled:
+			return Entry{}, nil, fmt.Errorf("plugin %s is disabled", name)
+		}
+		action := entry.Manifest.DefaultAction()
+		if actionID != "" {
+			action = entry.Manifest.FindAction(actionID)
+		}
+		if action == nil {
+			return Entry{}, nil, fmt.Errorf("plugin %s has no action %q", name, actionID)
+		}
+		if !action.Handoff {
+			return Entry{}, nil, fmt.Errorf("plugin %s action %s is not a handoff provider", name, action.ID)
+		}
+		return entry, action, nil
+	}
+	return Entry{}, nil, fmt.Errorf("plugin %s is not installed", name)
 }
 
 func (d *EventDispatcher) run(e Entry, a *manifest.Action, ev Event, depth int, actx ActionContext) {
