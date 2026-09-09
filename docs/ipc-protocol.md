@@ -155,6 +155,7 @@ it alone.
 | `review-refresh` | `IDRequest` | Run a bounded, local-only review assessment and return the updated `session.Info` |
 | `check-report` | `CheckReportRequest` (`id`, `status`: `passed` or `failed`) | Refresh local review evidence, bind an explicit aggregate check result to its workspace fingerprint, and return updated `session.Info` |
 | `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
+| `pr-handoff` | `PRHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Fail-closed preflight and optional synchronous invocation of a manifest-declared PR handoff provider; returns the bounded request, resolved target, and persisted outcome |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -196,7 +197,8 @@ assessment reports `worktree_path_unknown` for it rather than using the mutable
 Protocol v5 adds the optional `Info.review_facts` cache and the
 `ready-for-review` attention state. Protocol v6 adds its workspace fingerprint,
 the optional `Info.check_report`, and `checks-failed`. Protocol v7 adds the
-optional fingerprint-bound `Info.review_disposition`. A settled
+optional fingerprint-bound `Info.review_disposition`. Protocol v8 adds the
+optional `Info.pr_handoff`. A settled
 managed-worktree example is:
 
 ```json
@@ -234,6 +236,21 @@ managed-worktree example is:
     "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
     "reported_at": "2026-09-09T12:00:00Z",
     "stale": false
+  },
+  "pr_handoff": {
+    "idempotency_key": "prh_4e5f...",
+    "target": {"plugin": "github-pr", "action": "create"},
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "status": "succeeded",
+    "result": {
+      "status": "succeeded",
+      "provider": "github",
+      "id": "208",
+      "url": "https://github.com/example/repo/pull/208"
+    },
+    "started_at": "2026-09-09T12:05:00Z",
+    "updated_at": "2026-09-09T12:05:02Z",
+    "stale": false
   }
 }
 ```
@@ -249,6 +266,17 @@ unknown or stale reports do not produce `checks-failed`.
 fresh, non-empty local assessment. `review_disposition.stale` is derived from
 the cached fingerprint. It neither acknowledges attention nor triggers merge
 or cleanup.
+
+`pr-handoff` consumes that evidence rather than replacing it. Preflight
+requires a named branch with committed changes, a clean immutable review
+worktree, a current `reviewed` disposition, and no current failed or stale
+reported check. `dry_run` performs only preflight and returns the exact bounded
+provider payload plus the deterministic idempotency key. `confirm` persists
+`running` before invoking the provider synchronously. A timeout, malformed or
+oversized result, or provider execution error becomes `unknown`; callers retry
+with the same key so a provider can converge without duplicating a PR. The
+handoff stores no patch, filenames, prompt, transcript, or credentials, and it
+does not merge, delete, or clean up a session.
 
 ## Async completion
 
@@ -268,6 +296,11 @@ stays covered by the default 60s tier.
   `Status=stopped` + `error_message` on failure.
 - `plugin-run` writes its outcome to the plugin log; the response only
   confirms the run was dispatched.
+
+`pr-handoff` is deliberately synchronous and bounded to 30 seconds so the
+response can include the provider's durable identifier/URL. Since an external
+mutation may have happened before a timeout, its persisted terminal state is
+`unknown`, not `failed`.
 
 The **synchronous pre-checks** for these actions still fail on the response:
 `new` refuses an unknown agent kind; `delete` refuses a missing session, a
@@ -514,15 +547,19 @@ v7 follows the same rule: `review-disposition` alone is a new action, while the
 new optional `review_disposition` object changes the existing `session.Info`
 response shape.
 
+v8 follows it again: `pr-handoff` is new, but the optional `pr_handoff` object
+changes the existing `session.Info` response shape.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
 safe.
 
-`review-refresh`, `check-report`, and `review-disposition` are also absent from
+`review-refresh`, `check-report`, `review-disposition`, and `pr-handoff` are also absent from
 `readOnlyActions`. All persist evidence, so a timeout has an unknown outcome;
-retrying recomputes the bounded local observation and converges on the latest
-report or decision.
+retrying the first three recomputes the bounded local observation and converges
+on the latest report or decision. Retrying PR handoff must reuse its
+idempotency key because it may have mutated an external provider.
 
 ## Adding a New Action
 

@@ -273,6 +273,17 @@ func TestPluginActions_SkipsListenerActions(t *testing.T) {
 	}
 }
 
+func TestPluginActions_SkipsHandoffActions(t *testing.T) {
+	entries := []plugin.Entry{{Name: "provider", Manifest: &manifest.Manifest{Actions: []manifest.Action{
+		{ID: "create", Entrypoint: "bin/create", Handoff: true},
+		{ID: "settings", Entrypoint: "bin/settings"},
+	}}}}
+	actions := PluginActions(entries, nil)
+	if len(actions) != 1 || actions[0].ID != "plugin:provider:settings" {
+		t.Fatalf("actions = %+v, want only ordinary action", actions)
+	}
+}
+
 func TestPluginActions_ListenerHonorsKeybindingButStaysHiddenFromPalette(t *testing.T) {
 	entries := []plugin.Entry{
 		{Name: "notifier", Manifest: &manifest.Manifest{

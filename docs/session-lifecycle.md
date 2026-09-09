@@ -111,6 +111,20 @@ assessed. Changed or unavailable later evidence projects the prior decision as
 stale. Recording either decision changes no attention generation or process
 status and grants no merge, delete, or cleanup permission.
 
+`jin session pr-handoff <selector> <plugin> [action] --dry-run` is the next
+gate. It refreshes those facts again and fails closed unless the exact current
+workspace is reviewed, committed on a named branch, clean, and free of current
+failed or stale reported checks. The dry run returns the bounded provider
+request and deterministic idempotency key without invoking anything. Repeating
+with `--confirm --idempotency-key <key>` records `running` before the synchronous
+provider call. A confirmed result is `succeeded` or `failed`; a timeout,
+execution error, malformed JSON, or oversized response is `unknown`, because
+the external mutation may already have happened. Retry an unknown outcome with
+the same key. A daemon restart converts an interrupted persisted `running` in
+the same way because its provider process cannot be resumed. Any later
+workspace fingerprint makes the recorded handoff stale.
+No state grants permission to merge, delete, or clean up the session.
+
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
 pick from the switch-session popup both call `Manager.MarkSeen` once the attach

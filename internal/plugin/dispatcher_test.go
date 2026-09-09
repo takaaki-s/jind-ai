@@ -350,6 +350,41 @@ func TestRunActionErrors(t *testing.T) {
 	}
 }
 
+func TestRunHandoff_RequiresCapabilityAndReturnsProviderJSON(t *testing.T) {
+	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
+	manifestBody := v2Manifest("fake-pr", "fake handoff provider", `  - id: create
+    entrypoint: |
+      cat > request.json
+      printf '{"status":"succeeded","id":"42"}'
+    handoff: true
+  - id: ordinary
+    entrypoint: 'true'
+`)
+	installTestPlugin(t, pluginsDir, stateDir, "fake-pr", manifestBody)
+	if _, err := d.ResolveHandoff("fake-pr", "ordinary"); err == nil || !strings.Contains(err.Error(), "not a handoff provider") {
+		t.Fatalf("ordinary action error = %v", err)
+	}
+	if err := d.RunAction("fake-pr", "create", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "session pr-handoff") {
+		t.Fatalf("ordinary run of handoff action = %v", err)
+	}
+	actionID, err := d.ResolveHandoff("fake-pr", "create")
+	if err != nil || actionID != "create" {
+		t.Fatalf("resolve = %q, %v", actionID, err)
+	}
+	payload := []byte(`{"schema_version":1,"kind":"pull-request"}`)
+	out, err := d.RunHandoff("fake-pr", "create", "stable-key", idleEvent(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"status":"succeeded"`) {
+		t.Fatalf("provider output = %q", out)
+	}
+	request, err := os.ReadFile(filepath.Join(pluginsDir, "fake-pr", "request.json"))
+	if err != nil || string(request) != string(payload) {
+		t.Fatalf("provider request = %q, %v", request, err)
+	}
+}
+
 func TestNewDispatcher_NilResolver_UsesDefault(t *testing.T) {
 	pluginsDir := t.TempDir()
 	stateDir := t.TempDir()

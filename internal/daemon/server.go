@@ -319,6 +319,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleCheckReport(req.Data)
 	case "review-disposition":
 		return s.handleReviewDisposition(req.Data)
+	case "pr-handoff":
+		return s.handlePRHandoff(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -338,6 +340,73 @@ func (s *Server) handleRequest(req *Request) Response {
 	default:
 		return Response{Success: false, Error: fmt.Sprintf("unknown action: %s", req.Action)}
 	}
+}
+
+type PRHandoffRequest struct {
+	ID             string `json:"id"`
+	Plugin         string `json:"plugin"`
+	Action         string `json:"action,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+	Confirm        bool   `json:"confirm,omitempty"`
+}
+
+type PRHandoffResponse struct {
+	Payload session.PRHandoffRequest `json:"payload"`
+	Target  session.PRHandoffTarget  `json:"target"`
+	Handoff session.PRHandoffInfo    `json:"handoff,omitzero"`
+}
+
+func (s *Server) handlePRHandoff(data json.RawMessage) Response {
+	var req PRHandoffRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" || req.Plugin == "" {
+		return Response{Success: false, Error: "id and plugin are required"}
+	}
+	if req.DryRun == req.Confirm {
+		return Response{Success: false, Error: "choose exactly one of dry_run or confirm"}
+	}
+	if s.pluginDisp == nil {
+		return Response{Success: false, Error: "plugins are not enabled"}
+	}
+	actionID, err := s.pluginDisp.ResolveHandoff(req.Plugin, req.Action)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	target := session.PRHandoffTarget{Plugin: req.Plugin, Action: actionID}
+	payload, handoff, shouldRun, err := s.manager.BeginPRHandoff(req.ID, target, req.IdempotencyKey, req.DryRun)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if !shouldRun {
+		respData, _ := json.Marshal(PRHandoffResponse{Payload: payload, Target: target, Handoff: handoff})
+		return Response{Success: true, Data: respData}
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	info, _ := s.manager.GetInfo(req.ID)
+	ev := plugin.Event{
+		Name: "pr_handoff", SessionID: info.ID, Status: string(info.Status),
+		AgentKind: info.AgentKind, WorkDir: info.ReviewBase.WorktreePath,
+	}
+	providerJSON, runErr := s.pluginDisp.RunHandoff(req.Plugin, actionID, payload.IdempotencyKey, ev, payloadJSON)
+	var providerResult session.PRHandoffProviderResult
+	if runErr == nil {
+		if err := json.Unmarshal(providerJSON, &providerResult); err != nil {
+			runErr = fmt.Errorf("decode handoff provider result: %w", err)
+		}
+	}
+	updated, finishErr := s.manager.FinishPRHandoff(req.ID, payload.IdempotencyKey, providerResult, runErr)
+	if finishErr != nil {
+		return Response{Success: false, Error: finishErr.Error()}
+	}
+	respData, _ := json.Marshal(PRHandoffResponse{Payload: payload, Target: target, Handoff: updated.PRHandoff})
+	return Response{Success: true, Data: respData}
 }
 
 // readOnlyActions names the actions above whose handlers only read state. The

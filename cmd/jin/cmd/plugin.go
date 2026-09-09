@@ -213,6 +213,9 @@ func runPluginInstallLink(cmd *cobra.Command, link string) error {
 // both surfaces describe exactly what the dispatcher will execute.
 func printActionLine(out io.Writer, prefix string, a *manifest.Action) {
 	fmt.Fprintf(out, "%s%s: %s", prefix, a.ID, a.Entrypoint)
+	if a.Handoff {
+		fmt.Fprint(out, " (handoff)")
+	}
 	if len(a.On) > 0 {
 		fmt.Fprintf(out, " (on: %s)", strings.Join(a.On, ", "))
 	}
@@ -602,9 +605,10 @@ func completePluginRunArgs(cmd *cobra.Command, args []string, toComplete string)
 }
 
 // completePluginActions suggests the action IDs declared by pluginName's
-// manifest. Actions with `listener: true` are event-only endpoints and are
-// omitted from the suggestion list (they remain accepted at runtime for
-// debug invocation — completion just does not surface them). An unknown or
+// manifest. Actions with `listener: true` or `handoff: true` are dedicated
+// endpoints and are omitted from the suggestion list. Listeners remain
+// accepted at runtime for debug invocation; handoff actions require the
+// structured `jin session pr-handoff` path. An unknown or
 // broken plugin yields no suggestions (cobra then completes nothing) rather
 // than an error — completion must never fail loudly.
 func completePluginActions(pluginName, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -618,7 +622,7 @@ func completePluginActions(pluginName, toComplete string) ([]string, cobra.Shell
 		}
 		var ids []string
 		for _, a := range e.Manifest.Actions {
-			if a.Listener {
+			if a.Listener || a.Handoff {
 				continue
 			}
 			if strings.HasPrefix(a.ID, toComplete) {

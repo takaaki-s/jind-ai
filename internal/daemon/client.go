@@ -517,6 +517,22 @@ func (c *Client) ReportReviewDisposition(id string, decision session.ReviewDecis
 	return &info, nil
 }
 
+func (c *Client) PRHandoff(req PRHandoffRequest) (*PRHandoffResponse, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "pr-handoff", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var result PRHandoffResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler

@@ -250,6 +250,10 @@ jin session check-report <session-name> failed
 jin session review-disposition <session-name> reviewed
 jin session review-disposition <session-name> changes-requested
 
+# レビュー済み commit の PR provider 連携を事前確認し、明示実行する
+jin session pr-handoff <session-name> <plugin> [action] --dry-run
+jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
+
 # セッション終了
 jin session kill <session-name>
 
@@ -311,10 +315,20 @@ seen/unseen attention とは独立しており、session の merge、delete、cl
 同じ 2 操作は TUI のアクションパレットからも選べます。patch 全体の表示は editor、git
 ツール、または plugin に任せます。
 
+`handoff: true` を宣言した plugin action には、`jin session pr-handoff` で
+レビュー済み commit を渡せます。`--dry-run` は evidence を更新・検査するだけで
+plugin を起動せず、実行には `--confirm` が必須です。古い／未レビューの evidence、
+失敗または stale の reported checks、detached branch、commit されていない変更、dirty
+worktree は fail closed で拒否します。bounded JSON payload に含むのは commit ID と
+集計値で、ファイル名、patch、prompt、transcript、credential は含みません。
+idempotency key と provider 結果は workspace fingerprint に結び付けて保存されます。
+timeout や不正な出力は `unknown` として残り、同じ key で安全に照会／再試行できます。
+この操作は merge や cleanup の許可にはなりません。
+
 `--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
 `seen` / `review` / `check-report` / `review-disposition` — のいずれにも
-attentionが載り、評価後は `review_facts` / `check_report` / `review_disposition`
-も載ります:
+attentionが載り、評価後は `review_facts` / `check_report` / `review_disposition` /
+最新の `pr_handoff` も載ります:
 
 ```json
 {

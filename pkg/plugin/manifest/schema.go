@@ -70,6 +70,11 @@ type Action struct {
 	// Direct invocation via `jin plugin run <plugin> <action>` remains
 	// possible for debugging. Listener actions must declare a non-empty On.
 	Listener bool `yaml:"listener,omitempty"`
+	// Handoff marks an action as a synchronous, structured PR-handoff
+	// provider. Handoff actions receive the bounded handoff request on stdin
+	// and must return one JSON result on stdout. They are not ordinary palette
+	// actions and cannot subscribe to status events.
+	Handoff bool `yaml:"handoff,omitempty"`
 }
 
 // Install carries either a source build recipe or a release asset pattern.
@@ -288,6 +293,7 @@ var knownAction = map[string]struct{}{
 	"on":         {},
 	"popup":      {},
 	"listener":   {},
+	"handoff":    {},
 }
 
 // unknownFieldsFromNode walks the top-level mapping and its nested `install`

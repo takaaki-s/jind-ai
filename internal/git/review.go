@@ -126,6 +126,19 @@ func (c *Client) InspectReview(ctx context.Context, repoDir, baseCommit string) 
 	return out, nil
 }
 
+// ReviewWorktreeClean reports whether HEAD fully describes the checkout that a
+// PR provider would publish. It is local, bounded and read-only; ignored files
+// are excluded, while staged, unstaged, untracked and submodule changes all
+// make the result false.
+func (c *Client) ReviewWorktreeClean(ctx context.Context, repoDir string) (bool, error) {
+	out, err := c.runReviewCommand(ctx, repoDir,
+		"status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none", "--")
+	if err != nil {
+		return false, fmt.Errorf("inspect review worktree status: %w", err)
+	}
+	return len(out) == 0, nil
+}
+
 func (c *Client) runReviewCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

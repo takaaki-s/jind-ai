@@ -24,4 +24,6 @@ package daemon
 // reported check_report; add the check-report action and checks-failed state.
 // v7: session.Info can include a fingerprint-bound review_disposition; add the
 // review-disposition action.
-const ProtocolVersion = 7
+// v8: plugin actions can declare structured PR-handoff capability;
+// session.Info can include the latest handoff and add the pr-handoff action.
+const ProtocolVersion = 8

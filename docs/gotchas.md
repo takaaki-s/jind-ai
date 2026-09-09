@@ -1875,10 +1875,23 @@ Common pitfalls and caveats that agents tend to fall into.
   projected from the current cached workspace fingerprint rather than stored,
   so a late status save cannot revive an older human decision as current.
 
+  PR handoffs are merged by `updated_at`; at an equal timestamp, a terminal
+  result wins over `running`. This prevents a stale process/status snapshot
+  from erasing the provider result or making an already-created PR appear to
+  need a fresh invocation.
+
   A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
   one, and assert the file did not regress
   (`internal/session/store_attention_test.go`, `review_facts_test.go`,
   `check_report_test.go`, `review_disposition_test.go`).
+
+- **A PR-handoff timeout is not proof of failure.** Core writes `running`
+  before invoking the provider, and records `unknown` when execution or result
+  decoding cannot prove the outcome. The provider may already have created the
+  PR. Retry only with the same idempotency key shown by the dry run/status;
+  generating a new key can create a duplicate outside jind-ai's control.
+  On daemon startup, a persisted `running` handoff is converted to `unknown`
+  for the same reason: the synchronous provider process cannot be resumed.
 
 - **An acknowledgement whose save fails survives only until the daemon
   restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and

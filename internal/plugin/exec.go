@@ -70,6 +70,33 @@ type ExecOptions struct {
 	Timeout     time.Duration
 	PopupWidth  string
 	PopupHeight string
+	HandoffKey  string
+}
+
+const MaxHandoffPayload = 16 << 10
+const MaxHandoffResult = 32 << 10
+
+// boundedCapture keeps only the bounded stdout contract while continuing to
+// consume the provider's output. Returning len(p) prevents a chatty provider
+// from seeing a broken pipe and obscuring the real "result too large" error.
+type boundedCapture struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (w *boundedCapture) Write(p []byte) (int, error) {
+	remaining := w.limit - w.buf.Len()
+	if remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		_, _ = w.buf.Write(p[:remaining])
+	}
+	if remaining < len(p) {
+		w.truncated = true
+	}
+	return len(p), nil
 }
 
 // LogPath returns the append-only log location for a plugin's runs. The parent
@@ -149,6 +176,57 @@ func ExecPlugin(ctx context.Context, opts ExecOptions) error {
 	return nil
 }
 
+// ExecHandoff runs a synchronous structured plugin endpoint. stdin is the
+// bounded provider-neutral request; stdout must be one bounded JSON result.
+// stderr and a copy of stdout still go to the ordinary plugin log so provider
+// failures remain diagnosable without leaking log content into session state.
+func ExecHandoff(ctx context.Context, opts ExecOptions, payload []byte) ([]byte, error) {
+	if len(payload) > MaxHandoffPayload {
+		return nil, fmt.Errorf("handoff payload exceeds %d bytes", MaxHandoffPayload)
+	}
+	if err := os.MkdirAll(filepath.Dir(opts.LogPath), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir plugin log dir: %w", err)
+	}
+	logFile, err := os.OpenFile(opts.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open plugin log: %w", err)
+	}
+	defer logFile.Close()
+
+	var diagnostic io.Writer = logFile
+	if debug.Enabled() {
+		diagnostic = io.MultiWriter(logFile, os.Stderr)
+	}
+	_, _ = fmt.Fprintf(diagnostic, "--- %s pr_handoff session=%s key=%s ---\n",
+		time.Now().Format(time.RFC3339), opts.Env.SessionID, opts.HandoffKey)
+
+	capture := &boundedCapture{limit: MaxHandoffResult}
+	cmd := procgroup.CommandContext(ctx, "bash", "-c", opts.Run)
+	cmd.Dir = opts.PluginDir
+	cmd.Env = buildEnv(opts)
+	cmd.Stdin = bytes.NewReader(payload)
+	cmd.Stdout = io.MultiWriter(diagnostic, capture)
+	cmd.Stderr = diagnostic
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start handoff plugin: %w", err)
+	}
+	runErr := cmd.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("handoff plugin timed out after %s", opts.Timeout)
+	}
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			return nil, fmt.Errorf("handoff plugin exited with status %d", exitErr.ExitCode())
+		}
+		return nil, fmt.Errorf("run handoff plugin: %w", runErr)
+	}
+	if capture.truncated {
+		return nil, fmt.Errorf("handoff result exceeds %d bytes", MaxHandoffResult)
+	}
+	return bytes.TrimSpace(capture.buf.Bytes()), nil
+}
+
 // buildEnv assembles the plugin's environment: the curated inherited keys plus
 // the injected JIN_* vars derived from opts.
 func buildEnv(opts ExecOptions) []string {
@@ -165,6 +243,9 @@ func buildEnv(opts ExecOptions) []string {
 		"JIN_ACTION_ID="+opts.ActionID,
 		jinenv.EnvDepth+"="+strconv.Itoa(opts.Depth),
 	)
+	if opts.HandoffKey != "" {
+		env = append(env, "JIN_HANDOFF_KEY="+opts.HandoffKey)
+	}
 	// Caller tmux context exists only for action runs launched from inside a
 	// tmux client; unlike the JIN_* event vars above these are omitted (not set
 	// empty) so plugins can fall back to their own $TMUX with ${VAR:-...}.

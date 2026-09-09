@@ -108,6 +108,10 @@ type Session struct {
 	// cleanup authorization.
 	ReviewDisposition ReviewDisposition `json:"review_disposition,omitzero"`
 
+	// PRHandoff is the latest explicit provider handoff attempt for this exact
+	// workspace. It is independent of seen and never authorizes merge/cleanup.
+	PRHandoff PRHandoff `json:"pr_handoff,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -172,6 +176,7 @@ type Info struct {
 	ReviewFacts       ReviewFacts           `json:"review_facts,omitzero"`
 	CheckReport       CheckReportInfo       `json:"check_report,omitzero"`
 	ReviewDisposition ReviewDispositionInfo `json:"review_disposition,omitzero"`
+	PRHandoff         PRHandoffInfo         `json:"pr_handoff,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -227,6 +232,7 @@ func (s *Session) ToInfo() Info {
 		ReviewFacts:       s.ReviewFacts,
 		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
 		ReviewDisposition: s.ReviewDisposition.toInfo(s.ReviewFacts),
+		PRHandoff:         s.PRHandoff.toInfo(s.ReviewFacts),
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,

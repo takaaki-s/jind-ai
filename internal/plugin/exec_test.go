@@ -170,6 +170,56 @@ func TestExecPlugin_Timeout(t *testing.T) {
 	}
 }
 
+func TestExecHandoff_CapturesBoundedJSONAndKey(t *testing.T) {
+	requestFile := filepath.Join(t.TempDir(), "request.json")
+	keyFile := filepath.Join(t.TempDir(), "key.txt")
+	logPath := filepath.Join(t.TempDir(), "plugin.log")
+	run := "cat > " + requestFile + "\nprintf '%s' \"$JIN_HANDOFF_KEY\" > " + keyFile + "\nprintf '{\"status\":\"succeeded\",\"id\":\"42\"}'\n"
+	out, err := ExecHandoff(context.Background(), ExecOptions{
+		PluginDir: t.TempDir(), Run: run, ActionID: "create", Env: sampleEvent(),
+		HandoffKey: "stable-key", Identity: testIdentity(), LogPath: logPath,
+		Timeout: time.Second,
+	}, []byte(`{"kind":"pull-request"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); got != `{"status":"succeeded","id":"42"}` {
+		t.Fatalf("stdout = %q", got)
+	}
+	request, err := os.ReadFile(requestFile)
+	if err != nil || string(request) != `{"kind":"pull-request"}` {
+		t.Fatalf("request = %q, %v", request, err)
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil || string(key) != "stable-key" {
+		t.Fatalf("key = %q, %v", key, err)
+	}
+}
+
+func TestExecHandoff_RejectsOversizedResult(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "plugin.log")
+	run := "head -c 40000 /dev/zero | tr '\\0' x\n"
+	_, err := ExecHandoff(context.Background(), ExecOptions{
+		PluginDir: t.TempDir(), Run: run, Env: sampleEvent(), LogPath: logPath,
+		Timeout: time.Second,
+	}, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "result exceeds") {
+		t.Fatalf("oversized result error = %v", err)
+	}
+}
+
+func TestExecHandoff_TimeoutIsReported(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := ExecHandoff(ctx, ExecOptions{
+		PluginDir: t.TempDir(), Run: "sleep 5\n", Env: sampleEvent(),
+		LogPath: filepath.Join(t.TempDir(), "plugin.log"), Timeout: 100 * time.Millisecond,
+	}, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
 // TestExecPlugin_TimeoutKillsGroup verifies that when ctx times out, the run
 // (a bash leader) *and* a background grandchild it spawned are both signalled.
 // Without cmd.Cancel targeting the process group, exec.CommandContext would
