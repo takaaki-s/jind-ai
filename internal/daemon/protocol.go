@@ -26,4 +26,6 @@ package daemon
 // review-disposition action.
 // v8: plugin actions can declare structured PR-handoff capability;
 // session.Info can include the latest handoff and add the pr-handoff action.
-const ProtocolVersion = 8
+// v9: plugin actions can declare two-phase merge-handoff capability;
+// session.Info can include the latest merge outcome and add merge-handoff.
+const ProtocolVersion = 9

@@ -103,6 +103,17 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 		}
 		fmt.Fprintln(tw)
 	}
+	if info.MergeHandoff.Status != "" {
+		fmt.Fprintf(tw, "MergeHandoff:\t%s (%s:%s)", info.MergeHandoff.Status,
+			info.MergeHandoff.Target.Plugin, info.MergeHandoff.Target.Action)
+		if info.MergeHandoff.Stale {
+			fmt.Fprint(tw, " — stale")
+		}
+		if info.MergeHandoff.Result.TargetCommit != "" {
+			fmt.Fprintf(tw, " — %s", info.MergeHandoff.Result.TargetCommit)
+		}
+		fmt.Fprintln(tw)
+	}
 
 	fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format("2006-01-02 15:04:05"))
 	if !info.LastActiveAt.IsZero() {

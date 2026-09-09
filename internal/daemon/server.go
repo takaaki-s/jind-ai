@@ -321,6 +321,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleReviewDisposition(req.Data)
 	case "pr-handoff":
 		return s.handlePRHandoff(req.Data)
+	case "merge-handoff":
+		return s.handleMergeHandoff(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -407,6 +409,127 @@ func (s *Server) handlePRHandoff(data json.RawMessage) Response {
 	}
 	respData, _ := json.Marshal(PRHandoffResponse{Payload: payload, Target: target, Handoff: updated.PRHandoff})
 	return Response{Success: true, Data: respData}
+}
+
+type MergeHandoffRequest struct {
+	ID             string `json:"id"`
+	Plugin         string `json:"plugin"`
+	Action         string `json:"action,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+	Confirm        bool   `json:"confirm,omitempty"`
+}
+
+type MergeHandoffResponse struct {
+	Payload   session.MergeHandoffRequest         `json:"payload"`
+	Target    session.MergeHandoffTarget          `json:"target"`
+	Preflight session.MergeHandoffPreflightResult `json:"preflight"`
+	Handoff   session.MergeHandoffInfo            `json:"handoff,omitzero"`
+}
+
+func (s *Server) handleMergeHandoff(data json.RawMessage) Response {
+	var req MergeHandoffRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" || req.Plugin == "" {
+		return Response{Success: false, Error: "id and plugin are required"}
+	}
+	if req.DryRun == req.Confirm {
+		return Response{Success: false, Error: "choose exactly one of dry_run or confirm"}
+	}
+	if req.Confirm && req.IdempotencyKey == "" {
+		return Response{Success: false, Error: "idempotency_key is required for merge confirmation"}
+	}
+	if s.pluginDisp == nil {
+		return Response{Success: false, Error: "plugins are not enabled"}
+	}
+	actionID, err := s.pluginDisp.ResolveMergeHandoff(req.Plugin, req.Action)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	target := session.MergeHandoffTarget{Plugin: req.Plugin, Action: actionID}
+	payload, current, err := s.manager.PrepareMergeHandoff(req.ID, target, req.IdempotencyKey)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	// A confirmed retry that already reached running or succeeded is complete
+	// from core's perspective. In particular, a merged PR may no longer pass a
+	// fresh mergeability preflight, so invoke neither provider phase again.
+	if req.Confirm && reusableMergeHandoff(current, target, req.IdempotencyKey, payload) {
+		payload.Operation = session.MergeHandoffExecute
+		payload.PullRequest = current.PRTarget
+		payload.Preflight = &current.Preflight
+		respData, _ := json.Marshal(MergeHandoffResponse{
+			Payload: payload, Target: target, Preflight: current.Preflight, Handoff: current,
+		})
+		return Response{Success: true, Data: respData}
+	}
+	info, ok := s.manager.GetInfo(req.ID)
+	if !ok {
+		return Response{Success: false, Error: fmt.Sprintf("session not found: %s", req.ID)}
+	}
+	ev := plugin.Event{
+		Name: "merge_handoff", SessionID: info.ID, Status: string(info.Status),
+		AgentKind: info.AgentKind, WorkDir: info.ReviewBase.WorktreePath,
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	preflightJSON, err := s.pluginDisp.RunMergeHandoff(req.Plugin, actionID, payload.IdempotencyKey, ev, payloadJSON)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("merge provider preflight: %v", err)}
+	}
+	var preflight session.MergeHandoffPreflightResult
+	if err := json.Unmarshal(preflightJSON, &preflight); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("decode merge provider preflight: %v", err)}
+	}
+	if err := session.ValidateMergeHandoffPreflight(preflight, payload); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.DryRun {
+		respData, _ := json.Marshal(MergeHandoffResponse{Payload: payload, Target: target, Preflight: preflight, Handoff: current})
+		return Response{Success: true, Data: respData}
+	}
+
+	mergePayload, handoff, shouldRun, err := s.manager.BeginMergeHandoff(req.ID, target, req.IdempotencyKey, preflight)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if !shouldRun {
+		respData, _ := json.Marshal(MergeHandoffResponse{Payload: mergePayload, Target: target, Preflight: preflight, Handoff: handoff})
+		return Response{Success: true, Data: respData}
+	}
+	mergeJSON, err := json.Marshal(mergePayload)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	providerJSON, runErr := s.pluginDisp.RunMergeHandoff(req.Plugin, actionID, mergePayload.IdempotencyKey, ev, mergeJSON)
+	var providerResult session.MergeHandoffProviderResult
+	if runErr == nil {
+		if err := json.Unmarshal(providerJSON, &providerResult); err != nil {
+			runErr = fmt.Errorf("decode merge provider result: %w", err)
+		}
+	}
+	updated, finishErr := s.manager.FinishMergeHandoff(req.ID, mergePayload.IdempotencyKey, providerResult, runErr)
+	if finishErr != nil {
+		return Response{Success: false, Error: finishErr.Error()}
+	}
+	respData, _ := json.Marshal(MergeHandoffResponse{Payload: mergePayload, Target: target, Preflight: preflight, Handoff: updated.MergeHandoff})
+	return Response{Success: true, Data: respData}
+}
+
+func reusableMergeHandoff(current session.MergeHandoffInfo, target session.MergeHandoffTarget, key string, payload session.MergeHandoffRequest) bool {
+	if current.IsZero() || current.Stale || current.IdempotencyKey != key || current.Target != target ||
+		current.WorkspaceFingerprint != payload.Review.WorkspaceFingerprint {
+		return false
+	}
+	if current.PRTarget.Provider != payload.PullRequest.Provider || current.PRTarget.ID != payload.PullRequest.ID ||
+		current.PRTarget.URL != payload.PullRequest.URL {
+		return false
+	}
+	return current.Status == session.MergeHandoffRunning || current.Status == session.MergeHandoffSucceeded
 }
 
 // readOnlyActions names the actions above whose handlers only read state. The

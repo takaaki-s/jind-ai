@@ -102,6 +102,7 @@ func (s *Store) Save(session Session) error {
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
 	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
 	session.PRHandoff = mergePRHandoff(session.PRHandoff, persistedPRHandoff(path))
+	session.MergeHandoff = mergeMergeHandoff(session.MergeHandoff, persistedMergeHandoff(path))
 	session.Attention = reconcileCheckAttention(session.Attention, session.ReviewFacts, session.CheckReport)
 
 	data, err := json.MarshalIndent(&session, "", "  ")
@@ -110,6 +111,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedMergeHandoff(path string) MergeHandoff {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] merge handoff probe failed for %s: %v", path, err)
+		}
+		return MergeHandoff{}
+	}
+	var probe struct {
+		MergeHandoff MergeHandoff `json:"merge_handoff"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] merge handoff probe could not parse %s: %v", path, err)
+		return MergeHandoff{}
+	}
+	return probe.MergeHandoff
 }
 
 func persistedPRHandoff(path string) PRHandoff {

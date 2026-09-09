@@ -11,7 +11,7 @@ Community plugins are discoverable through the [plugin registry](plugin-registry
 `jin plugin ls-remote` lists them, `jin plugin install <name>` installs one
 by registry name with a commit-pinned consent screen.
 
-## Three ways a plugin runs
+## Four ways a plugin runs
 
 - **Event listener** — a manifest action subscribes to `status_changed`
   via its `on:` matcher. Good for notifications, logging, CI triggers —
@@ -35,8 +35,13 @@ by registry name with a commit-pinned consent screen.
   returns one bounded JSON result. It cannot declare `on`, `listener`, or
   `popup`, and is hidden from generic action surfaces. Use `--dry-run` to run
   every core preflight without invoking it.
+- **Merge handoff provider** — an action with `merge_handoff: true`, invoked
+  only by `jin session merge-handoff`. It performs a read-only provider
+  preflight first, then—only for an explicit confirmed call—merges the exact
+  reviewed PR head. It cannot declare `handoff`, `on`, `listener`, or `popup`,
+  and is hidden from generic action surfaces.
 
-All three execute the declared action `entrypoint`; handoff providers use the
+All four execute the declared action `entrypoint`; handoff providers use the
 stricter stdin/stdout contract below.
 
 ## Manifest (`jind-ai-plugin.yaml`)
@@ -95,6 +100,7 @@ required. Write new manifests as v2.
 | `actions[].popup.width` / `.height` | No | Per-action manifest hint for `jin pane popup --here` size (1–100, percent of terminal) |
 | `actions[].listener` | No | Marks the action as an event-only endpoint. It still fires on matching `on:` events, but is hidden from every user-facing surface (palette, help popup, shell completion). Direct invocation via `jin plugin run <plugin> <action>` remains available for debugging. Requires a non-empty `on:` — a listener with no events has no runtime purpose |
 | `actions[].handoff` | No | Marks a synchronous structured PR-handoff provider. It is hidden from ordinary action surfaces and can run only through `jin session pr-handoff`. Requires empty `on` and forbids `listener`/`popup` |
+| `actions[].merge_handoff` | No | Marks a synchronous structured merge-handoff provider. It is hidden from ordinary action surfaces and can run only through `jin session merge-handoff`. Mutually exclusive with `handoff`; requires empty `on` and forbids `listener`/`popup` |
 | `on` / `popup` (top-level) | v1 only | Legacy v1 fields; forbidden in v2 (validation error). Put them under `actions[]` instead. Top-level `timeout` is **not** in this group — it stays valid in v2 (row above) |
 
 `install.source` and `install.release_asset` are mutually exclusive.
@@ -122,7 +128,7 @@ Environment variables:
 
 | Variable | Description |
 |----------|--------------|
-| `JIN_EVENT` | `status_changed`, `action`, or `pr_handoff` |
+| `JIN_EVENT` | `status_changed`, `action`, `pr_handoff`, or `merge_handoff` |
 | `JIN_ACTION_ID` | ID of the manifest action that fired this run (`default` for v1 manifests / v2 default actions synthesised as `default`). A shared entrypoint script can dispatch on this instead of parsing argv |
 | `JIN_SESSION_ID` | Session ID |
 | `JIN_STATUS` | Current status |
@@ -132,7 +138,7 @@ Environment variables:
 | `JIN_TMUX_PANE_ID` | tmux pane ID, if known |
 | `JIN_NOTIFY_KIND` | Notification kind for this transition: `task-complete`, `error`, `permission`, or empty when the transition triggers no notification |
 | `JIN_PLUGIN_DEPTH` | Chain depth — see [Constraints](#constraints) |
-| `JIN_HANDOFF_KEY` | PR handoff only: stable idempotency key, also present in stdin JSON |
+| `JIN_HANDOFF_KEY` | PR or merge handoff only: stable idempotency key, also present in stdin JSON |
 | `JIN_SOCKET` | Daemon socket path; the `jin` CLI a plugin invokes picks this up automatically |
 | `JIN_BIN` | Absolute path of a `jin` matching the running daemon — a copy jind-ai keeps under its state directory, so it stays valid even if the binary the daemon was launched from is rebuilt or removed. Prefer `"${JIN_BIN:-jin}"` over a bare `jin` — a `jin` found on PATH may be an older install that lacks newer subcommands |
 | `JIN_DEBUG` | `1` when the daemon is running with debug logging on, so a `jin` the plugin calls back into records what it does too. Omitted — not set to `0` — otherwise |
@@ -169,7 +175,95 @@ response is an unknown external outcome: providers must implement the supplied
 idempotency key so receiving it again queries or safely converges on the same
 PR rather than creating another one.
 
-For anything beyond this thin payload, call back into jind-ai:
+### Merge handoff provider contract
+
+A merge-handoff action is called in two phases with the same idempotency key.
+For `operation: "preflight"`, it must perform only read-only provider queries
+and return the current PR identity, provider base/head commits, mergeability,
+and required-check aggregate. This operation is invoked even by `--dry-run`;
+declaring `merge_handoff: true` is the provider author's promise that preflight
+does not mutate external state.
+
+```json
+{
+  "schema_version": 1,
+  "kind": "merge",
+  "operation": "preflight",
+  "idempotency_key": "mrg_...",
+  "session_id": "...",
+  "repository": "acme/app",
+  "pull_request": {
+    "provider": "github",
+    "id": "123",
+    "url": "https://github.com/acme/app/pull/123",
+    "base_ref": "main",
+    "base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "review": {
+    "base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+    "branch": "feat/auth",
+    "workspace_fingerprint": "...",
+    "changed_files": 3,
+    "additions": 42,
+    "deletions": 7,
+    "commit_count": 2
+  },
+  "reviewed_at": "2026-09-10T12:00:00Z"
+}
+```
+
+The preflight response is exactly one JSON object:
+
+```json
+{
+  "status": "ready",
+  "target": {
+    "provider": "github",
+    "id": "123",
+    "url": "https://github.com/acme/app/pull/123",
+    "base_ref": "main",
+    "base_commit": "fedcba9876543210fedcba9876543210fedcba98",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "mergeable": true,
+  "required_checks": "passed"
+}
+```
+
+`status` is `ready` or `blocked`; `required_checks` is `passed`, `failed`,
+`pending`, or `unknown`. A ready result must be mergeable with checks passed.
+The provider/ID/URL must exactly echo the successful PR handoff, and the head
+must exactly match the reviewed head. The provider may report a newer current
+base commit after the PR was created. Commit IDs are full lowercase hex.
+
+After core repeats its local validation, a confirmed call receives
+`operation: "merge"`, the accepted preflight object, and otherwise the same
+document. There is no force or merge-method input. Return exactly one result:
+
+```json
+{
+  "status": "succeeded",
+  "provider": "github",
+  "id": "123",
+  "url": "https://github.com/acme/app/pull/123",
+  "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+  "target_commit": "76543210fedcba9876543210fedcba9876543210",
+  "method": "squash"
+}
+```
+
+The final provider/ID/URL and head must again match exactly. `status` is
+`succeeded` or `failed`; success requires the full target-branch commit ID.
+Each provider phase is capped at 20 seconds. A timeout, execution failure,
+malformed response, or identity mismatch is persisted as `unknown`, because
+the merge might have happened. On the next merge operation with that same key,
+the provider must first reconcile provider state and return the original
+outcome instead of creating another mutation. jind-ai never cleans up the
+branch, worktree, or session after success.
+
+For anything beyond these thin payloads, call back into jind-ai:
 
 ```bash
 jin session info "$JIN_SESSION_ID" --json    # full session details

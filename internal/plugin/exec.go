@@ -197,8 +197,8 @@ func ExecHandoff(ctx context.Context, opts ExecOptions, payload []byte) ([]byte,
 	if debug.Enabled() {
 		diagnostic = io.MultiWriter(logFile, os.Stderr)
 	}
-	_, _ = fmt.Fprintf(diagnostic, "--- %s pr_handoff session=%s key=%s ---\n",
-		time.Now().Format(time.RFC3339), opts.Env.SessionID, opts.HandoffKey)
+	_, _ = fmt.Fprintf(diagnostic, "--- %s %s session=%s key=%s ---\n",
+		time.Now().Format(time.RFC3339), opts.Env.Name, opts.Env.SessionID, opts.HandoffKey)
 
 	capture := &boundedCapture{limit: MaxHandoffResult}
 	cmd := procgroup.CommandContext(ctx, "bash", "-c", opts.Run)

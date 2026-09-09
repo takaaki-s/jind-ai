@@ -6,13 +6,14 @@ jind-ai では、セッションのステータス変化に反応して、ある
 
 コミュニティプラグインは [plugin registry](plugin-registry.md) から発見できます。`jin plugin ls-remote` で一覧、`jin plugin install <name>` でレジストリ名指定インストール（コミット SHA ピン + 同意画面付き）が可能です。
 
-## 3 通りの実行方式
+## 4 通りの実行方式
 
 - **Event listener（イベントリスナー）** — マニフェストの各 action がその `on:` マッチャー経由で `status_changed` を購読します。通知、ロギング、CI トリガーなど、非対話的な用途に向いています。注意: イベントはステータスが実際に変化した時のみ発火します。ステータス遷移を伴わない通知（既に idle の状態での再停止など）は dispatch されません。プラグインが複数の action を宣言している場合、それぞれ独立に match / debounce されるため、同一イベントで同じプラグイン内の複数 action が同時に fan-out することがあります。
 - **Action（アクション）** — `jin plugin run <name> [action] [--session <selector>]` で明示的に起動します。ポップアップベースの diff レビュー UI のような、対話的なワークフローに向いています。`[action]` を省略するとプラグインの default action（`actions[0]`）が走り、action ID を渡すとその action を選択します。ある action の `on: []` を指定するとその action は action 専用になります。`--session` を省略すると **グローバル action** になり、セッション由来の環境変数はすべて空になります。action 実行時は (global・session 指定を問わず) 呼び出し元の CLI が tmux クライアント内にいた場合、`JIN_CALLER_TMUX_SOCKET` / `JIN_CALLER_TMUX_PANE` が起動元を示します。
 - **PR handoff provider** — `handoff: true` の action を `jin session pr-handoff <session> <plugin> [action] --confirm` からだけ起動します。bounded evidence と idempotency key を受け取り、同期実行して bounded JSON を 1 件返します。`on` / `listener` / `popup` は併用できず、通常 action の UI には表示されません。`--dry-run` なら provider を起動せず core の preflight だけを実行します。
+- **Merge handoff provider** — `merge_handoff: true` の action を `jin session merge-handoff` からだけ起動します。まず provider の読み取り専用 preflight を行い、明示的に confirm した場合だけ、レビュー済み PR head を固定して merge します。`handoff` / `on` / `listener` / `popup` は併用できず、通常 action の UI には表示されません。
 
-3 方式とも宣言された action の `entrypoint` を実行しますが、handoff provider は後述の厳密な stdin/stdout 契約に従います。
+4 方式とも宣言された action の `entrypoint` を実行しますが、handoff provider は後述の厳密な stdin/stdout 契約に従います。
 
 ## マニフェスト（`jind-ai-plugin.yaml`）
 
@@ -65,6 +66,7 @@ actions:
 | `actions[].popup.width` / `.height` | なし | `jin pane popup --here` の action 単位のサイズヒント（1–100、%） |
 | `actions[].listener` | なし | この action を「イベント購読専用」とマーク。`on:` にマッチしたときは通常通り発火するが、ユーザー向けサーフェス（パレット / help popup / shell 補完）からは非表示になる。`jin plugin run <plugin> <action>` による直接起動は debug 目的で許可されたまま。`on:` 非空必須（listener with no events は無意味） |
 | `actions[].handoff` | なし | 同期型の structured PR-handoff provider として宣言。通常 action の UI から隠れ、`jin session pr-handoff` からだけ実行可能。`on` は空で、`listener` / `popup` は指定不可 |
+| `actions[].merge_handoff` | なし | 同期型の structured merge-handoff provider として宣言。通常 action の UI から隠れ、`jin session merge-handoff` からだけ実行可能。`handoff` と排他で、`on` は空、`listener` / `popup` は指定不可 |
 | `on` / `popup`（top-level） | v1 のみ | v1 レガシーフィールド。v2 では validate エラーになるため `actions[]` 側に書く。top-level の `timeout` は**この仲間ではなく**、v2 でも有効（上の行）|
 
 `install.source` と `install.release_asset` は排他です。
@@ -90,7 +92,7 @@ actions:
 
 | 変数 | 説明 |
 |------|------|
-| `JIN_EVENT` | `status_changed`、`action`、または `pr_handoff` |
+| `JIN_EVENT` | `status_changed`、`action`、`pr_handoff`、または `merge_handoff` |
 | `JIN_ACTION_ID` | この実行を発火させたマニフェスト action の ID（v1 マニフェストや v2 default action の合成時は `default`）。共通 entrypoint を書く場合、argv 分岐の代わりにこの env で action を識別できる |
 | `JIN_SESSION_ID` | セッション ID |
 | `JIN_STATUS` | 現在のステータス |
@@ -100,7 +102,7 @@ actions:
 | `JIN_TMUX_PANE_ID` | tmux ペイン ID（判明している場合） |
 | `JIN_NOTIFY_KIND` | この遷移の通知種別: `task-complete`、`error`、`permission`。通知を伴わない遷移では空 |
 | `JIN_PLUGIN_DEPTH` | チェーンの深さ — [制約](#制約) を参照 |
-| `JIN_HANDOFF_KEY` | PR handoff 時のみ。stdin JSON にも含まれる安定した idempotency key |
+| `JIN_HANDOFF_KEY` | PR / merge handoff 時のみ。stdin JSON にも含まれる安定した idempotency key |
 | `JIN_SOCKET` | デーモンソケットのパス。プラグインが呼び出す `jin` CLI はこれを自動的に読み取ります |
 | `JIN_BIN` | 稼働中のデーモンと一致する `jin` の絶対パス。jind-ai が state ディレクトリ配下に保持するコピーを指すため、デーモンの起動元バイナリが再ビルド・削除されても有効なままです。PATH 上の `jin` は新しいサブコマンドを持たない古いインストールである可能性があるため、素の `jin` より `"${JIN_BIN:-jin}"` を優先してください |
 | `JIN_DEBUG` | デーモンがデバッグログ有効で動作している場合に `1`。プラグインが呼び戻す `jin` も自身の動作を記録します。無効時は `0` ではなく未設定 |
@@ -126,7 +128,92 @@ stdout には JSON object をちょうど1件返します:
 
 `status` は `succeeded` または `failed` で、成功時は `id` か `url` が必須です。URL は credential、query、fragment を含まない HTTP(S) に限ります。stdout は32 KiB、各保存フィールドにはさらに小さい上限があります。診断は stderr に書いてください。timeout、非ゼロ終了、不正／過大な結果、daemon応答喪失はすべて外部結果が `unknown` です。provider は同じ idempotency key を再受信したら既存PRを照会するか同じ結果へ安全に収束し、重複PRを作らないよう実装する必要があります。
 
-この薄いペイロード以上の情報が必要な場合は、jind-ai に問い合わせます:
+### Merge handoff provider 契約
+
+merge-handoff action は同じ idempotency key で 2 段階に呼び出されます。
+`operation: "preflight"` では provider の読み取り専用照会だけを行い、現在の PR identity、
+provider 上の base/head commit、mergeability、required checks の集約を返します。
+この operation は `--dry-run` でも起動します。`merge_handoff: true` の宣言は、preflight が
+外部状態を変更しないという provider 作者の契約です。
+
+```json
+{
+  "schema_version": 1,
+  "kind": "merge",
+  "operation": "preflight",
+  "idempotency_key": "mrg_...",
+  "session_id": "...",
+  "repository": "acme/app",
+  "pull_request": {
+    "provider": "github",
+    "id": "123",
+    "url": "https://github.com/acme/app/pull/123",
+    "base_ref": "main",
+    "base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "review": {
+    "base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+    "branch": "feat/auth",
+    "workspace_fingerprint": "...",
+    "changed_files": 3,
+    "additions": 42,
+    "deletions": 7,
+    "commit_count": 2
+  },
+  "reviewed_at": "2026-09-10T12:00:00Z"
+}
+```
+
+preflight の stdout は JSON object ちょうど 1 件です:
+
+```json
+{
+  "status": "ready",
+  "target": {
+    "provider": "github",
+    "id": "123",
+    "url": "https://github.com/acme/app/pull/123",
+    "base_ref": "main",
+    "base_commit": "fedcba9876543210fedcba9876543210fedcba98",
+    "head_commit": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "mergeable": true,
+  "required_checks": "passed"
+}
+```
+
+`status` は `ready` / `blocked`、`required_checks` は `passed` / `failed` /
+`pending` / `unknown` です。ready なら mergeable かつ checks passed が必須です。
+provider / ID / URL は成功済み PR handoff と完全一致し、head はレビュー済み head と
+完全一致しなければなりません。PR 作成後に base が進んでいれば、provider は現在の新しい
+base commit を返せます。commit ID は full lowercase hex です。
+
+core がローカル検査をやり直した後、confirm 済みの呼び出しは `operation: "merge"`、
+受理した preflight object、その他は同じ文書を受け取ります。force や merge method の
+入力はありません。stdout には結果を 1 件だけ返します:
+
+```json
+{
+  "status": "succeeded",
+  "provider": "github",
+  "id": "123",
+  "url": "https://github.com/acme/app/pull/123",
+  "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+  "target_commit": "76543210fedcba9876543210fedcba9876543210",
+  "method": "squash"
+}
+```
+
+最終結果の provider / ID / URL / head も完全一致が必要です。`status` は `succeeded` /
+`failed` で、成功時は target branch の full commit ID が必須です。各 provider phase は
+20 秒で打ち切ります。timeout、実行失敗、不正な応答、identity mismatch は、merge 済みの
+可能性があるため `unknown` として保存します。次に同じ key で merge operation を受けた
+provider は、まず provider 状態を照合し、追加 mutation を行わず元の結果を返す必要があります。
+jind-ai は成功後も branch、worktree、session を cleanup しません。
+
+これらの薄いペイロード以上の情報が必要な場合は、jind-ai に問い合わせます:
 
 ```bash
 jin session info "$JIN_SESSION_ID" --json    # セッションの詳細情報を取得

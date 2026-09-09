@@ -277,6 +277,10 @@ jin session review-disposition <session-name> changes-requested
 jin session pr-handoff <session-name> <plugin> [action] --dry-run
 jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
 
+# Re-check the provider PR, then explicitly hand off an exact merge
+jin session merge-handoff <session-name> <plugin> [action] --dry-run
+jin session merge-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
+
 # Kill a session
 jin session kill <session-name>
 
@@ -353,10 +357,20 @@ are persisted against the workspace fingerprint; timeout or malformed output
 is `unknown`, and the same key is used to reconcile/retry safely. This creates
 no merge or cleanup authority.
 
+After a successful PR handoff, an action declared with `merge_handoff: true`
+can query the provider for the exact PR target, base/head commits,
+mergeability, and required-check status. Its `--dry-run` invokes only that
+read-only provider preflight. A confirmed call requires the printed
+idempotency key, repeats every local and provider check, persists `running`,
+then asks the provider to merge that exact reviewed head. Success records the
+provider's target commit. A timeout, lost response, malformed output, or
+identity mismatch is `unknown` and must be reconciled with the same key. No
+force mode is implied, and no branch, worktree, or session is cleaned up.
+
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
 `seen`, `review`, `check-report`, `review-disposition` — carries the attention
 and, once assessed, `review_facts`, `check_report`, `review_disposition`, and
-the latest `pr_handoff`.
+the latest `pr_handoff` and `merge_handoff`.
 
 ```json
 {

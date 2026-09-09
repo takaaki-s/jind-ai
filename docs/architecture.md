@@ -356,6 +356,15 @@ Who touches it:
   `running`/`succeeded`/`failed`/`unknown` result; it never merges, deletes, or
   cleans up the session. Handoff actions are excluded from ordinary plugin and
   TUI action surfaces.
+- `jin session merge-handoff <selector> <plugin> [action] --dry-run|--confirm`
+  requires the same current review evidence plus a successful PR handoff.
+  A manifest-declared `merge_handoff` action first queries the provider for
+  exact PR identity, current base/head, mergeability, and required checks. A
+  confirmed call repeats validation, persists `running`, and asks the provider
+  to merge only that reviewed head. Core records the target commit or an
+  ambiguous `unknown` outcome under one idempotency key; it exposes no force
+  input and still never deletes a branch, worktree, or session. Merge providers
+  are excluded from ordinary plugin and TUI action surfaces.
 
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).

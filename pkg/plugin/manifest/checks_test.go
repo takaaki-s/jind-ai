@@ -40,6 +40,17 @@ func TestCheckValidMinimalPasses(t *testing.T) {
 	}
 }
 
+func TestCheckMergeHandoffActionIsolation(t *testing.T) {
+	m := &Manifest{Actions: []Action{{
+		ID: "merge", Entrypoint: "./merge", MergeHandoff: true, Handoff: true,
+		Listener: true, On: []string{"status_changed"}, Popup: &PopupConfig{Width: 50},
+	}}}
+	findings := checkHandoffActions(m)
+	if len(findings) != 4 {
+		t.Fatalf("findings = %v, want capability/listener/on/popup errors", findings)
+	}
+}
+
 func TestCheckRuntimeFullPasses(t *testing.T) {
 	m, _ := mustParse(t, "testdata/manifests/valid_runtime_full.yaml")
 	findings := Check(m, CheckOptions{})

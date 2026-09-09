@@ -123,7 +123,17 @@ the external mutation may already have happened. Retry an unknown outcome with
 the same key. A daemon restart converts an interrupted persisted `running` in
 the same way because its provider process cannot be resumed. Any later
 workspace fingerprint makes the recorded handoff stale.
-No state grants permission to merge, delete, or clean up the session.
+
+After that handoff succeeds, `jin session merge-handoff <selector> <plugin>
+[action] --dry-run` asks a manifest-declared merge provider to inspect the
+exact PR. The provider must return the current base/head, mergeability, and
+required-check aggregate without mutation. Confirming with the printed key
+repeats local and provider validation, records `running`, and then requests a
+merge only for the reviewed head. Success records the provider's target
+commit. A timeout, malformed response, identity mismatch, or interrupted
+daemon is `unknown`; reconciliation must reuse the same key. No force mode is
+implied. No state grants permission to delete or clean up the branch,
+worktree, or session.
 
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
