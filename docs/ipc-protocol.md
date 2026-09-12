@@ -156,6 +156,7 @@ it alone.
 | `check-report` | `CheckReportRequest` (`id`, `status`: `passed` or `failed`) | Refresh local review evidence, bind an explicit aggregate check result to its workspace fingerprint, and return updated `session.Info` |
 | `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
 | `pr-handoff` | `PRHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Fail-closed preflight and optional synchronous invocation of a manifest-declared PR handoff provider; returns the bounded request, resolved target, and persisted outcome |
+| `merge-handoff` | `MergeHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Revalidate a successful PR handoff, synchronously query a manifest-declared merge provider, and optionally merge the exact reviewed head; returns provider preflight and persisted outcome |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -198,7 +199,8 @@ Protocol v5 adds the optional `Info.review_facts` cache and the
 `ready-for-review` attention state. Protocol v6 adds its workspace fingerprint,
 the optional `Info.check_report`, and `checks-failed`. Protocol v7 adds the
 optional fingerprint-bound `Info.review_disposition`. Protocol v8 adds the
-optional `Info.pr_handoff`. A settled
+optional `Info.pr_handoff`. Protocol v9 adds the optional
+`Info.merge_handoff`. A settled
 managed-worktree example is:
 
 ```json
@@ -251,6 +253,32 @@ managed-worktree example is:
     "started_at": "2026-09-09T12:05:00Z",
     "updated_at": "2026-09-09T12:05:02Z",
     "stale": false
+  },
+  "merge_handoff": {
+    "idempotency_key": "mrg_4e5f...",
+    "target": {"plugin": "github-merge", "action": "merge"},
+    "workspace_fingerprint": "5e884898da28047151d0e56f8dc62927...",
+    "pr_target": {
+      "provider": "github",
+      "id": "208",
+      "url": "https://github.com/example/repo/pull/208",
+      "base_ref": "main",
+      "base_commit": "0123456789abcdef0123456789abcdef01234567",
+      "head_commit": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    "status": "succeeded",
+    "result": {
+      "status": "succeeded",
+      "provider": "github",
+      "id": "208",
+      "url": "https://github.com/example/repo/pull/208",
+      "head_commit": "89abcdef0123456789abcdef0123456789abcdef",
+      "target_commit": "76543210fedcba9876543210fedcba9876543210",
+      "method": "squash"
+    },
+    "started_at": "2026-09-10T12:05:00Z",
+    "updated_at": "2026-09-10T12:05:02Z",
+    "stale": false
   }
 }
 ```
@@ -278,6 +306,19 @@ with the same key so a provider can converge without duplicating a PR. The
 handoff stores no patch, filenames, prompt, transcript, or credentials, and it
 does not merge, delete, or clean up a session.
 
+`merge-handoff` requires that successful, current PR handoff as well as all of
+the same local evidence. In both modes it invokes a provider
+`operation=preflight`, which must be read-only and report the exact PR identity,
+current base/head commits, mergeability, and required-check aggregate. A dry
+run stops there and persists no merge state. Confirm requires the returned
+idempotency key explicitly, repeats local validation, requires the provider
+head to equal the reviewed head and a ready/mergeable/checks-passed result,
+then persists `running` before `operation=merge`. Success must echo the PR
+identity and reviewed head and include the full target-branch commit ID.
+Timeouts, response loss, malformed output, and identity mismatches become
+`unknown`; retries use the same key so the provider can reconcile. There is no
+force option and no automatic branch, worktree, or session cleanup.
+
 ## Async completion
 
 `new`, `delete` and `plugin-run` accept the request, return an acknowledgement,
@@ -301,6 +342,12 @@ stays covered by the default 60s tier.
 response can include the provider's durable identifier/URL. Since an external
 mutation may have happened before a timeout, its persisted terminal state is
 `unknown`, not `failed`.
+
+`merge-handoff` is also synchronous. Its provider preflight and merge phases
+are each capped at 20 seconds, leaving the 60-second IPC budget room for two
+bounded local evidence probes. Only the confirmed phase persists state, but
+the action is still omitted from `readOnlyActions` because the same endpoint
+can mutate an external provider.
 
 The **synchronous pre-checks** for these actions still fail on the response:
 `new` refuses an unknown agent kind; `delete` refuses a missing session, a
@@ -550,16 +597,20 @@ response shape.
 v8 follows it again: `pr-handoff` is new, but the optional `pr_handoff` object
 changes the existing `session.Info` response shape.
 
+v9 follows the same rule: `merge-handoff` is new, while the optional
+`merge_handoff` object changes the existing `session.Info` response shape.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
 safe.
 
-`review-refresh`, `check-report`, `review-disposition`, and `pr-handoff` are also absent from
-`readOnlyActions`. All persist evidence, so a timeout has an unknown outcome;
-retrying the first three recomputes the bounded local observation and converges
-on the latest report or decision. Retrying PR handoff must reuse its
-idempotency key because it may have mutated an external provider.
+`review-refresh`, `check-report`, `review-disposition`, `pr-handoff`, and
+`merge-handoff` are also absent from `readOnlyActions`. The first four persist
+evidence; merge handoff can additionally mutate an external provider. A timeout
+therefore has an unknown outcome. Retrying the first three recomputes the
+bounded local observation and converges on the latest report or decision.
+Retrying either external handoff must reuse its idempotency key.
 
 ## Adding a New Action
 

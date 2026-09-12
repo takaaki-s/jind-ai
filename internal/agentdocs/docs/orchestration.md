@@ -276,6 +276,23 @@ is recorded as `unknown`, because the PR may already exist; retry with the same
 key. Even `succeeded` is only a handoff receipt—it does not authorize merging,
 deleting the worktree, or closing the session.
 
+After the PR handoff succeeds, an installed merge-provider plugin can make the
+merge itself another explicit, evidence-bound transition:
+
+```bash
+jin session merge-handoff fix-login github-merge merge --dry-run
+jin session merge-handoff fix-login github-merge merge --confirm \
+  --idempotency-key mrg_...
+jin session info fix-login
+```
+
+Unlike PR handoff dry-run, merge dry-run invokes the provider's read-only
+preflight so it can report the current base/head, mergeability, and required
+checks. Confirm repeats that preflight and local evidence checks before asking
+the provider to merge the exact reviewed head. A timeout or ambiguous response
+is `unknown`; retry with the same key to reconcile. Even a successful target
+commit does not authorize deleting the branch, worktree, or session.
+
 ## Accepting the work
 
 Do not forward a child's report as your own conclusion. For code changes,

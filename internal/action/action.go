@@ -118,11 +118,11 @@ func CoreActions(kb KeyBindings) []Action {
 // declared action. Callers pass the result of Registry.Runnable, which
 // already filters to StateEnabled entries; entries without a manifest (or
 // with no actions — e.g. release_asset installs) contribute no rows.
-// Actions declared with `listener: true` or `handoff: true` are dedicated
-// endpoints and are excluded from the palette. Listeners still fire on
-// matching events and remain directly invokable for debugging; handoff
-// actions run only through `jin session pr-handoff`. Description (when the
-// manifest declares one) rides along so
+// Listener and structured handoff actions are dedicated endpoints and are
+// excluded from the palette. Listeners still fire on matching events and
+// remain directly invokable for debugging; PR/merge handoff actions run only
+// through their explicit session commands. Description (when the manifest
+// declares one) rides along so
 // the palette fuzzy haystack treats plugin rows like core rows.
 // pluginKeys maps plugin name → action ID → tmux keys (the shape returned
 // by config.Manager.GetPluginKeybindings). When an action has one or more
@@ -136,7 +136,7 @@ func PluginActions(entries []plugin.Entry, pluginKeys map[string]map[string][]st
 			continue
 		}
 		for i, act := range e.Manifest.Actions {
-			if act.Listener || act.Handoff {
+			if act.Listener || act.Handoff || act.MergeHandoff {
 				continue
 			}
 			a := Action{

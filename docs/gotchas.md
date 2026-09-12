@@ -1880,6 +1880,10 @@ Common pitfalls and caveats that agents tend to fall into.
   from erasing the provider result or making an already-created PR appear to
   need a fresh invocation.
 
+  Merge handoffs use the same `updated_at` and terminal-over-`running` rule.
+  Their success receipt—including the provider target commit—therefore cannot
+  be erased by a stale status snapshot.
+
   A test for this cannot be a `-race` test. Save a newer snapshot, then a stale
   one, and assert the file did not regress
   (`internal/session/store_attention_test.go`, `review_facts_test.go`,
@@ -1892,6 +1896,16 @@ Common pitfalls and caveats that agents tend to fall into.
   generating a new key can create a duplicate outside jind-ai's control.
   On daemon startup, a persisted `running` handoff is converted to `unknown`
   for the same reason: the synchronous provider process cannot be resumed.
+
+- **A merge-handoff timeout is not proof that the PR stayed open.** The
+  provider's read-only preflight runs before core records `running`; the
+  confirmed merge operation runs afterwards. Timeout, lost response,
+  malformed output, or a spoofed identity all leave `unknown`, because the
+  provider may already have merged the reviewed head. Retry only with the
+  persisted idempotency key so the provider can reconcile. A daemon restart
+  also converts an interrupted `running` merge to `unknown`. Success records a
+  target commit but intentionally performs no branch, worktree, or session
+  cleanup.
 
 - **An acknowledgement whose save fails survives only until the daemon
   restarts.** `Manager.MarkSeen` moves `seen_generation` in memory first and

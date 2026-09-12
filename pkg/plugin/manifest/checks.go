@@ -156,14 +156,24 @@ func Check(m *Manifest, opts CheckOptions) []Finding {
 func checkHandoffActions(m *Manifest) []Finding {
 	var findings []Finding
 	for i, a := range m.Actions {
-		if !a.Handoff {
+		if !a.Handoff && !a.MergeHandoff {
 			continue
 		}
 		ref := actionRef(i, a.ID)
+		if a.Handoff && a.MergeHandoff {
+			findings = append(findings, Finding{
+				Rule: RuleHandoffActionOnly, Severity: SeverityError,
+				Field: ref + ".merge_handoff", Message: "an action cannot provide both PR and merge handoff contracts",
+			})
+		}
+		capabilityField := ref + ".handoff"
+		if a.MergeHandoff && !a.Handoff {
+			capabilityField = ref + ".merge_handoff"
+		}
 		if a.Listener {
 			findings = append(findings, Finding{
 				Rule: RuleHandoffActionOnly, Severity: SeverityError,
-				Field: ref + ".handoff", Message: "handoff actions cannot also be listeners",
+				Field: capabilityField, Message: "handoff actions cannot also be listeners",
 			})
 		}
 		if len(a.On) != 0 {

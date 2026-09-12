@@ -149,6 +149,15 @@ func TestPluginActionID_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestPluginActions_HidesMergeHandoffProviders(t *testing.T) {
+	entry := plugin.Entry{Name: "provider", State: plugin.StateEnabled, Manifest: &manifest.Manifest{
+		Actions: []manifest.Action{{ID: "merge", Entrypoint: "./merge", MergeHandoff: true}},
+	}}
+	if got := PluginActions([]plugin.Entry{entry}, nil); len(got) != 0 {
+		t.Fatalf("merge handoff palette actions = %+v", got)
+	}
+}
+
 func TestParsePluginActionID_Invalid(t *testing.T) {
 	cases := []string{
 		"core:new",         // non-plugin ID

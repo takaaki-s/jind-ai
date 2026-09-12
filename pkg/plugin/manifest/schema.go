@@ -75,6 +75,10 @@ type Action struct {
 	// and must return one JSON result on stdout. They are not ordinary palette
 	// actions and cannot subscribe to status events.
 	Handoff bool `yaml:"handoff,omitempty"`
+	// MergeHandoff marks the separate two-phase merge provider endpoint. Core
+	// invokes it first for read-only preflight and only later for an explicitly
+	// confirmed merge operation.
+	MergeHandoff bool `yaml:"merge_handoff,omitempty"`
 }
 
 // Install carries either a source build recipe or a release asset pattern.
@@ -287,13 +291,14 @@ var knownInstall = map[string]struct{}{
 }
 
 var knownAction = map[string]struct{}{
-	"id":         {},
-	"label":      {},
-	"entrypoint": {},
-	"on":         {},
-	"popup":      {},
-	"listener":   {},
-	"handoff":    {},
+	"id":            {},
+	"label":         {},
+	"entrypoint":    {},
+	"on":            {},
+	"popup":         {},
+	"listener":      {},
+	"handoff":       {},
+	"merge_handoff": {},
 }
 
 // unknownFieldsFromNode walks the top-level mapping and its nested `install`

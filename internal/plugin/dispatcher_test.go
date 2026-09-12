@@ -385,6 +385,43 @@ func TestRunHandoff_RequiresCapabilityAndReturnsProviderJSON(t *testing.T) {
 	}
 }
 
+func TestRunMergeHandoff_RequiresCapabilityAndSupportsTwoPhases(t *testing.T) {
+	d, pluginsDir, stateDir := newTestDispatcher(t, config.PluginsConfig{})
+	manifestBody := v2Manifest("fake-merge", "fake merge provider", `  - id: merge
+    entrypoint: |
+      body=$(cat)
+      printf '%s' "$body" > request.json
+      case "$body" in
+        *'"operation":"preflight"'*) printf '{"status":"ready"}' ;;
+        *) printf '{"status":"succeeded"}' ;;
+      esac
+    merge_handoff: true
+  - id: ordinary
+    entrypoint: 'true'
+`)
+	installTestPlugin(t, pluginsDir, stateDir, "fake-merge", manifestBody)
+	if _, err := d.ResolveMergeHandoff("fake-merge", "ordinary"); err == nil || !strings.Contains(err.Error(), "not a merge handoff provider") {
+		t.Fatalf("ordinary action error = %v", err)
+	}
+	if err := d.RunAction("fake-merge", "merge", idleEvent(), 0, ActionContext{}); err == nil || !strings.Contains(err.Error(), "session merge-handoff") {
+		t.Fatalf("ordinary run error = %v", err)
+	}
+	actionID, err := d.ResolveMergeHandoff("fake-merge", "merge")
+	if err != nil || actionID != "merge" {
+		t.Fatalf("resolve = %q, %v", actionID, err)
+	}
+	preflightPayload := []byte(`{"operation":"preflight"}`)
+	out, err := d.RunMergeHandoff("fake-merge", "merge", "stable-key", idleEvent(), preflightPayload)
+	if err != nil || !strings.Contains(string(out), `"status":"ready"`) {
+		t.Fatalf("preflight output=%q err=%v", out, err)
+	}
+	mergePayload := []byte(`{"operation":"merge"}`)
+	out, err = d.RunMergeHandoff("fake-merge", "merge", "stable-key", idleEvent(), mergePayload)
+	if err != nil || !strings.Contains(string(out), `"status":"succeeded"`) {
+		t.Fatalf("merge output=%q err=%v", out, err)
+	}
+}
+
 func TestNewDispatcher_NilResolver_UsesDefault(t *testing.T) {
 	pluginsDir := t.TempDir()
 	stateDir := t.TempDir()

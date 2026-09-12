@@ -520,6 +520,14 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 				debugLog("[LOAD] persist interrupted PR handoff for %s: %v", s.ID, err)
 			}
 		}
+		if s.MergeHandoff.Status == MergeHandoffRunning {
+			s.MergeHandoff.Status = MergeHandoffUnknown
+			s.MergeHandoff.Error = "daemon restarted while the merge handoff was running; external outcome is unknown"
+			s.MergeHandoff.UpdatedAt = time.Now()
+			if err := store.Save(*s); err != nil {
+				debugLog("[LOAD] persist interrupted merge handoff for %s: %v", s.ID, err)
+			}
+		}
 		// Normalize to Stopped in memory (the process may be gone), but keep
 		// the on-disk value: recovery uses it to restore the hook-derived
 		// status of sessions whose pane turns out to still be alive.

@@ -161,18 +161,26 @@ func ValidatePRHandoffProviderResult(result PRHandoffProviderResult) error {
 			return fmt.Errorf("provider result %s is invalid or exceeds %d bytes", label, limit)
 		}
 	}
-	if len(result.URL) > 2048 {
-		return fmt.Errorf("provider result url exceeds 2048 bytes")
-	}
-	if result.URL != "" {
-		u, err := url.Parse(result.URL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
-			u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return fmt.Errorf("provider result url must be an http(s) URL without credentials, query, or fragment")
-		}
+	if err := validateProviderURL(result.URL); err != nil {
+		return err
 	}
 	if result.Status == PRHandoffSucceeded && result.ID == "" && result.URL == "" {
 		return fmt.Errorf("successful provider result requires id or url")
+	}
+	return nil
+}
+
+func validateProviderURL(value string) error {
+	if len(value) > 2048 {
+		return fmt.Errorf("provider result url exceeds 2048 bytes")
+	}
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("provider result url must be an http(s) URL without credentials, query, or fragment")
 	}
 	return nil
 }

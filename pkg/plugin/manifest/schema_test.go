@@ -59,6 +59,28 @@ func TestParseValidMinimal(t *testing.T) {
 	}
 }
 
+func TestParseMergeHandoffAction(t *testing.T) {
+	data := []byte(`schema_version: 2
+name: merge-provider
+version: 0.1.0
+description: merge provider
+jin: ">=0.11.0"
+install:
+  source: {}
+actions:
+  - id: merge
+    entrypoint: ./merge.sh
+    merge_handoff: true
+`)
+	m, unknown, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unknown) != 0 || len(m.Actions) != 1 || !m.Actions[0].MergeHandoff {
+		t.Fatalf("manifest=%+v unknown=%v", m, unknown)
+	}
+}
+
 func TestParseValidReleaseAsset(t *testing.T) {
 	data := mustRead(t, "testdata/manifests/valid_release_asset.yaml")
 

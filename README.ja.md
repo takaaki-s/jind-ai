@@ -254,6 +254,10 @@ jin session review-disposition <session-name> changes-requested
 jin session pr-handoff <session-name> <plugin> [action] --dry-run
 jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
 
+# provider 上の PR を再確認し、対象を固定して merge を明示実行する
+jin session merge-handoff <session-name> <plugin> [action] --dry-run
+jin session merge-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
+
 # セッション終了
 jin session kill <session-name>
 
@@ -325,10 +329,19 @@ idempotency key と provider 結果は workspace fingerprint に結び付けて�
 timeout や不正な出力は `unknown` として残り、同じ key で安全に照会／再試行できます。
 この操作は merge や cleanup の許可にはなりません。
 
+PR handoff が成功した後は、`merge_handoff: true` を宣言した action で
+provider 上の正確な PR 対象、base/head commit、mergeability、required checks を
+照会できます。`--dry-run` が起動するのは provider の読み取り専用 preflight だけです。
+confirm では表示された idempotency key が必須で、ローカルと provider の検査をすべて
+やり直し、`running` を保存してから、そのレビュー済み head の merge を provider に
+依頼します。成功時は provider の target commit を記録します。timeout、応答喪失、
+不正な出力、identity mismatch は `unknown` となり、同じ key で照合／再試行します。
+force merge は暗黙に許可せず、branch、worktree、session の cleanup も行いません。
+
 `--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
 `seen` / `review` / `check-report` / `review-disposition` — のいずれにも
 attentionが載り、評価後は `review_facts` / `check_report` / `review_disposition` /
-最新の `pr_handoff` も載ります:
+最新の `pr_handoff` / `merge_handoff` も載ります:
 
 ```json
 {

@@ -112,6 +112,10 @@ type Session struct {
 	// workspace. It is independent of seen and never authorizes merge/cleanup.
 	PRHandoff PRHandoff `json:"pr_handoff,omitzero"`
 
+	// MergeHandoff is the latest explicit provider merge attempt. Even success
+	// does not authorize worktree or branch cleanup.
+	MergeHandoff MergeHandoff `json:"merge_handoff,omitzero"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
@@ -177,6 +181,7 @@ type Info struct {
 	CheckReport       CheckReportInfo       `json:"check_report,omitzero"`
 	ReviewDisposition ReviewDispositionInfo `json:"review_disposition,omitzero"`
 	PRHandoff         PRHandoffInfo         `json:"pr_handoff,omitzero"`
+	MergeHandoff      MergeHandoffInfo      `json:"merge_handoff,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -233,6 +238,7 @@ func (s *Session) ToInfo() Info {
 		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
 		ReviewDisposition: s.ReviewDisposition.toInfo(s.ReviewFacts),
 		PRHandoff:         s.PRHandoff.toInfo(s.ReviewFacts),
+		MergeHandoff:      s.MergeHandoff.toInfo(s.ReviewFacts, s.PRHandoff),
 		CurrentWorkDir:    s.CurrentWorkDir,
 		CurrentBranch:     s.CurrentBranch,
 		RepoName:          s.RepoName,

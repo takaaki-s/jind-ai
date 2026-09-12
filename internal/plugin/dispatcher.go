@@ -67,6 +67,10 @@ const DefaultDebounce = 3 * time.Second
 // 60s request deadline. A provider may declare a tighter manifest timeout.
 const MaxHandoffTimeout = 30 * time.Second
 
+// A confirmed merge request performs both provider preflight and execution
+// inside one 60s daemon request, with local git validation around them.
+const MaxMergeHandoffTimeout = 20 * time.Second
+
 // debouncePruneThreshold caps lastFired growth: sessions come and go for the
 // daemon's whole lifetime, so once the map crosses this size expired entries
 // are swept on the next debounce check. Entries past their window carry no
@@ -257,6 +261,9 @@ func (d *EventDispatcher) RunAction(name, actionID string, ev Event, callerDepth
 			if a.Handoff {
 				return fmt.Errorf("plugin %s action %s is a PR handoff provider; use jin session pr-handoff", name, a.ID)
 			}
+			if a.MergeHandoff {
+				return fmt.Errorf("plugin %s action %s is a merge handoff provider; use jin session merge-handoff", name, a.ID)
+			}
 			go d.run(e, a, ev, callerDepth+1, actx)
 			return nil
 		case StateIncompatible:
@@ -274,7 +281,7 @@ func (d *EventDispatcher) RunAction(name, actionID string, ev Event, callerDepth
 // requested structured handoff endpoint and returns its canonical action ID.
 // Empty actionID means the manifest's default action, matching plugin run.
 func (d *EventDispatcher) ResolveHandoff(name, actionID string) (string, error) {
-	_, action, err := d.resolveHandoff(name, actionID)
+	_, action, err := d.resolveStructuredHandoff(name, actionID, false)
 	if err != nil {
 		return "", err
 	}
@@ -284,13 +291,33 @@ func (d *EventDispatcher) ResolveHandoff(name, actionID string) (string, error) 
 // RunHandoff executes a handoff endpoint synchronously and returns its bounded
 // stdout. The caller owns interpretation and persistence of the JSON result.
 func (d *EventDispatcher) RunHandoff(name, actionID, key string, ev Event, payload []byte) ([]byte, error) {
-	entry, action, err := d.resolveHandoff(name, actionID)
+	entry, action, err := d.resolveStructuredHandoff(name, actionID, false)
 	if err != nil {
 		return nil, err
 	}
+	return d.runStructuredHandoff(entry, action, key, ev, payload, MaxHandoffTimeout)
+}
+
+func (d *EventDispatcher) ResolveMergeHandoff(name, actionID string) (string, error) {
+	_, action, err := d.resolveStructuredHandoff(name, actionID, true)
+	if err != nil {
+		return "", err
+	}
+	return action.ID, nil
+}
+
+func (d *EventDispatcher) RunMergeHandoff(name, actionID, key string, ev Event, payload []byte) ([]byte, error) {
+	entry, action, err := d.resolveStructuredHandoff(name, actionID, true)
+	if err != nil {
+		return nil, err
+	}
+	return d.runStructuredHandoff(entry, action, key, ev, payload, MaxMergeHandoffTimeout)
+}
+
+func (d *EventDispatcher) runStructuredHandoff(entry Entry, action *manifest.Action, key string, ev Event, payload []byte, maxTimeout time.Duration) ([]byte, error) {
 	timeout := entry.Manifest.EffectiveTimeout()
-	if timeout > MaxHandoffTimeout {
-		timeout = MaxHandoffTimeout
+	if timeout > maxTimeout {
+		timeout = maxTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -307,7 +334,7 @@ func (d *EventDispatcher) RunHandoff(name, actionID, key string, ev Event, paylo
 	}, payload)
 }
 
-func (d *EventDispatcher) resolveHandoff(name, actionID string) (Entry, *manifest.Action, error) {
+func (d *EventDispatcher) resolveStructuredHandoff(name, actionID string, merge bool) (Entry, *manifest.Action, error) {
 	entries, err := d.registry.Load()
 	if err != nil {
 		return Entry{}, nil, err
@@ -331,7 +358,10 @@ func (d *EventDispatcher) resolveHandoff(name, actionID string) (Entry, *manifes
 		if action == nil {
 			return Entry{}, nil, fmt.Errorf("plugin %s has no action %q", name, actionID)
 		}
-		if !action.Handoff {
+		if merge && !action.MergeHandoff {
+			return Entry{}, nil, fmt.Errorf("plugin %s action %s is not a merge handoff provider", name, action.ID)
+		}
+		if !merge && !action.Handoff {
 			return Entry{}, nil, fmt.Errorf("plugin %s action %s is not a handoff provider", name, action.ID)
 		}
 		return entry, action, nil
