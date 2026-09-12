@@ -59,6 +59,10 @@ git worktree とブランチを切ります。並列で走らせても作業ツ�
 **いつでも戻れる。** セッションは daemon より、エージェントより、マシンの再起動より
 長生きします。開き直せば会話は止まったところから続きます。
 
+**試行をまたいで意図を残せる。** 永続 Task はサイズを制限した意図のメタデータと、
+その Task を試した session の順序付き履歴を保持します。session を削除しても Task は消えず、
+参照切れとして明示されます。
+
 **移動が速い。** `Ctrl+]` でデタッチ。`M-f` でセッション名・ディレクトリ・ブランチ・
 フリート・エージェント種別を横断するファジー検索が開きます。
 
@@ -202,6 +206,30 @@ tmux サーバーは fork 時の環境を保持し続けるため、そのペイ
 古いデーモンに届くことがあります（警告は出ません）。`JIN_SOCKET` を明示するか、
 そのサーバーを立て直してください。jind-ai が開くペインは影響を受けません。
 詳細は [docs/ipc-protocol.md](docs/ipc-protocol.md#which-daemon-a-command-reaches)。
+
+### Task 管理
+
+Task は、それを実行する session とは独立してユーザーの意図を保持します。Task の作成だけでは
+agent や worktree は起動しません。オーケストレーションは後続の明示的な操作です。
+
+```bash
+jin task create --title "不安定な build を直す" \
+  --source-kind issue --source-ref github:42 \
+  --requested-base origin/main \
+  --prompt-summary "失敗条件を絞って調査する"
+jin task list
+jin task info <task-selector>
+jin task execution add <task-selector> --session <session-selector>
+
+# 読み書きのどの操作にも構造化出力がある
+jin task list --json
+jin task info <task-selector> --json
+```
+
+Execution は既存 session への追記専用リンクです。ID と順序は daemon 再起動後も維持されます。
+session の状態と完了 attention は読み取り時に投影するため、session が削除されても履歴は壊れず
+`reference_state: "missing"` と表示されます。保存できるのはサイズ制限付きメタデータだけで、
+完全な prompt、provider の Issue 本文、secret、transcript は Task record に複製しません。
 
 ### セッション管理
 
@@ -469,6 +497,7 @@ $XDG_CONFIG_HOME/jind-ai/      （デフォルト: ~/.config/jind-ai）
 $XDG_STATE_HOME/jind-ai/       （デフォルト: ~/.local/state/jind-ai）
 ├── state.yaml                 # 状態ファイル（前回使用したリポジトリ等）
 ├── sessions/                  # セッションデータ
+├── tasks/                     # 永続 Task と Execution link
 ├── review-cleanups/           # 段階別 cleanup journal
 ├── hooks-settings.json        # Claude Code フック設定（自動生成）
 ├── plugins.lock.yaml          # インストール済みプラグイン台帳（下記のプラグイン節を参照）

@@ -73,6 +73,11 @@ func Sessions() string {
 	return filepath.Join(State(), "sessions")
 }
 
+// Tasks returns the directory holding per-task JSON files.
+func Tasks() string {
+	return filepath.Join(State(), "tasks")
+}
+
 // Data returns the directory for user-installed data files
 // ($XDG_DATA_HOME/jind-ai, default ~/.local/share/jind-ai).
 func Data() string {

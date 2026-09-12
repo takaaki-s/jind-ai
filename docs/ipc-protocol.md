@@ -142,6 +142,10 @@ it alone.
 | `new` | `NewRequest` | Create session (async; poll via `get`) |
 | `list` | (none) | List all sessions (with last-message enrichment) |
 | `get` | `IDRequest` | Get a single session (with last-message enrichment) |
+| `task-create` | `TaskCreateRequest` | Persist bounded task metadata without starting a session |
+| `task-list` | (none) | List tasks with live execution/attention projections |
+| `task-get` | `IDRequest` | Get one task with its ordered execution history |
+| `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
 | `send` | `SendRequest` | Send a prompt to a session (alias `prompt` on the CLI) |
 | `respond` | `RespondRequest` | Answer a prompt an agent is blocked on; returns `RespondResponse` |
 | `start` | `IDRequest` | Start session |
@@ -165,6 +169,16 @@ it alone.
 | `pane-capture` | `PaneCaptureRequest` | Capture the visible contents of a session's pane |
 | `pane-send-keys` | `PaneSendKeysRequest` | Send keys to a session's pane (literal text or tmux key names) |
 | `plugin-run` | `PluginRunRequest` | Run a plugin on demand for a session (bypasses matcher/debounce; async) |
+
+Task actions are additive endpoints and do not change the shape of existing
+session messages, so they do not bump the protocol version. `task-create`
+accepts `title`, `source {kind, ref}`, optional `requested_base`, and optional
+`prompt_summary`; every string has a fixed size bound. It accepts no full
+prompt, transcript, secret, or provider body. An Execution stores only its own
+ID, sequence, referenced session ID, and creation time. Reads add
+`reference_state`, current session status, and current attention; if the
+session no longer exists, `reference_state` is `missing` and the durable
+execution remains intact.
 
 **Last-message enrichment** fills `Info.last_user_message` and
 `Info.last_assistant_message` by reading the conversation through the session's

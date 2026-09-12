@@ -63,6 +63,11 @@ jin (root)
 │   ├─ attach
 │   ├─ edit
 │   └─ workdir
+├─ task
+│   ├─ create
+│   ├─ list
+│   ├─ info
+│   └─ execution add
 ├─ worktree
 │   ├─ allow
 │   ├─ revoke

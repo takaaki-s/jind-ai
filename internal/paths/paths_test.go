@@ -108,6 +108,16 @@ func TestSessions_IsUnderState(t *testing.T) {
 	}
 }
 
+func TestTasks_IsUnderState(t *testing.T) {
+	withEnv(t, "XDG_STATE_HOME", "/tmp/cc-state")
+
+	got := Tasks()
+	want := filepath.Join("/tmp/cc-state", "jind-ai", "tasks")
+	if got != want {
+		t.Errorf("Tasks() = %q, want %q", got, want)
+	}
+}
+
 func TestRuntime_UsesXDGWhenSet(t *testing.T) {
 	withEnv(t, "XDG_RUNTIME_DIR", "/run/user/1000")
 

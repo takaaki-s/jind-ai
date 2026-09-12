@@ -301,6 +301,33 @@ so `internal/session/` never imports `internal/agent/*`. Adding a new
 adapter is a matter of dropping `internal/agent/<kind>/` with an
 implementation and adding one line to `internal/agent/register/register.go`.
 
+## Task and Execution Domain
+
+`internal/task/` owns durable intent separately from `internal/session/`'s
+interactive process lifecycle. A Task has a stable ID, bounded source/base/
+prompt-summary metadata, and an append-only ordered list of Executions. Each
+Execution has its own stable ID and references exactly one session ID.
+
+The boundary is intentionally one-way:
+
+```
+daemon.Server → task.Manager → session.GetInfo (narrow SessionLookup interface)
+                         └──→ tasks/{task-id}.json
+```
+
+Task records never copy prompts, transcripts, provider issue bodies, or session
+snapshots. `task.Manager` resolves each session only while building `task.Info`;
+status and attention are therefore current, while a deleted session projects
+as `reference_state: "missing"`. An absent `tasks/` directory is read as an
+empty store and is not created until the first Task is written, so starting a
+new binary does not rewrite an older state tree.
+
+The initial CLI is metadata and linkage only: `jin task create/list/info` and
+`jin task execution add`. It deliberately does not create a worktree, start a
+session, send a prompt, retry, schedule, or fetch from an issue provider. Those
+operations can build on this stable identity boundary without coupling Task
+lifetime to one agent attempt.
+
 ## Completion Attention
 
 `Session.Attention` (`internal/session/attention.go`) is a second axis beside
@@ -390,11 +417,13 @@ The `Name` field was retired in favour of `Description` + `DescriptionLocked`. E
 ## Package Dependency
 
 ```
-cmd/jin/cmd/       → daemon (client), config, session (types only), tui, tmux, plugin,
+cmd/jin/cmd/       → daemon (client), config, session/task (types only), tui, tmux, plugin,
                        agentdocs,
                        _ agent/register (blank import so kinds are registered)
                       │
-daemon/            → session, config, tmux, agent (registry Lookup), plugin
+daemon/            → session, task, config, tmux, agent (registry Lookup), plugin
+                      │
+task/              → session (Info projection through a narrow lookup interface)
                       │
 session/           → config, tmux, transcript, plugin (Dispatcher seam only)
                       │
@@ -447,6 +476,8 @@ $XDG_STATE_HOME/jind-ai/         (default: ~/.local/state/jind-ai)
   ├─ state.yaml                  ... Persistent state (StateManager)
   ├─ sessions/
   │   └─ {uuid}.json             ... Session persistence data
+  ├─ tasks/
+  │   └─ {uuid}.json             ... Task metadata and ordered execution links
   ├─ hooks-settings.json         ... Generated Claude Code hooks settings
   ├─ plugins.lock.yaml           ... Installed-plugin ledger (source, ref, commit SHA, linked)
   ├─ plugin-logs/

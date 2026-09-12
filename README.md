@@ -62,6 +62,10 @@ working tree.
 **Come back to it.** A session outlives the daemon, the agent, and a reboot.
 Reopening one resumes the conversation where it stopped.
 
+**Keep intent beyond one attempt.** A durable task records bounded intent
+metadata and an ordered history of the sessions that tried it. Deleting a
+session leaves an explicit missing reference instead of erasing the task.
+
 **Get around quickly.** `Ctrl+]` detaches; `M-f` opens a fuzzy search over every
 session's name, directory, branch, fleet and agent kind.
 
@@ -225,6 +229,33 @@ environment it was forked with, so a `jin` run from one of its panes can reach
 an older daemon without saying so — set `JIN_SOCKET` or restart that server.
 Panes jind-ai opens are unaffected. Details in
 [docs/ipc-protocol.md](docs/ipc-protocol.md#which-daemon-a-command-reaches).
+
+### Task management
+
+Tasks preserve user intent independently from the sessions that execute it.
+Creating one does not start an agent or create a worktree; orchestration remains
+an explicit later step.
+
+```bash
+jin task create --title "Fix flaky build" \
+  --source-kind issue --source-ref github:42 \
+  --requested-base origin/main \
+  --prompt-summary "Investigate the bounded failure symptom"
+jin task list
+jin task info <task-selector>
+jin task execution add <task-selector> --session <session-selector>
+
+# Every read and mutation also has structured output
+jin task list --json
+jin task info <task-selector> --json
+```
+
+An execution is an append-only link to an existing session. Its ID and order
+remain stable across daemon restarts. Session status and completion attention
+are projected at read time, so a deleted session appears as
+`reference_state: "missing"` without corrupting the history. Only bounded
+metadata is accepted: jind-ai does not copy a full prompt, provider issue body,
+secret, or transcript into a task record.
 
 ### Session management
 
@@ -513,6 +544,7 @@ $XDG_CONFIG_HOME/jind-ai/      (default: ~/.config/jind-ai)
 $XDG_STATE_HOME/jind-ai/       (default: ~/.local/state/jind-ai)
 ├── state.yaml                 # State file (last used repository, etc.)
 ├── sessions/                  # Session data
+├── tasks/                     # Durable task aggregates and execution links
 ├── review-cleanups/           # Durable per-step cleanup journals
 ├── hooks-settings.json        # Generated hooks settings (auto-managed)
 ├── plugins.lock.yaml          # Installed-plugin ledger (see Plugins below)
