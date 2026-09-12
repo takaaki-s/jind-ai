@@ -323,6 +323,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handlePRHandoff(req.Data)
 	case "merge-handoff":
 		return s.handleMergeHandoff(req.Data)
+	case "review-cleanup":
+		return s.handleReviewCleanup(req.Data)
 	case "agent-signal":
 		return s.handleAgentSignal(req.Data)
 	case "pane-popup":
@@ -425,6 +427,48 @@ type MergeHandoffResponse struct {
 	Target    session.MergeHandoffTarget          `json:"target"`
 	Preflight session.MergeHandoffPreflightResult `json:"preflight"`
 	Handoff   session.MergeHandoffInfo            `json:"handoff,omitzero"`
+}
+
+type ReviewCleanupRequest struct {
+	ID             string `json:"id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+	Confirm        bool   `json:"confirm,omitempty"`
+}
+
+type ReviewCleanupResponse struct {
+	Plan    session.ReviewCleanupPlan    `json:"plan"`
+	Journal session.ReviewCleanupJournal `json:"journal,omitzero"`
+}
+
+func (s *Server) handleReviewCleanup(data json.RawMessage) Response {
+	var req ReviewCleanupRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.ID == "" {
+		return Response{Success: false, Error: "id is required"}
+	}
+	if req.DryRun == req.Confirm {
+		return Response{Success: false, Error: "choose exactly one of dry_run or confirm"}
+	}
+	if req.Confirm && req.IdempotencyKey == "" {
+		return Response{Success: false, Error: "idempotency_key is required for cleanup confirmation"}
+	}
+	if req.DryRun {
+		plan, journal, err := s.manager.PrepareReviewCleanup(req.ID, req.IdempotencyKey)
+		if err != nil {
+			return Response{Success: false, Error: err.Error()}
+		}
+		data, _ := json.Marshal(ReviewCleanupResponse{Plan: plan, Journal: journal})
+		return Response{Success: true, Data: data}
+	}
+	journal, err := s.manager.ExecuteReviewCleanup(req.ID, req.IdempotencyKey)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	respData, _ := json.Marshal(ReviewCleanupResponse{Plan: journal.Plan, Journal: journal})
+	return Response{Success: true, Data: respData}
 }
 
 func (s *Server) handleMergeHandoff(data json.RawMessage) Response {

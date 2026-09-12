@@ -110,16 +110,12 @@ func (c *Client) RemoveWorktree(workDir string, force bool) error {
 		return ErrNotWorktree
 	}
 
-	// .git file contents: "gitdir: /path/to/main/.git/worktrees/<name>"
-	content, err := os.ReadFile(gitPath)
+	// .git file contents: "gitdir: /path/to/main/.git/worktrees/<name>".
+	// linkedGitDir also resolves the relative form Git permits.
+	gitdir, err := linkedGitDir(workDir)
 	if err != nil {
-		return fmt.Errorf("reading .git file: %w", err)
+		return err
 	}
-	raw := strings.TrimSpace(string(content))
-	if !strings.HasPrefix(raw, "gitdir: ") {
-		return ErrNotWorktree
-	}
-	gitdir := strings.TrimPrefix(raw, "gitdir: ")
 
 	// .git/worktrees/<name> → .git → repo root
 	mainGitDir := filepath.Dir(filepath.Dir(gitdir))

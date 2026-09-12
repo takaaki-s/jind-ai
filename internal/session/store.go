@@ -103,6 +103,7 @@ func (s *Store) Save(session Session) error {
 	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
 	session.PRHandoff = mergePRHandoff(session.PRHandoff, persistedPRHandoff(path))
 	session.MergeHandoff = mergeMergeHandoff(session.MergeHandoff, persistedMergeHandoff(path))
+	session.ReviewCleanupKey = mergeReviewCleanupKey(session.ReviewCleanupKey, persistedReviewCleanupKey(path))
 	session.Attention = reconcileCheckAttention(session.Attention, session.ReviewFacts, session.CheckReport)
 
 	data, err := json.MarshalIndent(&session, "", "  ")
@@ -111,6 +112,27 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedReviewCleanupKey(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		ReviewCleanupKey string `json:"review_cleanup_key"`
+	}
+	if json.Unmarshal(data, &probe) != nil {
+		return ""
+	}
+	return probe.ReviewCleanupKey
+}
+
+func mergeReviewCleanupKey(candidate, persisted string) string {
+	if persisted != "" {
+		return persisted
+	}
+	return candidate
 }
 
 func persistedMergeHandoff(path string) MergeHandoff {

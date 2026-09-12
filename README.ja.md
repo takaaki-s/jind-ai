@@ -258,6 +258,10 @@ jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-
 jin session merge-handoff <session-name> <plugin> [action] --dry-run
 jin session merge-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
 
+# merge 済み session のローカル資産を確認してから整理する
+jin session cleanup <session-name> --dry-run
+jin session cleanup <session-name> --confirm --idempotency-key <key>
+
 # セッション終了
 jin session kill <session-name>
 
@@ -337,6 +341,15 @@ confirm では表示された idempotency key が必須で、ローカルと pro
 依頼します。成功時は provider の target commit を記録します。timeout、応答喪失、
 不正な出力、identity mismatch は `unknown` となり、同じ key で照合／再試行します。
 force merge は暗黙に許可せず、branch、worktree、session の cleanup も行いません。
+
+merge 結果を確認できた後は、`jin session cleanup <selector> --dry-run` で削除対象の
+session、managed worktree、所有 repository、local branch を正確に確認できます。
+active pane、dirty／untracked file、provider が確認した head より後の commit、stale な
+merge evidence、path／ownership の不一致があれば停止します。confirm には表示された
+key が必須で、session stop、worktree remove、local branch delete、session delete を
+別々の段階として journal に保存します。途中失敗や応答喪失の後は、完全な session ID と
+同じ key で再試行すると完了済み段階を繰り返さずに残りを処理します。remote branch や
+provider resource は削除しません。
 
 `--json` がセッションを出力するコマンド — `list` / `info` / `new` / `wait` /
 `seen` / `review` / `check-report` / `review-disposition` — のいずれにも
@@ -456,6 +469,7 @@ $XDG_CONFIG_HOME/jind-ai/      （デフォルト: ~/.config/jind-ai）
 $XDG_STATE_HOME/jind-ai/       （デフォルト: ~/.local/state/jind-ai）
 ├── state.yaml                 # 状態ファイル（前回使用したリポジトリ等）
 ├── sessions/                  # セッションデータ
+├── review-cleanups/           # 段階別 cleanup journal
 ├── hooks-settings.json        # Claude Code フック設定（自動生成）
 ├── plugins.lock.yaml          # インストール済みプラグイン台帳（下記のプラグイン節を参照）
 ├── plugin-logs/               # プラグインごとの dispatch/run とビルド出力

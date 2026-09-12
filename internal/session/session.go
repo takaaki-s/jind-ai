@@ -116,6 +116,12 @@ type Session struct {
 	// does not authorize worktree or branch cleanup.
 	MergeHandoff MergeHandoff `json:"merge_handoff,omitzero"`
 
+	// ReviewCleanupKey claims StatusDeleting for the journaled verified-merge
+	// cleanup. It is intentionally not projected through Info: callers inspect
+	// the independent cleanup journal. A non-empty value prevents the generic
+	// delete path and cleanup path from owning the same destructive tail.
+	ReviewCleanupKey string `json:"review_cleanup_key,omitempty"`
+
 	// Fleet grouping
 	Fleet string `json:"fleet"` // Fleet name for session grouping
 
