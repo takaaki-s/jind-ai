@@ -59,6 +59,7 @@ jin (root)
 │   ├─ list
 │   ├─ kill
 │   ├─ delete
+│   ├─ cleanup
 │   ├─ attach
 │   ├─ edit
 │   └─ workdir

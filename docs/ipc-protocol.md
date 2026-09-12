@@ -157,6 +157,7 @@ it alone.
 | `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
 | `pr-handoff` | `PRHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Fail-closed preflight and optional synchronous invocation of a manifest-declared PR handoff provider; returns the bounded request, resolved target, and persisted outcome |
 | `merge-handoff` | `MergeHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Revalidate a successful PR handoff, synchronously query a manifest-declared merge provider, and optionally merge the exact reviewed head; returns provider preflight and persisted outcome |
+| `review-cleanup` | `ReviewCleanupRequest` (`id`, optional `idempotency_key`, exactly one of `dry_run`/`confirm`) | Preview or execute journaled local cleanup for an exact verified-merged session, managed worktree, and local branch |
 | `agent-signal` | `AgentSignalRequest` | Deliver an out-of-band status signal from an agent adapter (currently only `kind="hook"` is wired) |
 | `pane-popup` | `PanePopupRequest` | Open a tmux popup over a session's pane, running a command |
 | `pane-split` | `PaneSplitRequest` | Split a session's pane, optionally running a command in the new pane (→ `PaneSplitResponse`) |
@@ -319,6 +320,16 @@ Timeouts, response loss, malformed output, and identity mismatches become
 `unknown`; retries use the same key so the provider can reconcile. There is no
 force option and no automatic branch, worktree, or session cleanup.
 
+`review-cleanup` is the separate cleanup authority. Dry-run persists nothing
+and returns an exact plan plus all blockers. It requires a current successful
+merge receipt, the same reviewed/provider head, an inactive pane, a clean
+managed worktree, no commits after that head, and exact repository/worktree/
+branch ownership. Confirm requires the plan's key and persists a journal before
+running four local steps. Each step is saved independently; a retry with the
+same full session ID and key skips successful steps and reconciles missing
+assets. The journal survives session deletion. The action has no force flag and
+never deletes remote refs or provider resources.
+
 ## Async completion
 
 `new`, `delete` and `plugin-run` accept the request, return an acknowledgement,
@@ -348,6 +359,11 @@ are each capped at 20 seconds, leaving the 60-second IPC budget room for two
 bounded local evidence probes. Only the confirmed phase persists state, but
 the action is still omitted from `readOnlyActions` because the same endpoint
 can mutate an external provider.
+
+`review-cleanup` is synchronous and journaled. Dry-run performs only bounded
+local probes. Confirm saves the plan and every completed local step before it
+responds. If the client reaches its timeout first, it must inspect/retry with
+the same full session ID and idempotency key rather than assume failure.
 
 The **synchronous pre-checks** for these actions still fail on the response:
 `new` refuses an unknown agent kind; `delete` refuses a missing session, a
@@ -611,6 +627,12 @@ evidence; merge handoff can additionally mutate an external provider. A timeout
 therefore has an unknown outcome. Retrying the first three recomputes the
 bounded local observation and converges on the latest report or decision.
 Retrying either external handoff must reuse its idempotency key.
+
+`review-cleanup` is also absent because its confirmed mode mutates local
+assets. A lost response is reconciled by repeating the full session ID and
+persisted cleanup key; the per-step journal says which operations completed.
+As a new endpoint that does not alter existing response shapes, it does not
+require a protocol-version bump.
 
 ## Adding a New Action
 

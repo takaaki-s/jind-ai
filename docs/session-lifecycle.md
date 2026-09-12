@@ -135,6 +135,17 @@ daemon is `unknown`; reconciliation must reuse the same key. No force mode is
 implied. No state grants permission to delete or clean up the branch,
 worktree, or session.
 
+Only that current successful merge result unlocks the separate local cleanup
+preflight. `jin session cleanup <selector> --dry-run` resolves one immutable
+managed-worktree path and its owning repository, rechecks the reviewed branch
+and head, requires a clean inactive checkout, and prints a deterministic key.
+Confirmation persists an independent journal before removing anything, then
+advances `session_stop`, `worktree_remove`, `local_branch_delete`, and
+`session_delete`. The journal lives outside the session record under
+`review-cleanups/`, so deleting the record does not erase the audit trail and
+a retry can resume by full session ID plus the same key. No cleanup step
+targets a remote ref or provider resource.
+
 Acknowledging is always a deliberate act, but "deliberate" includes attaching:
 in the TUI, `handleSelectSession` (`Enter` / a second click on the row) and a
 pick from the switch-session popup both call `Manager.MarkSeen` once the attach

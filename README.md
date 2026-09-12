@@ -281,6 +281,10 @@ jin session pr-handoff <session-name> <plugin> [action] --confirm --idempotency-
 jin session merge-handoff <session-name> <plugin> [action] --dry-run
 jin session merge-handoff <session-name> <plugin> [action] --confirm --idempotency-key <key>
 
+# Preview, then remove the merged session's local assets
+jin session cleanup <session-name> --dry-run
+jin session cleanup <session-name> --confirm --idempotency-key <key>
+
 # Kill a session
 jin session kill <session-name>
 
@@ -366,6 +370,16 @@ then asks the provider to merge that exact reviewed head. Success records the
 provider's target commit. A timeout, lost response, malformed output, or
 identity mismatch is `unknown` and must be reconciled with the same key. No
 force mode is implied, and no branch, worktree, or session is cleaned up.
+
+Once that merge result is verified, `jin session cleanup <selector> --dry-run`
+shows the exact session, managed worktree, owning repository, and local branch
+that a cleanup would remove. It blocks on an active pane, dirty or untracked
+files, commits after the provider-verified head, stale merge evidence, or any
+path/ownership mismatch. Confirmation requires the printed key and journals
+session stop, worktree removal, local branch deletion, and session deletion as
+separate steps. Retry a partial or response-lost cleanup with the same full
+session ID and key; completed steps are reconciled without being repeated.
+Cleanup never deletes a remote branch or provider resource.
 
 Every command whose `--json` prints a session — `list`, `info`, `new`, `wait`,
 `seen`, `review`, `check-report`, `review-disposition` — carries the attention
@@ -499,6 +513,7 @@ $XDG_CONFIG_HOME/jind-ai/      (default: ~/.config/jind-ai)
 $XDG_STATE_HOME/jind-ai/       (default: ~/.local/state/jind-ai)
 ├── state.yaml                 # State file (last used repository, etc.)
 ├── sessions/                  # Session data
+├── review-cleanups/           # Durable per-step cleanup journals
 ├── hooks-settings.json        # Generated hooks settings (auto-managed)
 ├── plugins.lock.yaml          # Installed-plugin ledger (see Plugins below)
 ├── plugin-logs/               # Per-plugin dispatch/run and build output

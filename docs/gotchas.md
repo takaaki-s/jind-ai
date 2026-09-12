@@ -2039,3 +2039,26 @@ Common pitfalls and caveats that agents tend to fall into.
   `actions.default.keys: [...]` is the shortest translation. The 0.8.0
   release note in [CHANGELOG.md](../CHANGELOG.md) has a full before/after
   example.
+
+## Verified-merge cleanup
+
+- **A cleanup journal outlives its session.** Confirmed review cleanup writes
+  `review-cleanups/<session-id>.json` before touching tmux or Git. The final
+  step deletes `sessions/<session-id>.json`, but not that journal. This is what
+  lets a caller recover from response loss or a daemon restart with the full
+  session ID and the same key. Do not move the journal back into `Session`: a
+  successful cleanup would erase its own audit and idempotency state.
+
+- **Missing is safe only after the exact plan was persisted.** A fresh dry-run
+  refuses a missing/unresolved worktree because ownership cannot be proven.
+  During a retry, a missing worktree or branch can mean the previous attempt
+  completed that local operation before losing its response; the persisted
+  plan and preceding step status bound that reconciliation. Never turn the
+  fresh-plan ownership failure into a generic "already removed" success.
+
+- **Local branch deletion is hard but exact.** A provider may squash or rebase,
+  so `git branch -d` cannot establish whether the reviewed work was merged.
+  Cleanup instead relies on the successful provider merge receipt, then checks
+  the local branch still names the exact provider-observed head immediately
+  before `git branch -D -- <branch>`. If the ref moved, cleanup stops. Remote
+  refs are never deletion targets.

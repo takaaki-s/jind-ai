@@ -55,8 +55,10 @@ type Manager struct {
 	hookRunner     worktreehook.Runner
 	pluginDisp     plugin.Dispatcher
 	gitClient      *git.Client
+	cleanupStore   *ReviewCleanupStore
 	agentResolver  AgentResolver // resolves AgentKind → Agent adapter (owns Layer C enhancer via Description())
 	mu             sync.RWMutex
+	cleanupMu      sync.Mutex // serializes local review cleanup plans and journal transitions
 	paneSlotMu     sync.Mutex // serializes named-slot pane operations (find-then-split is check-then-act; see PaneSplit/PaneClose)
 	tmuxInitMu     sync.Mutex // serializes lazy tmux init AND its recovery pass (see ensureTmuxClient)
 	stateDir       string
@@ -491,15 +493,39 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 	if err != nil {
 		return nil, err
 	}
+	cleanupStore, err := NewReviewCleanupStore(filepath.Join(stateDir, "review-cleanups"))
+	if err != nil {
+		return nil, err
+	}
 
 	m := &Manager{
-		sessions:  make(map[string]*Session),
-		store:     store,
-		configMgr: configMgr,
-		gitClient: git.NewClient(),
-		stateDir:  stateDir,
-		identity:  identity,
-		reviewSem: make(chan struct{}, reviewProbeConcurrency),
+		sessions:     make(map[string]*Session),
+		store:        store,
+		cleanupStore: cleanupStore,
+		configMgr:    configMgr,
+		gitClient:    git.NewClient(),
+		stateDir:     stateDir,
+		identity:     identity,
+		reviewSem:    make(chan struct{}, reviewProbeConcurrency),
+	}
+
+	// A local cleanup step has a deterministic, inspectable outcome, unlike a
+	// provider merge. Mark an interrupted journal failed so the same key can
+	// reconcile already-missing assets and continue from the first pending step.
+	cleanupJournals, err := cleanupStore.LoadAll()
+	if err != nil {
+		return nil, err
+	}
+	for _, journal := range cleanupJournals {
+		if journal.Status != ReviewCleanupRunning {
+			continue
+		}
+		journal.Status = ReviewCleanupFailed
+		journal.Error = "daemon restarted while local cleanup was running; retry with the same idempotency key"
+		journal.UpdatedAt = time.Now()
+		if err := cleanupStore.Save(journal); err != nil {
+			debugLog("[LOAD] persist interrupted cleanup for %s: %v", journal.Plan.SessionID, err)
+		}
 	}
 
 	// Load existing sessions
@@ -532,7 +558,14 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 		// the on-disk value: recovery uses it to restore the hook-derived
 		// status of sessions whose pane turns out to still be alive.
 		s.PersistedStatus = s.Status
-		s.Status = StatusStopped
+		if s.ReviewCleanupKey != "" {
+			// A partial verified-merge cleanup owns the record across daemon
+			// restart. Keeping deleting prevents revive and generic delete from
+			// racing its journaled retry.
+			s.Status = StatusDeleting
+		} else {
+			s.Status = StatusStopped
+		}
 		if s.Fleet == "" {
 			s.Fleet = DefaultFleet
 		}
@@ -3698,7 +3731,7 @@ func (m *Manager) Kill(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("session %s not found", id)
 	}
-	if session.Status == StatusDeleting {
+	if session.Status == StatusDeleting || session.ReviewCleanupKey != "" {
 		// A delete is already in flight and subsumes this stop; it owns the
 		// record's status until it finishes.
 		m.mu.Unlock()
@@ -3818,7 +3851,7 @@ func (m *Manager) PreCheckDelete(id string, removeWorktree, forceRemoveWorktree 
 	// PreCheckDelete would still resolve workDir and run `git status` on a
 	// checkout the first request is already rm -rf'ing. MarkDeleting is where the
 	// CAS actually lands; this is the pre-check version.
-	if session.Status == StatusDeleting {
+	if session.Status == StatusDeleting || session.ReviewCleanupKey != "" {
 		m.mu.RUnlock()
 		return DeleteRequest{}, ErrDeleteInFlight
 	}
@@ -3899,7 +3932,7 @@ func (m *Manager) MarkDeleting(req *DeleteRequest) error {
 		m.mu.Unlock()
 		return fmt.Errorf("session %s not found", req.ID)
 	}
-	if session.Status == StatusDeleting {
+	if session.Status == StatusDeleting || session.ReviewCleanupKey != "" {
 		m.mu.Unlock()
 		return ErrDeleteInFlight
 	}

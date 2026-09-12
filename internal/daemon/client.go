@@ -549,6 +549,22 @@ func (c *Client) MergeHandoff(req MergeHandoffRequest) (*MergeHandoffResponse, e
 	return &result, nil
 }
 
+func (c *Client) ReviewCleanup(req ReviewCleanupRequest) (*ReviewCleanupResponse, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "review-cleanup", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var result ReviewCleanupResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // Stop stops the daemon and waits for it to actually exit.
 //
 // A protocol-mismatched daemon still executes the stop action — its handler
