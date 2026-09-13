@@ -11,14 +11,23 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 const (
-	MaxTitleLength         = 200
-	MaxSourceKindLength    = 64
-	MaxSourceRefLength     = 512
-	MaxRequestedBaseLength = 512
-	MaxPromptSummaryLength = 512
+	MaxTitleLength           = 200
+	MaxSourceKindLength      = 64
+	MaxSourceRefLength       = 512
+	MaxRequestedBaseLength   = 512
+	MaxPromptSummaryLength   = 512
+	MaxIdempotencyKeyLength  = 200
+	MaxRepoLength            = 4096
+	MaxRelativeWorkDirLength = 1024
+	MaxAgentKindLength       = 64
+	MaxModelLength           = 256
+	MaxFleetLength           = 128
+	MaxWorktreeBranchLength  = 512
+	MaxRunMessageLength      = 2048
+	MaxPromptBytes           = 64 * 1024
 )
 
 // Source identifies where the task request came from without copying provider
@@ -44,12 +53,57 @@ type Task struct {
 }
 
 // Execution is a stable link from one task attempt to one existing session.
-// It contains no prompt or transcript data.
+// It contains no prompt body or transcript data.
 type Execution struct {
 	ID        string    `json:"id"`
 	Sequence  uint64    `json:"sequence"`
 	SessionID string    `json:"session_id"`
 	CreatedAt time.Time `json:"created_at"`
+	Run       *Run      `json:"run,omitempty"`
+}
+
+// ExecutionPhase is the durable orchestration state of a prompt-backed run.
+type ExecutionPhase string
+
+const (
+	ExecutionReserved     ExecutionPhase = "reserved"
+	ExecutionProvisioning ExecutionPhase = "provisioning"
+	ExecutionConfiguring  ExecutionPhase = "configuring"
+	ExecutionStarting     ExecutionPhase = "starting"
+	ExecutionWaiting      ExecutionPhase = "waiting"
+	ExecutionSubmitting   ExecutionPhase = "submitting"
+	ExecutionSubmitted    ExecutionPhase = "submitted"
+	ExecutionFailed       ExecutionPhase = "failed"
+	ExecutionInterrupted  ExecutionPhase = "interrupted"
+)
+
+// PromptMetadata is deliberately irreversible. The body crosses IPC only for
+// the live submission attempt and is never written to a Task record.
+type PromptMetadata struct {
+	SHA256 string `json:"sha256"`
+	Bytes  int    `json:"bytes"`
+}
+
+// Run is the bounded journal for a prompt-backed execution. It contains enough
+// identity to reconcile a retry, but no prompt body or captured environment.
+type Run struct {
+	IdempotencyKey  string         `json:"idempotency_key"`
+	Phase           ExecutionPhase `json:"phase"`
+	FailedPhase     ExecutionPhase `json:"failed_phase,omitempty"`
+	Repo            string         `json:"repo"`
+	RelativeWorkDir string         `json:"relative_work_dir,omitempty"`
+	AgentKind       string         `json:"agent_kind"`
+	Model           string         `json:"model,omitempty"`
+	Fleet           string         `json:"fleet,omitempty"`
+	NoHook          bool           `json:"no_hook,omitempty"`
+	RequestedBase   string         `json:"requested_base,omitempty"`
+	WorktreeName    string         `json:"worktree_name"`
+	WorktreeBranch  string         `json:"worktree_branch"`
+	Prompt          PromptMetadata `json:"prompt"`
+	Error           string         `json:"error,omitempty"`
+	Guidance        string         `json:"guidance,omitempty"`
+	Warning         string         `json:"warning,omitempty"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 type ReferenceState string
@@ -122,7 +176,7 @@ func ValidateCreateOptions(opts CreateOptions) error {
 }
 
 func normalize(t *Task) {
-	if t.SchemaVersion == 0 {
+	if t.SchemaVersion < SchemaVersion {
 		t.SchemaVersion = SchemaVersion
 	}
 	if t.Source.Kind == "" {
@@ -139,5 +193,21 @@ func normalize(t *Task) {
 		if t.Executions[i].Sequence >= next {
 			next = t.Executions[i].Sequence + 1
 		}
+		run := t.Executions[i].Run
+		if run != nil && runPhaseTransient(run.Phase) {
+			run.FailedPhase = run.Phase
+			run.Phase = ExecutionInterrupted
+			run.Error = "daemon restarted while this execution was in progress"
+			run.Guidance = "retry `jin task new` with the same idempotency key and prompt; jind-ai will reuse recorded identities"
+		}
+	}
+}
+
+func runPhaseTransient(phase ExecutionPhase) bool {
+	switch phase {
+	case ExecutionReserved, ExecutionProvisioning, ExecutionConfiguring, ExecutionStarting, ExecutionWaiting, ExecutionSubmitting:
+		return true
+	default:
+		return false
 	}
 }

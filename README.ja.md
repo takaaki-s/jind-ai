@@ -210,13 +210,25 @@ tmux サーバーは fork 時の環境を保持し続けるため、そのペイ
 ### Task 管理
 
 Task は、それを実行する session とは独立してユーザーの意図を保持します。Task の作成だけでは
-agent や worktree は起動しません。オーケストレーションは後続の明示的な操作です。
+agent や worktree は起動しません。`task create` はメタデータだけを記録し、`task new` は明示的に
+オーケストレーションします。1 回の要求で Task、Execution、worktree/branch、session の ID を
+予約し、その後 agent の起動と prompt 投入を非同期で進めます。
 
 ```bash
 jin task create --title "不安定な build を直す" \
   --source-kind issue --source-ref github:42 \
   --requested-base origin/main \
   --prompt-summary "失敗条件を絞って調査する"
+
+# 独立した実行を開始し、固定された各 ID をすぐ受け取る
+jin task new --repo ~/repos/myapp \
+  --title "不安定な build を直す" \
+  --prompt "不安定なテストを再現し、原因を修正して関連テストを実行してください。"
+
+# prompt file と repository 内の相対開始ディレクトリも指定できる
+jin task new --repo ~/repos/monorepo --workdir services/api \
+  --prompt-file ./tasks/fix-api.md
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -230,6 +242,11 @@ Execution は既存 session への追記専用リンクです。ID と順序は 
 session の状態と完了 attention は読み取り時に投影するため、session が削除されても履歴は壊れず
 `reference_state: "missing"` と表示されます。保存できるのはサイズ制限付きメタデータだけで、
 完全な prompt、provider の Issue 本文、secret、transcript は Task record に複製しません。
+`task new` が保存する prompt 情報は SHA-256 digest と byte 数だけです。出力される
+idempotency key は、client/daemon 間の結果が不明な場合に、同一要求を
+`--idempotency-key <key>` 付きで再試行するために使います。`jin task info` では永続化された
+run phase、失敗内容、安全な再試行・確認手順を確認できます。prompt 投入中に中断して到達結果が
+不明になった場合は、自動再送で二重投入せず session を保持して確認を求めます。
 
 ### セッション管理
 

@@ -233,14 +233,26 @@ Panes jind-ai opens are unaffected. Details in
 ### Task management
 
 Tasks preserve user intent independently from the sessions that execute it.
-Creating one does not start an agent or create a worktree; orchestration remains
-an explicit later step.
+`task create` records metadata without starting anything. `task new` is the
+explicit orchestration path: one request reserves the Task, Execution,
+worktree/branch, and session identities, then starts the agent and submits the
+prompt asynchronously.
 
 ```bash
 jin task create --title "Fix flaky build" \
   --source-kind issue --source-ref github:42 \
   --requested-base origin/main \
   --prompt-summary "Investigate the bounded failure symptom"
+
+# Start one isolated execution and return its stable IDs immediately
+jin task new --repo ~/repos/myapp \
+  --title "Fix flaky build" \
+  --prompt "Reproduce the flaky test, fix its cause, and run the focused tests."
+
+# A prompt file and a repository-relative starting directory are also supported
+jin task new --repo ~/repos/monorepo --workdir services/api \
+  --prompt-file ./tasks/fix-api.md
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -255,7 +267,13 @@ remain stable across daemon restarts. Session status and completion attention
 are projected at read time, so a deleted session appears as
 `reference_state: "missing"` without corrupting the history. Only bounded
 metadata is accepted: jind-ai does not copy a full prompt, provider issue body,
-secret, or transcript into a task record.
+secret, or transcript into a task record. `task new` persists only the prompt's
+SHA-256 digest and byte count. Its output includes an idempotency key: after an
+uncertain client/daemon outcome, retry the identical request with
+`--idempotency-key <key>`. `jin task info` shows the durable run phase, any
+failure, and safe retry/inspection guidance. Prompt submission is fail-closed:
+if interruption makes delivery uncertain, jind-ai retains the session and asks
+you to inspect it instead of automatically sending a possible duplicate.
 
 ### Session management
 

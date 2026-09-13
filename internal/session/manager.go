@@ -590,6 +590,9 @@ type CreateOptions struct {
 	Fleet       string // Fleet name for session grouping; defaults to DefaultFleet if empty
 	AgentKind   string // Adapter identifier; defaults to "claude" if empty
 	Model       string // Agent model in the CLI's own spelling; empty = the agent's own default
+	// ReservedID lets an orchestration journal persist the session identity
+	// before reservation. Empty keeps the ordinary UUID-minting path.
+	ReservedID string
 
 	Worktree       bool   // Create a git worktree for this session
 	NoHook         bool   // Skip the worktree post-create hook (worktree path only)
@@ -802,7 +805,15 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 		return nil, Info{}, fmt.Errorf("work directory is required")
 	}
 
-	sessionID := uuid.New().String()
+	sessionID := opts.ReservedID
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	} else {
+		parsed, err := uuid.Parse(sessionID)
+		if err != nil || parsed.String() != sessionID {
+			return nil, Info{}, fmt.Errorf("reserved session id must be a canonical UUID")
+		}
+	}
 
 	// Layer A description. For the worktree case, opts.WorkDir is still the
 	// repo root; ProvisionAsync recomputes the baseline against the final
@@ -851,6 +862,10 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 	}
 
 	m.mu.Lock()
+	if _, exists := m.sessions[sessionID]; exists {
+		m.mu.Unlock()
+		return nil, Info{}, fmt.Errorf("session id already exists: %s", sessionID)
+	}
 
 	// Skip the workDir conflict check for the worktree case: opts.WorkDir is
 	// the repo root and multiple concurrent worktree creates legitimately
@@ -880,6 +895,68 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 	}
 
 	return session, info, nil
+}
+
+// SetInitialWorkDir selects an existing subdirectory below the session's
+// managed worktree for its first spawn. Symlinks are resolved and must remain
+// inside the worktree, so a relative value cannot escape into another checkout.
+func (m *Manager) SetInitialWorkDir(id, relative string) error {
+	if relative == "" || relative == "." {
+		return nil
+	}
+	if filepath.IsAbs(relative) {
+		return fmt.Errorf("workdir must be relative to the managed worktree")
+	}
+	clean := filepath.Clean(relative)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workdir escapes the managed worktree: %s", relative)
+	}
+
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return fmt.Errorf("session not found: %s", id)
+	}
+	root := sess.WorkDir
+	m.mu.RUnlock()
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve managed worktree: %w", err)
+	}
+	candidate, err := filepath.EvalSymlinks(filepath.Join(root, clean))
+	if err != nil {
+		return fmt.Errorf("resolve workdir %q: %w", relative, err)
+	}
+	inside, err := filepath.Rel(resolvedRoot, candidate)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("workdir escapes the managed worktree: %s", relative)
+	}
+	fi, err := os.Stat(candidate)
+	if err != nil {
+		return fmt.Errorf("workdir does not exist: %s", relative)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("workdir is not a directory: %s", relative)
+	}
+
+	m.mu.Lock()
+	live, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session not found: %s", id)
+	}
+	if live.WorkDir != root {
+		m.mu.Unlock()
+		return fmt.Errorf("session worktree changed while resolving workdir")
+	}
+	live.CurrentWorkDir = candidate
+	saved := *live
+	m.mu.Unlock()
+	if err := m.store.Save(saved); err != nil {
+		return fmt.Errorf("saving initial workdir: %w", err)
+	}
+	return nil
 }
 
 // ProvisionAsync runs the external provisioning work (git worktree add,
@@ -929,6 +1006,10 @@ func (m *Manager) ProvisionAsync(sess *Session, opts CreateOptions) (string, err
 		prov.undo()
 		return "", fmt.Errorf("session %s already has an immutable review base", sess.ID)
 	}
+	previousWorkDir := live.WorkDir
+	previousReviewBase := live.ReviewBase
+	previousRepoName := live.RepoName
+	previousDescription := live.Description
 	live.WorkDir = prov.worktreePath
 	live.ReviewBase = prov.reviewBase
 	// Recomputed against the final path rather than left on ReserveCreation's
@@ -944,9 +1025,34 @@ func (m *Manager) ProvisionAsync(sess *Session, opts CreateOptions) (string, err
 
 	if err := m.store.Save(saved); err != nil {
 		prov.undo()
+		// The failed save left the durable reservation unchanged and undo
+		// removed the checkout. Put memory back on that same evidence before
+		// the caller records StatusStopped; otherwise MarkCreationFailed would
+		// persist a removed worktree and a review base that never landed.
+		m.mu.Lock()
+		if current, ok := m.sessions[sess.ID]; ok && current.WorkDir == prov.worktreePath && current.ReviewBase == prov.reviewBase {
+			current.WorkDir = previousWorkDir
+			current.ReviewBase = previousReviewBase
+			current.RepoName = previousRepoName
+			current.Description = previousDescription
+		}
+		m.mu.Unlock()
 		return "", fmt.Errorf("saving session after provisioning: %w", err)
 	}
 	return prov.warning, nil
+}
+
+// ProvisionReserved continues provisioning by stable session ID. It is the
+// restart-safe counterpart to passing ReserveCreation's live pointer directly:
+// orchestration journals retain the ID, not an in-process pointer.
+func (m *Manager) ProvisionReserved(id string, opts CreateOptions) (string, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", id)
+	}
+	return m.ProvisionAsync(sess, opts)
 }
 
 // MarkCreationFailed persists a failure verdict on a reserved session's async

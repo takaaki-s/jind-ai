@@ -315,18 +315,29 @@ daemon.Server → task.Manager → session.GetInfo (narrow SessionLookup interfa
                          └──→ tasks/{task-id}.json
 ```
 
-Task records never copy prompts, transcripts, provider issue bodies, or session
-snapshots. `task.Manager` resolves each session only while building `task.Info`;
+Task records never copy prompt bodies, transcripts, provider issue bodies, or
+session snapshots. Prompt-backed runs retain only a SHA-256 digest and byte
+count. `task.Manager` resolves each session only while building `task.Info`;
 status and attention are therefore current, while a deleted session projects
 as `reference_state: "missing"`. An absent `tasks/` directory is read as an
 empty store and is not created until the first Task is written, so starting a
 new binary does not rewrite an older state tree.
 
-The initial CLI is metadata and linkage only: `jin task create/list/info` and
-`jin task execution add`. It deliberately does not create a worktree, start a
-session, send a prompt, retry, schedule, or fetch from an issue provider. Those
-operations can build on this stable identity boundary without coupling Task
-lifetime to one agent attempt.
+`jin task create/list/info` and `jin task execution add` remain metadata and
+linkage operations. `jin task new` builds on that boundary: the daemon first
+atomically persists a Task, Execution, preallocated session UUID, deterministic
+worktree name/branch, request digest, and idempotency key. It then reserves the
+session and acknowledges those identities before a goroutine provisions the
+worktree, applies a repository-relative starting directory, starts the agent,
+waits for `idle`, and submits the in-memory prompt.
+
+Every external boundary has a persisted phase. A daemon restart converts an
+in-flight phase to `interrupted`; an identical request with the same key reuses
+recorded identities where the evidence is unambiguous. Provisioning failures
+are retryable after their cause is fixed. An interrupted `submitting` phase is
+deliberately not retried because delivery may already have occurred. Issue
+fetching, remote scheduling, automatic review, and merge remain outside this
+action.
 
 ## Completion Attention
 

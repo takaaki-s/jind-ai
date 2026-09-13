@@ -5,11 +5,181 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
+
+func testRunOptions() RunOptions {
+	prompt := "Implement the bounded change"
+	return RunOptions{
+		IdempotencyKey: "request-1", Title: "Implement change", Repo: "/repo",
+		RelativeWorkDir: "service", AgentKind: "claude", Model: "opus", Fleet: "backend",
+		RequestedBase: "main", BranchPrefix: "jin/",
+		PromptSHA256: PromptDigest(prompt), PromptBytes: len(prompt),
+	}
+}
+
+func TestManager_ReserveRunIsDurableAndIdempotentWithoutPromptBody(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks")
+	sessions := &fakeSessions{infos: map[string]session.Info{}}
+	m, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		"33333333-3333-4333-8333-333333333333",
+	}
+	m.newID = func() string {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}
+	opts := testRunOptions()
+	first, err := m.ReserveRun(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.Task.ID == "" || first.Execution.ID == "" || first.Execution.SessionID == "" {
+		t.Fatalf("reservation = %+v", first)
+	}
+	if first.Execution.Run == nil || first.Execution.Run.Phase != ExecutionReserved {
+		t.Fatalf("run = %+v", first.Execution.Run)
+	}
+	if first.Execution.Run.WorktreeName != "jin-33333333" || first.Execution.Run.WorktreeBranch != "jin/33333333" {
+		t.Fatalf("worktree identity = %+v", first.Execution.Run)
+	}
+	first.Execution.Run.Phase = ExecutionSubmitted
+	projected, _ := m.Get(first.Task.ID)
+	if projected.Executions[0].Run.Phase != ExecutionReserved {
+		t.Fatal("mutating a projected run changed manager state")
+	}
+
+	second, err := m.ReserveRun(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Created || second.Task.ID != first.Task.ID || second.Execution.ID != first.Execution.ID {
+		t.Fatalf("duplicate reservation = %+v", second)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, first.Task.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "Implement the bounded change") {
+		t.Fatalf("prompt body persisted: %s", data)
+	}
+	if !strings.Contains(string(data), opts.PromptSHA256) {
+		t.Fatalf("prompt digest missing: %s", data)
+	}
+
+	restarted, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRestart, err := restarted.ReserveRun(opts)
+	if err != nil || afterRestart.Created || afterRestart.Task.ID != first.Task.ID {
+		t.Fatalf("restart duplicate = %+v, %v", afterRestart, err)
+	}
+}
+
+func TestManager_ReserveRunRejectsIdempotencyMismatch(t *testing.T) {
+	m, _ := NewManager(filepath.Join(t.TempDir(), "tasks"), &fakeSessions{infos: map[string]session.Info{}})
+	opts := testRunOptions()
+	if _, err := m.ReserveRun(opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.PromptSHA256 = PromptDigest("different")
+	opts.PromptBytes = len("different")
+	if _, err := m.ReserveRun(opts); err == nil || !strings.Contains(err.Error(), "different task request") {
+		t.Fatalf("mismatch error = %v", err)
+	}
+	if got := m.List(); len(got) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(got))
+	}
+}
+
+func TestManager_RestartMarksTransientRunInterrupted(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks")
+	sessions := &fakeSessions{infos: map[string]session.Info{}}
+	m, _ := NewManager(dir, sessions)
+	reserved, err := m.ReserveRun(testRunOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetRunPhase(reserved.Task.ID, reserved.Execution.ID, ExecutionWaiting, "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := restarted.Get(reserved.Task.ID)
+	run := got.Executions[0].Run
+	if run == nil || run.Phase != ExecutionInterrupted || run.FailedPhase != ExecutionWaiting {
+		t.Fatalf("run = %+v", run)
+	}
+	if !strings.Contains(run.Guidance, "same idempotency key") {
+		t.Fatalf("guidance = %q", run.Guidance)
+	}
+
+	// Completed submissions are terminal and must survive a restart unchanged.
+	if _, err := restarted.SetRunPhase(got.ID, got.Executions[0].ID, ExecutionSubmitted, "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, _ := finished.Get(got.ID)
+	if final.Executions[0].Run.Phase != ExecutionSubmitted {
+		t.Fatalf("completed run = %+v", final.Executions[0].Run)
+	}
+}
+
+func TestValidateRunOptionsBoundsPromptAndIdentity(t *testing.T) {
+	opts := testRunOptions()
+	tests := []func(*RunOptions){
+		func(o *RunOptions) { o.IdempotencyKey = "" },
+		func(o *RunOptions) { o.PromptSHA256 = "bad" },
+		func(o *RunOptions) { o.PromptBytes = MaxPromptBytes + 1 },
+		func(o *RunOptions) { o.AgentKind = "" },
+		func(o *RunOptions) { o.Fleet = strings.Repeat("x", MaxFleetLength+1) },
+		func(o *RunOptions) { o.BranchPrefix = strings.Repeat("x", MaxWorktreeBranchLength) },
+	}
+	for _, mutate := range tests {
+		candidate := opts
+		mutate(&candidate)
+		if err := validateRunOptions(candidate); err == nil {
+			t.Fatalf("accepted invalid options: %+v", candidate)
+		}
+	}
+}
+
+func TestManager_SetRunPhaseBoundsDiagnosticStrings(t *testing.T) {
+	m, _ := NewManager(filepath.Join(t.TempDir(), "tasks"), &fakeSessions{infos: map[string]session.Info{}})
+	reserved, err := m.ReserveRun(testRunOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("界", MaxRunMessageLength)
+	updated, err := m.SetRunPhase(reserved.Task.ID, reserved.Execution.ID, ExecutionFailed, ExecutionWaiting, long, long, long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := updated.Executions[0].Run
+	for name, value := range map[string]string{"error": run.Error, "guidance": run.Guidance, "warning": run.Warning} {
+		if len(value) > MaxRunMessageLength || !utf8.ValidString(value) {
+			t.Fatalf("%s is not bounded valid UTF-8: %d bytes", name, len(value))
+		}
+	}
+}
 
 type fakeSessions struct {
 	mu    sync.RWMutex
