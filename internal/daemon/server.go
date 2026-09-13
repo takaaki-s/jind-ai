@@ -45,10 +45,15 @@ type Server struct {
 	socketPath  string
 	manager     *session.Manager
 	taskManager *task.Manager
-	configMgr   *config.Manager
-	stateMgr    *config.StateManager
-	pluginDisp  *plugin.EventDispatcher
-	createMu    sync.Mutex // Mutual exclusion for session creation
+	taskDriver  taskExecutionDriver
+	// taskAgentValidator is the task-new validation seam. Production resolves
+	// the process-global adapter registry; tests inject a local validator so
+	// unrelated registry-reset tests cannot race semantic state.
+	taskAgentValidator func(string) error
+	configMgr          *config.Manager
+	stateMgr           *config.StateManager
+	pluginDisp         *plugin.EventDispatcher
+	createMu           sync.Mutex // Mutual exclusion for session creation
 
 	// Shutdown state, written by Stop and read by Start's accept loop from
 	// another goroutine. lifecycleMu guards both fields.
@@ -118,6 +123,11 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	if err != nil {
 		return nil, fmt.Errorf("initializing task manager: %w", err)
 	}
+	taskDriver := sessionTaskDriver{manager: mgr}
+	taskAgentValidator := func(kind string) error {
+		_, err := agent.Lookup(kind)
+		return err
+	}
 
 	// Wire the agent resolver so startSessionTmux / HandleHookEvent can
 	// dispatch to the adapter that owns each session's kind. Layer C
@@ -161,12 +171,14 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	mgr.SetPluginDispatcher(pluginDisp)
 
 	return &Server{
-		socketPath:  socketPath,
-		manager:     mgr,
-		taskManager: taskMgr,
-		configMgr:   configMgr,
-		stateMgr:    stateMgr,
-		pluginDisp:  pluginDisp,
+		socketPath:         socketPath,
+		manager:            mgr,
+		taskManager:        taskMgr,
+		taskDriver:         taskDriver,
+		taskAgentValidator: taskAgentValidator,
+		configMgr:          configMgr,
+		stateMgr:           stateMgr,
+		pluginDisp:         pluginDisp,
 	}, nil
 }
 
@@ -300,6 +312,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleGet(req.Data)
 	case "task-create":
 		return s.handleTaskCreate(req.Data)
+	case "task-new":
+		return s.handleTaskNew(req.Data)
 	case "task-list":
 		return s.handleTaskList()
 	case "task-get":

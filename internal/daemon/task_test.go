@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
@@ -67,6 +68,29 @@ func TestTaskHandlers_RejectInvalidRequests(t *testing.T) {
 func TestClientTaskMethods_SendExpectedActions(t *testing.T) {
 	want := task.Info{SchemaVersion: task.SchemaVersion, ID: "task-1", Title: "Intent", Source: task.Source{Kind: "manual"}, Executions: []task.ExecutionInfo{}}
 	payload, _ := json.Marshal(want)
+	t.Run("new", func(t *testing.T) {
+		wantResult := TaskNewResponse{
+			Task:      want,
+			Execution: task.ExecutionInfo{Execution: task.Execution{ID: "execution-1", SessionID: "session-1"}},
+			Session:   session.Info{ID: "session-1", Status: session.StatusCreating},
+		}
+		resultPayload, _ := json.Marshal(wantResult)
+		sock, received := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true, Data: resultPayload})
+		got, err := NewClient(sock).NewTask(TaskNewRequest{IdempotencyKey: "request-1", Prompt: "do it", Repo: "/repo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if received.Action != "task-new" || got.Execution.ID != "execution-1" {
+			t.Fatalf("action=%s got=%+v", received.Action, got)
+		}
+		var req TaskNewRequest
+		if err := json.Unmarshal(received.Data, &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.IdempotencyKey != "request-1" || req.Prompt != "do it" {
+			t.Fatalf("request=%+v", req)
+		}
+	})
 
 	t.Run("create", func(t *testing.T) {
 		sock, received := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true, Data: payload})
@@ -120,7 +144,7 @@ func TestTaskReadActionsAreClassified(t *testing.T) {
 	if !readOnlyActions["task-list"] || !readOnlyActions["task-get"] {
 		t.Fatal("task reads must be classified read-only")
 	}
-	if readOnlyActions["task-create"] || readOnlyActions["task-execution-add"] {
+	if readOnlyActions["task-create"] || readOnlyActions["task-new"] || readOnlyActions["task-execution-add"] {
 		t.Fatal("task writes must not be classified read-only")
 	}
 }

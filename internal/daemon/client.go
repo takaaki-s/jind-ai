@@ -103,6 +103,25 @@ type Client struct {
 	socketPath string
 }
 
+// NewTask reserves a durable Task, isolated worktree-backed session, and
+// prompt submission attempt. The daemon acknowledges the reservation before
+// provisioning and submission finish.
+func (c *Client) NewTask(req TaskNewRequest) (*TaskNewResponse, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "task-new", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var result TaskNewResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CreateTask persists bounded task metadata without starting a session.
 func (c *Client) CreateTask(req TaskCreateRequest) (*task.Info, error) {
 	data, _ := json.Marshal(req)
