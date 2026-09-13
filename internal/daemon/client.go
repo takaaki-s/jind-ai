@@ -11,6 +11,7 @@ import (
 
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
 // The client sets a bound only when it can name one that is certainly longer
@@ -100,6 +101,73 @@ var dialDaemon = net.DialTimeout
 // Client is the daemon client
 type Client struct {
 	socketPath string
+}
+
+// CreateTask persists bounded task metadata without starting a session.
+func (c *Client) CreateTask(req TaskCreateRequest) (*task.Info, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "task-create", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var info task.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// ListTasks returns every durable task with its current session projections.
+func (c *Client) ListTasks() ([]task.Info, error) {
+	resp, err := c.send(Request{Action: "task-list"})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var infos []task.Info
+	if err := json.Unmarshal(resp.Data, &infos); err != nil {
+		return nil, err
+	}
+	return infos, nil
+}
+
+// GetTask returns one durable task by its exact ID.
+func (c *Client) GetTask(id string) (*task.Info, error) {
+	data, _ := json.Marshal(IDRequest{ID: id})
+	resp, err := c.send(Request{Action: "task-get", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var info task.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// AddTaskExecution appends an existing session to a task's attempt history.
+func (c *Client) AddTaskExecution(taskID, sessionID string) (*task.Info, error) {
+	data, _ := json.Marshal(TaskExecutionAddRequest{TaskID: taskID, SessionID: sessionID})
+	resp, err := c.send(Request{Action: "task-execution-add", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var info task.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
 }
 
 // NewClient creates a new daemon client

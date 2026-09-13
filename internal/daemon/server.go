@@ -21,6 +21,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/paths"
 	"github.com/takaaki-s/jind-ai/internal/plugin"
 	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/task"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
 	"github.com/takaaki-s/jind-ai/internal/transcript"
 	"github.com/takaaki-s/jind-ai/internal/worktreehook"
@@ -41,12 +42,13 @@ var debugLog = debug.NewLogger("daemon-debug.log")
 
 // Server is the daemon server
 type Server struct {
-	socketPath string
-	manager    *session.Manager
-	configMgr  *config.Manager
-	stateMgr   *config.StateManager
-	pluginDisp *plugin.EventDispatcher
-	createMu   sync.Mutex // Mutual exclusion for session creation
+	socketPath  string
+	manager     *session.Manager
+	taskManager *task.Manager
+	configMgr   *config.Manager
+	stateMgr    *config.StateManager
+	pluginDisp  *plugin.EventDispatcher
+	createMu    sync.Mutex // Mutual exclusion for session creation
 
 	// Shutdown state, written by Stop and read by Start's accept loop from
 	// another goroutine. lifecycleMu guards both fields.
@@ -112,6 +114,10 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	if err != nil {
 		return nil, err
 	}
+	taskMgr, err := task.NewManager(filepath.Join(stateDir, "tasks"), mgr)
+	if err != nil {
+		return nil, fmt.Errorf("initializing task manager: %w", err)
+	}
 
 	// Wire the agent resolver so startSessionTmux / HandleHookEvent can
 	// dispatch to the adapter that owns each session's kind. Layer C
@@ -155,11 +161,12 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 	mgr.SetPluginDispatcher(pluginDisp)
 
 	return &Server{
-		socketPath: socketPath,
-		manager:    mgr,
-		configMgr:  configMgr,
-		stateMgr:   stateMgr,
-		pluginDisp: pluginDisp,
+		socketPath:  socketPath,
+		manager:     mgr,
+		taskManager: taskMgr,
+		configMgr:   configMgr,
+		stateMgr:    stateMgr,
+		pluginDisp:  pluginDisp,
 	}, nil
 }
 
@@ -291,6 +298,14 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleList()
 	case "get":
 		return s.handleGet(req.Data)
+	case "task-create":
+		return s.handleTaskCreate(req.Data)
+	case "task-list":
+		return s.handleTaskList()
+	case "task-get":
+		return s.handleTaskGet(req.Data)
+	case "task-execution-add":
+		return s.handleTaskExecutionAdd(req.Data)
 	case "send":
 		return s.handleSend(req.Data)
 	case "start":
@@ -586,6 +601,8 @@ func reusableMergeHandoff(current session.MergeHandoffInfo, target session.Merge
 var readOnlyActions = map[string]bool{
 	"list":         true,
 	"get":          true,
+	"task-list":    true,
+	"task-get":     true,
 	"dir-history":  true,
 	"pane-capture": true,
 	"result":       true,
