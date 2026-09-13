@@ -105,6 +105,61 @@ func TestManager_ReserveRunRejectsIdempotencyMismatch(t *testing.T) {
 	}
 }
 
+func TestManager_ExternalSourceIdentityPreventsDuplicateTasks(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks")
+	sessions := &fakeSessions{infos: map[string]session.Info{}}
+	m, _ := NewManager(dir, sessions)
+	source := Source{
+		Kind: "issue", Ref: "https://github.com/owner/repo/issues/7",
+		Provider: "github", Repository: "owner/repo", ExternalID: "7",
+		URL: "https://github.com/owner/repo/issues/7", SyncToken: "2026-09-13T00:00:00Z",
+	}
+	opts := testRunOptions()
+	opts.Source = source
+	first, err := m.ReserveRun(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Task.Source != source {
+		t.Fatalf("source = %+v", first.Task.Source)
+	}
+
+	exact, err := m.ReserveRun(opts)
+	if err != nil || exact.Created || exact.Task.ID != first.Task.ID {
+		t.Fatalf("exact retry = %+v, %v", exact, err)
+	}
+	changed := opts
+	changed.IdempotencyKey = "request-2"
+	changed.Source.SyncToken = "2026-09-14T00:00:00Z"
+	if _, err := m.ReserveRun(changed); err == nil || !strings.Contains(err.Error(), first.Task.ID) {
+		t.Fatalf("duplicate source error = %v", err)
+	}
+
+	restarted, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, ok := restarted.Get(first.Task.ID)
+	if !ok || persisted.Source != source {
+		t.Fatalf("persisted source = %+v, found=%v", persisted.Source, ok)
+	}
+	changed.IdempotencyKey = "request-3"
+	if _, err := restarted.ReserveRun(changed); err == nil || !strings.Contains(err.Error(), "external source") {
+		t.Fatalf("restart duplicate source error = %v", err)
+	}
+}
+
+func TestManager_CreateAlsoRejectsDuplicateExternalSource(t *testing.T) {
+	m, _ := NewManager(filepath.Join(t.TempDir(), "tasks"), &fakeSessions{infos: map[string]session.Info{}})
+	source := Source{Kind: "issue", Provider: "github", Repository: "owner/repo", ExternalID: "7"}
+	if _, err := m.Create(CreateOptions{Title: "First", Source: source}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create(CreateOptions{Title: "Second", Source: source}); err == nil {
+		t.Fatal("duplicate external source was accepted by Create")
+	}
+}
+
 func TestManager_RestartMarksTransientRunInterrupted(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "tasks")
 	sessions := &fakeSessions{infos: map[string]session.Info{}}
@@ -472,6 +527,12 @@ func TestValidateCreateOptions_BoundsMetadata(t *testing.T) {
 		{Title: "x", Source: Source{Ref: tooLong(MaxSourceRefLength + 1)}},
 		{Title: "x", RequestedBase: tooLong(MaxRequestedBaseLength + 1)},
 		{Title: "x", PromptSummary: tooLong(MaxPromptSummaryLength + 1)},
+		{Title: "x", Source: Source{Provider: "github"}},
+		{Title: "x", Source: Source{Provider: tooLong(MaxProviderLength + 1), Repository: "o/r", ExternalID: "1"}},
+		{Title: "x", Source: Source{Provider: "github", Repository: tooLong(MaxRepositoryLength + 1), ExternalID: "1"}},
+		{Title: "x", Source: Source{Provider: "github", Repository: "o/r", ExternalID: tooLong(MaxExternalIDLength + 1)}},
+		{Title: "x", Source: Source{Provider: "github", Repository: "o/r", ExternalID: "1", URL: tooLong(MaxSourceURLLength + 1)}},
+		{Title: "x", Source: Source{Provider: "github", Repository: "o/r", ExternalID: "1", SyncToken: tooLong(MaxSyncTokenLength + 1)}},
 	}
 	for _, opts := range tests {
 		if err := ValidateCreateOptions(opts); err == nil {

@@ -253,6 +253,10 @@ jin task new --repo ~/repos/myapp \
 jin task new --repo ~/repos/monorepo --workdir services/api \
   --prompt-file ./tasks/fix-api.md
 
+# Or read a GitHub Issue without changing it; a bare number uses origin
+jin task new --repo ~/repos/myapp --issue 42
+jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -268,7 +272,14 @@ are projected at read time, so a deleted session appears as
 `reference_state: "missing"` without corrupting the history. Only bounded
 metadata is accepted: jind-ai does not copy a full prompt, provider issue body,
 secret, or transcript into a task record. `task new` persists only the prompt's
-SHA-256 digest and byte count. Its output includes an idempotency key: after an
+SHA-256 digest and byte count. For `--issue`, it also stores the canonical
+provider/repository/issue identity, URL, and GitHub `updatedAt` sync token, and
+rejects a second Task for that same Issue. Issue title, body, and labels are
+read through the authenticated `gh` CLI, bounded, and framed as untrusted
+prompt context; the operation cannot comment, label, assign, close, or
+otherwise mutate GitHub. Authentication, missing-Issue, rate-limit, and reader
+failures have distinct diagnostics without retaining provider output or
+credentials. Its output includes an idempotency key: after an
 uncertain client/daemon outcome, retry the identical request with
 `--idempotency-key <key>`. `jin task info` shows the durable run phase, any
 failure, and safe retry/inspection guidance. Prompt submission is fail-closed:

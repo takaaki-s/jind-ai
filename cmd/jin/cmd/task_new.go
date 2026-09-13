@@ -17,10 +17,12 @@ var taskNewCmd = &cobra.Command{
 then submit the prompt once the session is ready. The command returns as soon as
 the stable task, execution, session, branch, and worktree identities exist.
 
-Exactly one of --prompt and --prompt-file is required. Prompt bodies cross IPC
-only for the live attempt; task state stores only a SHA-256 digest and byte
-count. If an outcome is uncertain, repeat the command with the printed
---idempotency-key and the identical request.`,
+Exactly one of --prompt, --prompt-file, and --issue is required. --issue reads
+GitHub through the authenticated gh CLI without mutating it, and frames its
+bounded content as untrusted prompt context. Prompt bodies cross IPC only for
+the live attempt; task state stores only a SHA-256 digest and byte count. If an
+outcome is uncertain, repeat the command with the printed --idempotency-key and
+the identical request.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		req, err := taskNewRequest(cmd)
@@ -42,8 +44,15 @@ count. If an outcome is uncertain, repeat the command with the printed
 func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 	promptSet := cmd.Flags().Changed("prompt")
 	promptFileSet := cmd.Flags().Changed("prompt-file")
-	if promptSet == promptFileSet {
-		return daemon.TaskNewRequest{}, fmt.Errorf("exactly one of --prompt and --prompt-file is required")
+	issueSet := cmd.Flags().Changed("issue")
+	selected := 0
+	for _, set := range []bool{promptSet, promptFileSet, issueSet} {
+		if set {
+			selected++
+		}
+	}
+	if selected != 1 {
+		return daemon.TaskNewRequest{}, fmt.Errorf("exactly one of --prompt, --prompt-file, and --issue is required")
 	}
 
 	prompt, _ := cmd.Flags().GetString("prompt")
@@ -63,7 +72,7 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 		}
 		prompt = string(body)
 	}
-	if prompt == "" {
+	if !issueSet && prompt == "" {
 		return daemon.TaskNewRequest{}, fmt.Errorf("prompt is required")
 	}
 	if len(prompt) > task.MaxPromptBytes {
@@ -75,6 +84,7 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 		idempotencyKey = daemon.NewTaskIdempotencyKey()
 	}
 	title, _ := cmd.Flags().GetString("title")
+	issue, _ := cmd.Flags().GetString("issue")
 	repo, _ := cmd.Flags().GetString("repo")
 	workdir, _ := cmd.Flags().GetString("workdir")
 	base, _ := cmd.Flags().GetString("base")
@@ -86,6 +96,7 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 		IdempotencyKey:  idempotencyKey,
 		Title:           title,
 		Prompt:          prompt,
+		Issue:           issue,
 		Repo:            repo,
 		RelativeWorkDir: workdir,
 		RequestedBase:   base,
@@ -119,10 +130,11 @@ func init() {
 }
 
 func addTaskNewFlags(cmd *cobra.Command) {
-	cmd.Flags().String("prompt", "", "Prompt text (exclusive with --prompt-file)")
-	cmd.Flags().String("prompt-file", "", "Read prompt text from a file (exclusive with --prompt)")
+	cmd.Flags().String("prompt", "", "Prompt text (exclusive with --prompt-file and --issue)")
+	cmd.Flags().String("prompt-file", "", "Read prompt text from a file (exclusive with --prompt and --issue)")
+	cmd.Flags().String("issue", "", "Read a GitHub Issue URL, owner/repo#number, or number via gh")
 	cmd.Flags().String("repo", "", "Git repository root (required)")
-	cmd.Flags().String("title", "", "Task and session title (default: <repository> task)")
+	cmd.Flags().String("title", "", "Task and session title (default: Issue title or <repository> task)")
 	cmd.Flags().String("workdir", "", "Initial directory relative to the managed worktree")
 	cmd.Flags().String("base", "", "Base branch name (default: repository default; do not prefix origin/)")
 	cmd.Flags().String("agent", "", "Agent adapter kind (default: config default_agent)")

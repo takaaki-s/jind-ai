@@ -24,6 +24,7 @@ type Manager struct {
 	sessions SessionLookup
 	tasks    map[string]Task
 	runs     map[string]runLocation
+	sources  map[string]string
 	now      func() time.Time
 	newID    func() string
 }
@@ -48,6 +49,7 @@ type RunOptions struct {
 	BranchPrefix    string
 	PromptSHA256    string
 	PromptBytes     int
+	Source          Source
 }
 
 // RunReservation reports whether ReserveRun created the aggregate or found an
@@ -68,11 +70,17 @@ func NewManager(dir string, sessions SessionLookup) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{
-		store: store, sessions: sessions, tasks: make(map[string]Task), runs: make(map[string]runLocation),
+		store: store, sessions: sessions, tasks: make(map[string]Task), runs: make(map[string]runLocation), sources: make(map[string]string),
 		now: time.Now, newID: func() string { return uuid.New().String() },
 	}
 	for _, value := range values {
 		m.tasks[value.ID] = value
+		if key := externalSourceKey(value.Source); key != "" {
+			if prior, exists := m.sources[key]; exists {
+				return nil, fmt.Errorf("duplicate external source identity in tasks %s and %s", prior, value.ID)
+			}
+			m.sources[key] = value.ID
+		}
 		for _, execution := range value.Executions {
 			if execution.Run == nil || execution.Run.IdempotencyKey == "" {
 				continue
@@ -92,7 +100,7 @@ func PromptDigest(prompt string) string {
 }
 
 func validateRunOptions(opts RunOptions) error {
-	if err := ValidateCreateOptions(CreateOptions{Title: opts.Title, Source: Source{Kind: "prompt"}, RequestedBase: opts.RequestedBase}); err != nil {
+	if err := ValidateCreateOptions(CreateOptions{Title: opts.Title, Source: opts.Source, RequestedBase: opts.RequestedBase}); err != nil {
 		return err
 	}
 	switch {
@@ -135,6 +143,9 @@ func validateRunOptions(opts RunOptions) error {
 // previous reservation for an identical idempotency key. No session operation
 // happens here, so Task identity always lands first.
 func (m *Manager) ReserveRun(opts RunOptions) (RunReservation, error) {
+	if opts.Source.Kind == "" {
+		opts.Source = Source{Kind: "prompt", Ref: "sha256:" + opts.PromptSHA256}
+	}
 	if err := validateRunOptions(opts); err != nil {
 		return RunReservation{}, err
 	}
@@ -151,6 +162,11 @@ func (m *Manager) ReserveRun(opts RunOptions) (RunReservation, error) {
 		}
 		info := m.project(value)
 		return RunReservation{Task: info, Execution: executionInfoByID(info, execution.ID), Created: false}, nil
+	}
+	if key := externalSourceKey(opts.Source); key != "" {
+		if taskID, exists := m.sources[key]; exists {
+			return RunReservation{}, fmt.Errorf("external source already belongs to task %s", taskID)
+		}
 	}
 
 	now := m.now()
@@ -169,7 +185,7 @@ func (m *Manager) ReserveRun(opts RunOptions) (RunReservation, error) {
 	}
 	value := Task{
 		SchemaVersion: SchemaVersion, ID: taskID, Title: strings.TrimSpace(opts.Title),
-		Source: Source{Kind: "prompt", Ref: "sha256:" + opts.PromptSHA256}, RequestedBase: opts.RequestedBase,
+		Source: opts.Source, RequestedBase: opts.RequestedBase,
 		Executions: []Execution{execution}, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := m.store.Save(value); err != nil {
@@ -177,13 +193,16 @@ func (m *Manager) ReserveRun(opts RunOptions) (RunReservation, error) {
 	}
 	m.tasks[taskID] = value
 	m.runs[opts.IdempotencyKey] = runLocation{taskID: taskID, executionID: executionID}
+	if key := externalSourceKey(value.Source); key != "" {
+		m.sources[key] = taskID
+	}
 	info := m.project(value)
 	return RunReservation{Task: info, Execution: executionInfoByID(info, executionID), Created: true}, nil
 }
 
 func sameRun(value Task, execution Execution, opts RunOptions) bool {
 	run := execution.Run
-	return value.Title == strings.TrimSpace(opts.Title) && run.IdempotencyKey == opts.IdempotencyKey &&
+	return value.Title == strings.TrimSpace(opts.Title) && value.Source == opts.Source && run.IdempotencyKey == opts.IdempotencyKey &&
 		run.Repo == opts.Repo && run.RelativeWorkDir == opts.RelativeWorkDir && run.AgentKind == opts.AgentKind &&
 		run.Model == opts.Model && run.Fleet == opts.Fleet && run.NoHook == opts.NoHook &&
 		run.RequestedBase == opts.RequestedBase && run.Prompt.SHA256 == opts.PromptSHA256 && run.Prompt.Bytes == opts.PromptBytes
@@ -261,27 +280,43 @@ func boundedRunString(value string) string {
 }
 
 func (m *Manager) Create(opts CreateOptions) (Info, error) {
-	if err := ValidateCreateOptions(opts); err != nil {
-		return Info{}, err
-	}
-	now := m.now()
 	kind := opts.Source.Kind
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
 		kind = "manual"
 	}
+	opts.Source.Kind = kind
+	if err := ValidateCreateOptions(opts); err != nil {
+		return Info{}, err
+	}
+	now := m.now()
 	value := Task{
 		SchemaVersion: SchemaVersion, ID: m.newID(), Title: strings.TrimSpace(opts.Title),
-		Source: Source{Kind: kind, Ref: opts.Source.Ref}, RequestedBase: opts.RequestedBase,
+		Source: opts.Source, RequestedBase: opts.RequestedBase,
 		PromptSummary: opts.PromptSummary, Executions: []Execution{}, CreatedAt: now, UpdatedAt: now,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if key := externalSourceKey(value.Source); key != "" {
+		if taskID, exists := m.sources[key]; exists {
+			return Info{}, fmt.Errorf("external source already belongs to task %s", taskID)
+		}
+	}
 	if err := m.store.Save(value); err != nil {
 		return Info{}, err
 	}
 	m.tasks[value.ID] = value
+	if key := externalSourceKey(value.Source); key != "" {
+		m.sources[key] = value.ID
+	}
 	return m.project(value), nil
+}
+
+func externalSourceKey(source Source) string {
+	if source.Provider == "" || source.Repository == "" || source.ExternalID == "" {
+		return ""
+	}
+	return strings.ToLower(source.Provider) + "\x00" + strings.ToLower(source.Repository) + "\x00" + source.ExternalID
 }
 
 func (m *Manager) AppendExecution(taskID, sessionID string) (Info, error) {

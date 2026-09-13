@@ -299,14 +299,18 @@ stdout/stderr are saved to `~/.local/state/jind-ai/hook-logs/<session-id>.log` r
 `jin task new` splits creation at the same reservation/provisioning boundary,
 but persists the Task-side identities and phase before each side effect:
 
-1. reserve Task + Execution + session UUID + worktree/branch identity
-2. reserve a `creating` session with that UUID and acknowledge the client
-3. provision the managed worktree under the normal creation mutex
-4. resolve optional `--workdir` inside that worktree (including symlinks; escape is rejected)
-5. start the session and wait up to 90 seconds for `idle`
-6. mark `submitting`, send the live prompt, then mark `submitted`
+1. for `--issue`, resolve its canonical GitHub identity and read bounded content
+   through the read-only provider adapter; failure creates no local state
+2. reserve Task + Execution + session UUID + worktree/branch identity
+3. reserve a `creating` session with that UUID and acknowledge the client
+4. provision the managed worktree under the normal creation mutex
+5. resolve optional `--workdir` inside that worktree (including symlinks; escape is rejected)
+6. start the session and wait up to 90 seconds for `idle`
+7. mark `submitting`, send the live prompt, then mark `submitted`
 
-The prompt body exists only in the IPC request and live goroutine. Restarted
+The direct prompt or bounded Issue-derived prompt exists only in the IPC request
+and live goroutine. Issue tasks persist canonical external identity and a sync
+token, never the title/body/labels or provider credentials. Restarted
 transient phases become `interrupted`. Retrying the identical request with the
 same idempotency key can reuse a reserved or started session, but never
 automatically repeats an uncertain submission.

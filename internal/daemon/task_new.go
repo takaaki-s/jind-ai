@@ -1,16 +1,19 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/takaaki-s/jind-ai/internal/agent"
 	jingit "github.com/takaaki-s/jind-ai/internal/git"
+	"github.com/takaaki-s/jind-ai/internal/provider"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
 )
@@ -20,13 +23,15 @@ var (
 	taskReadyPoll    = 100 * time.Millisecond
 )
 
-// TaskNewRequest carries a prompt only for this live attempt. The daemon never
-// places Prompt in the Task store; the execution journal retains its digest and
-// byte count instead.
+// TaskNewRequest carries exactly one live source: a direct prompt, or an Issue
+// reference resolved by the daemon. The daemon never places provider content or
+// Prompt in the Task store; the execution journal retains its digest and byte
+// count instead.
 type TaskNewRequest struct {
 	IdempotencyKey  string `json:"idempotency_key"`
 	Title           string `json:"title,omitempty"`
-	Prompt          string `json:"prompt"`
+	Prompt          string `json:"prompt,omitempty"`
+	Issue           string `json:"issue,omitempty"`
 	Repo            string `json:"repo"`
 	RelativeWorkDir string `json:"workdir,omitempty"`
 	RequestedBase   string `json:"requested_base,omitempty"`
@@ -84,13 +89,15 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 	if req.IdempotencyKey == "" {
 		return Response{Success: false, Error: "idempotency_key is required"}
 	}
-	if req.Prompt == "" {
-		return Response{Success: false, Error: "prompt is required"}
+	promptSet := req.Prompt != ""
+	issueSet := strings.TrimSpace(req.Issue) != ""
+	if promptSet == issueSet {
+		return Response{Success: false, Error: "exactly one of prompt and issue is required"}
 	}
-	if len(req.Prompt) > task.MaxPromptBytes {
+	if promptSet && len(req.Prompt) > task.MaxPromptBytes {
 		return Response{Success: false, Error: fmt.Sprintf("prompt exceeds %d bytes", task.MaxPromptBytes)}
 	}
-	if !session.PromptVerifiable(req.Prompt) {
+	if promptSet && !session.PromptVerifiable(req.Prompt) {
 		return Response{Success: false, Error: "prompt has no verifiable content (only whitespace or box-drawing characters)"}
 	}
 	repo, err := canonicalRepo(req.Repo)
@@ -106,10 +113,41 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 	if err := s.validateTaskAgent(req.AgentKind); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
+	source := task.Source{}
+	if issueSet {
+		if s.issueReader == nil {
+			return Response{Success: false, Error: "GitHub Issue reader is unavailable"}
+		}
+		ref, err := provider.ResolveGitHubIssueReference(req.Issue, repo)
+		if err != nil {
+			return Response{Success: false, Error: err.Error()}
+		}
+		issue, err := s.issueReader.Read(context.Background(), ref)
+		if err != nil {
+			return Response{Success: false, Error: err.Error()}
+		}
+		if issue.Ref != ref {
+			return Response{Success: false, Error: "GitHub Issue reader returned a mismatched identity"}
+		}
+		req.Prompt, err = provider.TaskPrompt(issue, task.MaxPromptBytes)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("build Issue prompt: %v", err)}
+		}
+		source = task.Source{
+			Kind: "issue", Ref: ref.URL, Provider: ref.Provider, Repository: ref.Repository,
+			ExternalID: strconv.Itoa(ref.Number), URL: ref.URL, SyncToken: issue.SyncToken,
+		}
+		if strings.TrimSpace(req.Title) == "" {
+			req.Title = issue.Title
+		}
+	}
 	if strings.TrimSpace(req.Title) == "" {
 		req.Title = filepath.Base(repo) + " task"
 	}
 	req.Repo = repo
+	if source.Kind == "" {
+		source = task.Source{Kind: "prompt", Ref: "sha256:" + task.PromptDigest(req.Prompt)}
+	}
 
 	// Shared with session new: only one worktree reservation/provisioning chain
 	// may inspect and mutate the repository at a time.
@@ -120,6 +158,7 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 		Fleet: req.Fleet, NoHook: req.NoHook, RequestedBase: req.RequestedBase,
 		BranchPrefix: s.configMgr.GetWorktreeConfig().BranchPrefix,
 		PromptSHA256: task.PromptDigest(req.Prompt), PromptBytes: len(req.Prompt),
+		Source: source,
 	})
 	if err != nil {
 		s.createMu.Unlock()

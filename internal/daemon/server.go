@@ -20,6 +20,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/jinenv"
 	"github.com/takaaki-s/jind-ai/internal/paths"
 	"github.com/takaaki-s/jind-ai/internal/plugin"
+	"github.com/takaaki-s/jind-ai/internal/provider"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
@@ -50,6 +51,7 @@ type Server struct {
 	// the process-global adapter registry; tests inject a local validator so
 	// unrelated registry-reset tests cannot race semantic state.
 	taskAgentValidator func(string) error
+	issueReader        provider.IssueReader
 	configMgr          *config.Manager
 	stateMgr           *config.StateManager
 	pluginDisp         *plugin.EventDispatcher
@@ -128,6 +130,7 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 		_, err := agent.Lookup(kind)
 		return err
 	}
+	issueReader := provider.NewGitHubIssueReader()
 
 	// Wire the agent resolver so startSessionTmux / HandleHookEvent can
 	// dispatch to the adapter that owns each session's kind. Layer C
@@ -176,6 +179,7 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 		taskManager:        taskMgr,
 		taskDriver:         taskDriver,
 		taskAgentValidator: taskAgentValidator,
+		issueReader:        issueReader,
 		configMgr:          configMgr,
 		stateMgr:           stateMgr,
 		pluginDisp:         pluginDisp,

@@ -308,11 +308,14 @@ interactive process lifecycle. A Task has a stable ID, bounded source/base/
 prompt-summary metadata, and an append-only ordered list of Executions. Each
 Execution has its own stable ID and references exactly one session ID.
 
-The boundary is intentionally one-way:
+The storage boundary is intentionally one-way. GitHub Issue ingestion adds a
+separate read-only input adapter before reservation:
 
 ```
-daemon.Server → task.Manager → session.GetInfo (narrow SessionLookup interface)
-                         └──→ tasks/{task-id}.json
+GitHub → gh issue view → provider.IssueReader ─┐
+                                              ▼
+daemon.Server ─────────────────────────→ task.Manager → session.GetInfo
+                                              └──────→ tasks/{task-id}.json
 ```
 
 Task records never copy prompt bodies, transcripts, provider issue bodies, or
@@ -326,7 +329,13 @@ new binary does not rewrite an older state tree.
 `jin task create/list/info` and `jin task execution add` remain metadata and
 linkage operations. `jin task new` builds on that boundary: the daemon first
 atomically persists a Task, Execution, preallocated session UUID, deterministic
-worktree name/branch, request digest, and idempotency key. It then reserves the
+worktree name/branch, request digest, and idempotency key. A `--issue` request
+first resolves a canonical GitHub identity, reads bounded title/body/labels via
+`gh issue view`, and frames them as untrusted prompt context. The task retains
+only the provider/repository/issue identity, canonical URL, sync token, and
+prompt digest; duplicate external identities are rejected. The read adapter
+exposes no mutation method and provider output and credentials are never
+persisted. The daemon then reserves the
 session and acknowledges those identities before a goroutine provisions the
 worktree, applies a repository-relative starting directory, starts the agent,
 waits for `idle`, and submits the in-memory prompt.
@@ -335,9 +344,9 @@ Every external boundary has a persisted phase. A daemon restart converts an
 in-flight phase to `interrupted`; an identical request with the same key reuses
 recorded identities where the evidence is unambiguous. Provisioning failures
 are retryable after their cause is fixed. An interrupted `submitting` phase is
-deliberately not retried because delivery may already have occurred. Issue
-fetching, remote scheduling, automatic review, and merge remain outside this
-action.
+deliberately not retried because delivery may already have occurred. Background
+Issue synchronization, remote scheduling, automatic review, and merge remain
+outside this action.
 
 ## Completion Attention
 
@@ -432,9 +441,11 @@ cmd/jin/cmd/       → daemon (client), config, session/task (types only), tui, 
                        agentdocs,
                        _ agent/register (blank import so kinds are registered)
                       │
-daemon/            → session, task, config, tmux, agent (registry Lookup), plugin
+daemon/            → session, task, provider, config, tmux, agent (registry Lookup), plugin
                       │
 task/              → session (Info projection through a narrow lookup interface)
+                      │
+provider/          → (stdlib + authenticated external provider CLI; read-only)
                       │
 session/           → config, tmux, transcript, plugin (Dispatcher seam only)
                       │
