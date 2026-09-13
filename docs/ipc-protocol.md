@@ -143,6 +143,7 @@ it alone.
 | `list` | (none) | List all sessions (with last-message enrichment) |
 | `get` | `IDRequest` | Get a single session (with last-message enrichment) |
 | `task-create` | `TaskCreateRequest` | Persist bounded task metadata without starting a session |
+| `task-new` | `TaskNewRequest` | Reserve a Task/Execution/worktree session and asynchronously submit its prompt |
 | `task-list` | (none) | List tasks with live execution/attention projections |
 | `task-get` | `IDRequest` | Get one task with its ordered execution history |
 | `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
@@ -170,8 +171,7 @@ it alone.
 | `pane-send-keys` | `PaneSendKeysRequest` | Send keys to a session's pane (literal text or tmux key names) |
 | `plugin-run` | `PluginRunRequest` | Run a plugin on demand for a session (bypasses matcher/debounce; async) |
 
-Task actions are additive endpoints and do not change the shape of existing
-session messages, so they do not bump the protocol version. `task-create`
+`task-create`
 accepts `title`, `source {kind, ref}`, optional `requested_base`, and optional
 `prompt_summary`; every string has a fixed size bound. It accepts no full
 prompt, transcript, secret, or provider body. An Execution stores only its own
@@ -179,6 +179,17 @@ ID, sequence, referenced session ID, and creation time. Reads add
 `reference_state`, current session status, and current attention; if the
 session no longer exists, `reference_state` is `missing` and the durable
 execution remains intact.
+
+Protocol v10 adds `task-new` and the optional Execution `run` journal. The
+request requires an idempotency key, repository root, and prompt, plus optional
+title, repository-relative workdir, base branch, agent/model/fleet, and hook
+override. The response contains Task, Execution, and Session snapshots. It is
+an acknowledgement: the execution phase begins at `provisioning` and advances
+asynchronously. The prompt body is bounded to 64 KiB and never enters the Task
+store; only its SHA-256 and byte count are durable. Retrying an identical
+request with the same key returns/reconciles the original identities, while a
+different request with that key is rejected. Restart recovery is fail-closed
+at ambiguous provisioning and prompt-submission boundaries.
 
 **Last-message enrichment** fills `Info.last_user_message` and
 `Info.last_assistant_message` by reading the conversation through the session's
@@ -215,7 +226,8 @@ Protocol v5 adds the optional `Info.review_facts` cache and the
 the optional `Info.check_report`, and `checks-failed`. Protocol v7 adds the
 optional fingerprint-bound `Info.review_disposition`. Protocol v8 adds the
 optional `Info.pr_handoff`. Protocol v9 adds the optional
-`Info.merge_handoff`. A settled
+`Info.merge_handoff`. Protocol v10 adds the optional Task Execution `run`
+journal. A settled
 managed-worktree example is:
 
 ```json
@@ -346,7 +358,7 @@ never deletes remote refs or provider resources.
 
 ## Async completion
 
-`new`, `delete` and `plugin-run` accept the request, return an acknowledgement,
+`new`, `task-new`, `delete` and `plugin-run` accept the request, return an acknowledgement,
 and continue their real work in a goroutine. The daemon uses this pattern
 whenever the underlying I/O has no bound the client can name (git subprocesses,
 `rm -rf` over an unknown-size checkout, plugin scripts) so the response wait
@@ -357,6 +369,10 @@ stays covered by the default 60s tier.
   success or `stopped` + `error_message` on failure. Non-fatal warnings
   (e.g. post-create hook detected but not allowed) surface through
   `Info.creation_warning`, which persists until the session is deleted.
+- `task-new` returns the stable Task, Execution, Session, worktree, branch, and
+  idempotency identities after reservation. `task-get`/`jin task info` exposes
+  the durable run phase and any recovery guidance while provisioning, startup,
+  readiness detection, and prompt submission continue.
 - `delete` flips the session to `Status=deleting`, then removes the worktree
   and drops the record. The client sees the record disappear on success or
   `Status=stopped` + `error_message` on failure.
@@ -401,6 +417,27 @@ type NewRequest struct {
     WorktreeBranch string `json:"worktree_branch,omitempty"` // Override auto-generated branch name
     WorktreeBase   string `json:"worktree_base,omitempty"`   // Override auto-detected base branch
     NoHook         bool   `json:"no_hook,omitempty"`         // Skip .jin/worktree-post-create.sh hook
+}
+
+// Prompt is transient request data. Task storage retains only its digest and
+// byte count in Execution.Run.
+type TaskNewRequest struct {
+    IdempotencyKey  string `json:"idempotency_key"`
+    Title           string `json:"title,omitempty"`
+    Prompt          string `json:"prompt"`                  // required; max 64 KiB
+    Repo            string `json:"repo"`                    // git repository root
+    RelativeWorkDir string `json:"workdir,omitempty"`       // contained in managed worktree
+    RequestedBase   string `json:"requested_base,omitempty"` // branch name, without origin/
+    AgentKind       string `json:"agent_kind,omitempty"`
+    Model           string `json:"model,omitempty"`
+    Fleet           string `json:"fleet,omitempty"`
+    NoHook          bool   `json:"no_hook,omitempty"`
+}
+
+type TaskNewResponse struct {
+    Task      task.Info          `json:"task"`
+    Execution task.ExecutionInfo `json:"execution"`
+    Session   session.Info       `json:"session"`
 }
 
 // AgentSignalRequest carries a generic status signal from any agent adapter's
@@ -630,10 +667,17 @@ changes the existing `session.Info` response shape.
 v9 follows the same rule: `merge-handoff` is new, while the optional
 `merge_handoff` object changes the existing `session.Info` response shape.
 
+v10 follows it for Task reads: `task-new` is new, while the optional `run`
+journal changes the Execution shape returned by existing `task-list`,
+`task-get`, `task-create`, and `task-execution-add` clients.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
 safe.
+
+`task-new` is also absent: its acknowledgement is idempotent, but it reserves
+local identities and dispatches worktree/session creation.
 
 `review-refresh`, `check-report`, `review-disposition`, `pr-handoff`, and
 `merge-handoff` are also absent from `readOnlyActions`. The first four persist

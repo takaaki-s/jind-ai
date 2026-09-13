@@ -28,4 +28,5 @@ package daemon
 // session.Info can include the latest handoff and add the pr-handoff action.
 // v9: plugin actions can declare two-phase merge-handoff capability;
 // session.Info can include the latest merge outcome and add merge-handoff.
-const ProtocolVersion = 9
+// v10: task executions can include a bounded prompt-run journal; add task-new.
+const ProtocolVersion = 10

@@ -229,6 +229,16 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 			state += "/" + string(execution.Attention.State)
 		}
 		fmt.Fprintf(tw, "  #%d:\t%s  session=%s  %s\n", execution.Sequence, execution.ID, execution.SessionID, state)
+		if execution.Run != nil {
+			fmt.Fprintf(tw, "    Run:\t%s  branch=%s  worktree=%s\n", execution.Run.Phase, execution.Run.WorktreeBranch, execution.Run.WorktreeName)
+			fmt.Fprintf(tw, "    Key:\t%s\n", execution.Run.IdempotencyKey)
+			if execution.Run.Error != "" {
+				fmt.Fprintf(tw, "    Error:\t%s\n", execution.Run.Error)
+			}
+			if execution.Run.Guidance != "" {
+				fmt.Fprintf(tw, "    Next:\t%s\n", execution.Run.Guidance)
+			}
+		}
 	}
 	_ = tw.Flush()
 }

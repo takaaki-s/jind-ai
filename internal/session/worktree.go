@@ -20,6 +20,15 @@ type WorktreePlacement struct {
 	Path   string
 }
 
+// DefaultWorktreeIdentity returns the deterministic name and branch used for
+// a session before filesystem placement is attempted. Path remains empty.
+// Prompt orchestration persists this identity before provisioning so a retry
+// cannot silently choose a second branch.
+func DefaultWorktreeIdentity(sessionID, branchPrefix string) WorktreePlacement {
+	name := deriveWorktreeName(sessionID, "")
+	return WorktreePlacement{Name: name, Branch: deriveBranchName(name, branchPrefix, "")}
+}
+
 // deriveWorktreeName picks the worktree name. An explicit override wins;
 // otherwise the name is "jin-<first 8 hex of sessionID>".
 func deriveWorktreeName(sessionID, override string) string {
