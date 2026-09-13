@@ -86,10 +86,23 @@ func TestTaskNewRequestRequiresExactlyOnePromptSource(t *testing.T) {
 	for _, args := range [][]string{
 		{"--repo", "/repo"},
 		{"--repo", "/repo", "--prompt", "x", "--prompt-file", "prompt.txt"},
+		{"--repo", "/repo", "--prompt", "x", "--issue", "owner/repo#1"},
 	} {
 		if _, err := taskNewRequest(newTaskNewFlagCommand(t, args...)); err == nil {
 			t.Fatalf("accepted args: %v", args)
 		}
+	}
+}
+
+func TestTaskNewRequestMapsIssueSource(t *testing.T) {
+	got, err := taskNewRequest(newTaskNewFlagCommand(t,
+		"--issue", "owner/repo#12", "--repo", "/repo", "--idempotency-key", "issue-1",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Issue != "owner/repo#12" || got.Prompt != "" || got.IdempotencyKey != "issue-1" {
+		t.Fatalf("request = %+v", got)
 	}
 }
 

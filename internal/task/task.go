@@ -11,12 +11,17 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 const (
 	MaxTitleLength           = 200
 	MaxSourceKindLength      = 64
 	MaxSourceRefLength       = 512
+	MaxProviderLength        = 64
+	MaxRepositoryLength      = 256
+	MaxExternalIDLength      = 128
+	MaxSourceURLLength       = 2048
+	MaxSyncTokenLength       = 256
 	MaxRequestedBaseLength   = 512
 	MaxPromptSummaryLength   = 512
 	MaxIdempotencyKeyLength  = 200
@@ -34,8 +39,13 @@ const (
 // content into jind-ai's state directory. Kind is deliberately open-ended so a
 // newer provider remains readable by an older daemon.
 type Source struct {
-	Kind string `json:"kind"`
-	Ref  string `json:"ref,omitempty"`
+	Kind       string `json:"kind"`
+	Ref        string `json:"ref,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	URL        string `json:"url,omitempty"`
+	SyncToken  string `json:"sync_token,omitempty"`
 }
 
 // Task is the persisted aggregate. Executions are append-only and Sequence is
@@ -166,6 +176,25 @@ func ValidateCreateOptions(opts CreateOptions) error {
 	if len(opts.Source.Ref) > MaxSourceRefLength {
 		return fmt.Errorf("source ref exceeds %d bytes", MaxSourceRefLength)
 	}
+	if len(opts.Source.Provider) > MaxProviderLength {
+		return fmt.Errorf("source provider exceeds %d bytes", MaxProviderLength)
+	}
+	if len(opts.Source.Repository) > MaxRepositoryLength {
+		return fmt.Errorf("source repository exceeds %d bytes", MaxRepositoryLength)
+	}
+	if len(opts.Source.ExternalID) > MaxExternalIDLength {
+		return fmt.Errorf("source external id exceeds %d bytes", MaxExternalIDLength)
+	}
+	if len(opts.Source.URL) > MaxSourceURLLength {
+		return fmt.Errorf("source URL exceeds %d bytes", MaxSourceURLLength)
+	}
+	if len(opts.Source.SyncToken) > MaxSyncTokenLength {
+		return fmt.Errorf("source sync token exceeds %d bytes", MaxSyncTokenLength)
+	}
+	hasExternal := opts.Source.Provider != "" || opts.Source.Repository != "" || opts.Source.ExternalID != "" || opts.Source.URL != "" || opts.Source.SyncToken != ""
+	if hasExternal && (opts.Source.Provider == "" || opts.Source.Repository == "" || opts.Source.ExternalID == "") {
+		return fmt.Errorf("external source requires provider, repository, and external id")
+	}
 	if len(opts.RequestedBase) > MaxRequestedBaseLength {
 		return fmt.Errorf("requested base exceeds %d bytes", MaxRequestedBaseLength)
 	}
@@ -198,7 +227,7 @@ func normalize(t *Task) {
 			run.FailedPhase = run.Phase
 			run.Phase = ExecutionInterrupted
 			run.Error = "daemon restarted while this execution was in progress"
-			run.Guidance = "retry `jin task new` with the same idempotency key and prompt; jind-ai will reuse recorded identities"
+			run.Guidance = "retry `jin task new` with the same idempotency key and input; jind-ai will reuse recorded identities"
 		}
 	}
 }

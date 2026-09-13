@@ -29,4 +29,6 @@ package daemon
 // v9: plugin actions can declare two-phase merge-handoff capability;
 // session.Info can include the latest merge outcome and add merge-handoff.
 // v10: task executions can include a bounded prompt-run journal; add task-new.
-const ProtocolVersion = 10
+// v11: tasks can include external-source identity and sync metadata; task-new
+// accepts a read-only GitHub Issue source in place of a direct prompt.
+const ProtocolVersion = 11

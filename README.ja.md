@@ -229,6 +229,10 @@ jin task new --repo ~/repos/myapp \
 jin task new --repo ~/repos/monorepo --workdir services/api \
   --prompt-file ./tasks/fix-api.md
 
+# GitHub Issue を変更せずに読み込む。番号だけなら origin から repository を解決する
+jin task new --repo ~/repos/myapp --issue 42
+jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -242,7 +246,13 @@ Execution は既存 session への追記専用リンクです。ID と順序は 
 session の状態と完了 attention は読み取り時に投影するため、session が削除されても履歴は壊れず
 `reference_state: "missing"` と表示されます。保存できるのはサイズ制限付きメタデータだけで、
 完全な prompt、provider の Issue 本文、secret、transcript は Task record に複製しません。
-`task new` が保存する prompt 情報は SHA-256 digest と byte 数だけです。出力される
+`task new` が保存する prompt 情報は SHA-256 digest と byte 数だけです。`--issue` の場合は
+canonical な provider/repository/Issue identity、URL、GitHub の `updatedAt` sync token も保存し、
+同じ Issue に対する 2 個目の Task は拒否します。Issue の title/body/label は認証済み `gh` CLI
+から読み取り、サイズを制限して untrusted prompt context として渡します。この操作には
+comment、label、assign、close など GitHub を変更する権限はありません。認証失敗、Issue 不在、
+rate limit、reader failure は provider 出力や credential を保存せずに区別して表示します。
+出力される
 idempotency key は、client/daemon 間の結果が不明な場合に、同一要求を
 `--idempotency-key <key>` 付きで再試行するために使います。`jin task info` では永続化された
 run phase、失敗内容、安全な再試行・確認手順を確認できます。prompt 投入中に中断して到達結果が
