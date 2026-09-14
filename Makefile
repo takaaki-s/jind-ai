@@ -55,12 +55,12 @@ test-short:
 	go test -short -v ./...
 
 # Sole owner of the e2e package list — the CI job runs this target rather than
-# repeating it. internal/tui, internal/session and cmd/jin/cmd are in there
-# because their tmux-backed tests drive unexported methods and cannot live in
-# ./test/e2e/. The timeout covers internal/session's monitor-tick wait (see
+# repeating it. internal/tui, internal/session, internal/daemon and cmd/jin/cmd are in there
+# because tagged integration tests there drive unexported orchestration or tmux
+# methods and cannot live in ./test/e2e/. The timeout covers internal/session's monitor-tick wait (see
 # TestE2E_KillRightAfterStartStaysStopped).
 test-e2e:
-	go test -tags e2e -v -timeout 180s ./test/e2e/ ./internal/tui/ ./internal/session/ ./cmd/jin/cmd/
+	go test -tags e2e -v -timeout 180s ./test/e2e/ ./internal/tui/ ./internal/session/ ./internal/daemon/ ./cmd/jin/cmd/
 
 test-race:
 	go test -race ./...
