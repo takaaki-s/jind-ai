@@ -52,6 +52,8 @@ type Server struct {
 	// unrelated registry-reset tests cannot race semantic state.
 	taskAgentValidator func(string) error
 	issueReader        provider.IssueReader
+	issueCommentReader provider.IssueCommentInspector
+	issueCommentWriter provider.IssueCommentCreator
 	configMgr          *config.Manager
 	stateMgr           *config.StateManager
 	pluginDisp         *plugin.EventDispatcher
@@ -131,6 +133,7 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 		return err
 	}
 	issueReader := provider.NewGitHubIssueReader()
+	issueComments := provider.NewGitHubIssueComments()
 
 	// Wire the agent resolver so startSessionTmux / HandleHookEvent can
 	// dispatch to the adapter that owns each session's kind. Layer C
@@ -180,6 +183,8 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 		taskDriver:         taskDriver,
 		taskAgentValidator: taskAgentValidator,
 		issueReader:        issueReader,
+		issueCommentReader: issueComments,
+		issueCommentWriter: issueComments,
 		configMgr:          configMgr,
 		stateMgr:           stateMgr,
 		pluginDisp:         pluginDisp,
@@ -324,6 +329,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleTaskGet(req.Data)
 	case "task-execution-add":
 		return s.handleTaskExecutionAdd(req.Data)
+	case "task-comment":
+		return s.handleTaskComment(req.Data)
 	case "send":
 		return s.handleSend(req.Data)
 	case "start":

@@ -257,6 +257,11 @@ jin task new --repo ~/repos/monorepo --workdir services/api \
 jin task new --repo ~/repos/myapp --issue 42
 jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
 
+# External writes are a separate preview/confirm flow
+jin task comment <task-selector> --body "Implemented in the linked PR." --dry-run
+jin task comment <task-selector> --body "Implemented in the linked PR." \
+  --confirm --idempotency-key <key-from-dry-run>
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -285,6 +290,19 @@ uncertain client/daemon outcome, retry the identical request with
 failure, and safe retry/inspection guidance. Prompt submission is fail-closed:
 if interruption makes delivery uncertain, jind-ai retains the session and asks
 you to inspect it instead of automatically sending a possible duplicate.
+
+`task comment` is the first explicit provider-mutation capability. Dry-run
+reads the exact source Issue, authenticated GitHub actor, and any prior
+idempotency marker, but writes neither GitHub nor Task state. Confirm persists a
+`running` audit before posting one comment. The body travels to `gh api` over
+stdin and is represented in Task state only by its SHA-256 and byte count. A
+successful receipt records the bounded comment ID/URL/actor. A timeout, lost
+response, malformed result, or daemon restart becomes `unknown`; retrying the
+same key reconciles the hidden marker and never blindly POSTs again. GitHub's
+comment API has no idempotency-key guarantee, so an unproven outcome stops for
+inspection instead of risking a duplicate. Label, assignment, close, and other
+Issue mutations remain unsupported. For one Task, repeating the exact same body
+means retrying the same logical comment; change the body for a new follow-up.
 
 ### Session management
 

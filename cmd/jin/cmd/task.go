@@ -240,6 +240,20 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 			}
 		}
 	}
+	fmt.Fprintf(tw, "Mutations:\t%d\n", len(info.Mutations))
+	for _, mutation := range info.Mutations {
+		fmt.Fprintf(tw, "  #%d:\t%s  %s  actor=%s\n", mutation.Sequence, mutation.Kind, mutation.Status, mutation.Actor)
+		fmt.Fprintf(tw, "    Key:\t%s\n", mutation.IdempotencyKey)
+		if mutation.Result.URL != "" {
+			fmt.Fprintf(tw, "    Result:\t%s\n", mutation.Result.URL)
+		}
+		if mutation.Error != "" {
+			fmt.Fprintf(tw, "    Error:\t%s\n", mutation.Error)
+		}
+		if mutation.Guidance != "" {
+			fmt.Fprintf(tw, "    Next:\t%s\n", mutation.Guidance)
+		}
+	}
 	_ = tw.Flush()
 }
 

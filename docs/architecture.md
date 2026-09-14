@@ -348,6 +348,27 @@ deliberately not retried because delivery may already have occurred. Background
 Issue synchronization, remote scheduling, automatic review, and merge remain
 outside this action.
 
+Provider mutation is a separate capability and command path:
+
+```
+jin task comment --dry-run
+  → IssueReader.Read + IssueCommentInspector.InspectIssueComment   (read only)
+
+jin task comment --confirm --idempotency-key ...
+  → task.Manager.ReserveMutation                                  (persist running)
+  → IssueCommentCreator.CreateIssueComment                        (one POST)
+  → task.Manager.FinishMutation                                   (succeeded/unknown)
+```
+
+The read and create interfaces are intentionally distinct. `task-new` owns only
+an `IssueReader`, so ingestion cannot acquire comment authority accidentally.
+The comment body is sent to `gh api` on stdin, never argv, and only its digest
+and byte count enter the append-only Task mutation timeline. A hidden marker
+binds the provider comment to the Task, target, body digest, and
+idempotency key. A lost response or restart is reconciled by the read-only
+inspector. Absence is not treated as proof that the POST never landed, so an
+unknown operation is not automatically submitted again.
+
 ## Completion Attention
 
 `Session.Attention` (`internal/session/attention.go`) is a second axis beside
@@ -445,7 +466,7 @@ daemon/            → session, task, provider, config, tmux, agent (registry Lo
                       │
 task/              → session (Info projection through a narrow lookup interface)
                       │
-provider/          → (stdlib + authenticated external provider CLI; read-only)
+provider/          → procgroup (narrow read/mutation interfaces over authenticated provider CLIs)
                       │
 session/           → config, tmux, transcript, plugin (Dispatcher seam only)
                       │
@@ -457,7 +478,7 @@ agent/register/    → agent, agent/claude, agent/codex, agent/opencode  (init-t
                       │
 procgroup/         → (stdlib only) run a child in its own process group so a
                       cancelled context reaches everything it started.
-                      Used by agent/opencode, plugin and worktreehook.
+                      Used by agent/opencode, plugin, provider and worktreehook.
 worktreehook/      → procgroup (runs .jin/worktree-post-create.sh)
 agentdocs/         → (embedded content only; no internal deps)
                       Being a leaf is what lets cmd/ and every adapter share it:

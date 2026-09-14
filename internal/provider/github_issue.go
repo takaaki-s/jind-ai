@@ -1,5 +1,6 @@
-// Package provider contains read-only external work-source adapters. Mutation
-// capabilities deliberately do not live on these interfaces.
+// Package provider contains narrow external-provider capabilities. Read and
+// mutation authority live on separate interfaces so callers receive only the
+// operations they need.
 package provider
 
 import (

@@ -31,4 +31,6 @@ package daemon
 // v10: task executions can include a bounded prompt-run journal; add task-new.
 // v11: tasks can include external-source identity and sync metadata; task-new
 // accepts a read-only GitHub Issue source in place of a direct prompt.
-const ProtocolVersion = 11
+// v12: tasks include a bounded provider-mutation audit timeline; add the
+// explicit task-comment action.
+const ProtocolVersion = 12

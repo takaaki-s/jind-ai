@@ -28,6 +28,9 @@ func TestTaskCommandsAreRegistered(t *testing.T) {
 	if got, _, err := rootCmd.Find([]string{"task", "new"}); err != nil || got != taskNewCmd {
 		t.Fatal("task new command is not registered")
 	}
+	if got, _, err := rootCmd.Find([]string{"task", "comment"}); err != nil || got != taskCommentCmd {
+		t.Fatal("task comment command is not registered")
+	}
 }
 
 func newTaskNewFlagCommand(t *testing.T, args ...string) *cobra.Command {
@@ -168,5 +171,19 @@ func TestRenderTaskInfoText_ShowsMissingExecution(t *testing.T) {
 	renderTaskInfoText(&buf, info)
 	if !strings.Contains(buf.String(), "session=gone  missing") {
 		t.Fatalf("output = %q", buf.String())
+	}
+}
+
+func TestRenderTaskInfoText_ShowsMutationAudit(t *testing.T) {
+	info := &task.Info{ID: "task-1", Title: "Issue", Source: task.Source{Kind: "issue"}, Mutations: []task.Mutation{{
+		Sequence: 1, Kind: "issue_comment", Status: task.MutationUnknown, Actor: "octocat",
+		IdempotencyKey: "mut_key", Error: "outcome unknown", Guidance: "reconcile",
+	}}}
+	var buf bytes.Buffer
+	renderTaskInfoText(&buf, info)
+	for _, want := range []string{"Mutations:   1", "issue_comment  unknown", "mut_key", "outcome unknown", "reconcile"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("output %q does not contain %q", buf.String(), want)
+		}
 	}
 }

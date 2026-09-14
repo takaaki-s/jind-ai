@@ -418,6 +418,8 @@ func TestHandleTaskNewIngestsBoundedIssueWithoutPersistingBody(t *testing.T) {
 		Labels: []string{"bug"}, State: "open", SyncToken: "2026-09-13T00:00:00Z",
 	}}
 	s.issueReader = reader
+	mutationSpy := &fakeIssueComments{}
+	s.issueCommentWriter = mutationSpy
 	data, _ := json.Marshal(TaskNewRequest{
 		IdempotencyKey: "issue-request-1", Issue: "https://github.com/Owner/Repo/issues/7", Repo: repo,
 		AgentKind: "claude",
@@ -457,6 +459,9 @@ func TestHandleTaskNewIngestsBoundedIssueWithoutPersistingBody(t *testing.T) {
 	}
 	if reader.mutationCalls != 0 {
 		t.Fatalf("provider mutations = %d", reader.mutationCalls)
+	}
+	if mutationSpy.createCalls != 0 {
+		t.Fatalf("ingestion called Issue comment mutation %d times", mutationSpy.createCalls)
 	}
 }
 
