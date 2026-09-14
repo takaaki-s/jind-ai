@@ -315,6 +315,24 @@ transient phases become `interrupted`. Retrying the identical request with the
 same idempotency key can reuse a reserved or started session, but never
 automatically repeats an uncertain submission.
 
+### Task inbox end-to-end contract
+
+The build-tagged daemon E2E suite protects the user-visible vertical path, not
+just each manager in isolation. It creates real repositories and linked
+worktrees, then carries a Task from a direct Prompt or bounded Issue read
+through completion attention, current check and review evidence, PR and merge
+handoffs, explicit Issue comment mutation, and exact local cleanup. Reloading
+the managers from disk must retain the Task, mutation receipt, and cleanup
+journal while projecting the deleted Session reference as `missing`.
+
+Only process boundaries are substituted: the test adapter records the prompt
+instead of starting an agent or tmux pane, and local fixture plugins stand in
+for remote PR/merge providers. Git worktree creation, review inspection,
+durable stores, daemon action routing, idempotency gates, and cleanup run through
+their production implementations. This suite deliberately does not make
+network calls, execute repository checks, or claim that a provider API itself
+is available.
+
 ## Recovery (On Daemon Restart)
 
 `RecoverTmuxSessions()`:
