@@ -147,6 +147,7 @@ it alone.
 | `task-list` | (none) | List tasks with live execution/attention projections |
 | `task-get` | `IDRequest` | Get one task with its ordered execution history |
 | `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
+| `task-comment` | `TaskCommentRequest` | Preview or explicitly create/reconcile one comment on a Task's source GitHub Issue |
 | `send` | `SendRequest` | Send a prompt to a session (alias `prompt` on the CLI) |
 | `respond` | `RespondRequest` | Answer a prompt an agent is blocked on; returns `RespondResponse` |
 | `start` | `IDRequest` | Start session |
@@ -197,6 +198,16 @@ request with the same key returns/reconciles the original identities, while a
 different request with that key is rejected. Restart recovery is fail-closed
 at ambiguous provisioning and prompt-submission boundaries.
 
+Protocol v12 adds the append-only Task `mutations` audit timeline and the
+`task-comment` action. The action requires exactly one of `dry_run` or
+`confirm`; confirm also requires the deterministic key returned by dry-run.
+Both modes read the exact source Issue, authenticated actor, and existing
+marker. Dry-run persists nothing. Confirm persists `running` before its single
+POST and then `succeeded` or `unknown`. Comment text crosses IPC only for that
+request and is persisted only as SHA-256 plus byte count. Provider receipts are
+bounded to provider/comment ID/URL/actor. An unknown retry reconciles but never
+blindly repeats the POST.
+
 **Last-message enrichment** fills `Info.last_user_message` and
 `Info.last_assistant_message` by reading the conversation through the session's
 own agent adapter (`Manager.AttachLastMessages`). Unlike `result`, it never
@@ -234,7 +245,7 @@ optional fingerprint-bound `Info.review_disposition`. Protocol v8 adds the
 optional `Info.pr_handoff`. Protocol v9 adds the optional
 `Info.merge_handoff`. Protocol v10 adds the optional Task Execution `run`
 journal. Protocol v11 adds bounded external identity/sync fields to Task
-`source`. A settled
+`source`. Protocol v12 adds the bounded Task `mutations` timeline. A settled
 managed-worktree example is:
 
 ```json
@@ -448,6 +459,14 @@ type TaskNewResponse struct {
     Task      task.Info          `json:"task"`
     Execution task.ExecutionInfo `json:"execution"`
     Session   session.Info       `json:"session"`
+}
+
+type TaskCommentRequest struct {
+    TaskID         string `json:"task_id"`
+    Body           string `json:"body"`                      // transient; max 48 KiB
+    IdempotencyKey string `json:"idempotency_key,omitempty"` // required for confirm
+    DryRun         bool   `json:"dry_run,omitempty"`
+    Confirm        bool   `json:"confirm,omitempty"`
 }
 
 // AgentSignalRequest carries a generic status signal from any agent adapter's
@@ -685,6 +704,9 @@ v11 follows it for external Task sources: `--issue` uses the existing
 `task-new` action, while the new provider/repository/external-ID/URL/sync-token
 fields change the Task shape returned by all existing Task read actions.
 
+v12 follows it for provider mutation audit: `task-comment` is a new action, but
+the `mutations` array changes the Task shape returned by existing Task reads.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
@@ -692,6 +714,10 @@ safe.
 
 `task-new` is also absent: its acknowledgement is idempotent, but it reserves
 local identities and dispatches worktree/session creation.
+
+`task-comment` is absent too: dry-run is read-only, but the same action's
+confirm mode persists an audit and may create an external comment. A timeout is
+therefore always reported as an unknown outcome rather than classified by mode.
 
 `review-refresh`, `check-report`, `review-disposition`, `pr-handoff`, and
 `merge-handoff` are also absent from `readOnlyActions`. The first four persist

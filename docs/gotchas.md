@@ -1997,6 +1997,28 @@ Common pitfalls and caveats that agents tend to fall into.
   it skips where make is absent — CI has it. Note what it cannot tell you:
   `go test -tags e2e ./...` passes locally and proves nothing about the job.
 
+## GitHub Issue Comments
+
+- **The [REST create-comment endpoint](https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment)
+  has no documented idempotency-key guarantee.** `jin task comment` therefore persists `running` before the POST
+  and appends a hidden key/body-digest marker to the comment. A retry searches
+  that exact Issue and actor for the marker. If it is found, the audit converges
+  to `succeeded`; if it is absent after an unknown outcome, jind-ai remains
+  `unknown` and does not POST again. This is deliberately conservative: network
+  absence cannot prove a timed-out write did not land.
+
+- **The comment body is transient but still externally visible.** It crosses
+  daemon IPC and the `gh api --input -` stdin, and GitHub stores it. jind-ai's
+  Task JSON retains only SHA-256 and byte count; argv, audit errors, and debug
+  logs contain neither body nor credentials. The HTML marker is hidden by
+  normal GitHub rendering but remains visible when editing or viewing raw
+  Markdown.
+
+- **The same Task, target, and exact body identify one logical comment.** The
+  dry-run key is deterministic, so repeating the same body reconciles the
+  existing operation instead of intentionally posting a duplicate. Change the
+  body when a genuinely new follow-up comment is required.
+
 ## Concurrency
 
 - **Session creation is protected by `createMu`** (at the daemon.Server level).

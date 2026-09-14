@@ -138,13 +138,25 @@ func TestClientTaskMethods_SendExpectedActions(t *testing.T) {
 			t.Fatalf("request=%+v", req)
 		}
 	})
+	t.Run("comment", func(t *testing.T) {
+		wantResult := TaskCommentResponse{Task: want, Plan: TaskCommentPlan{TaskID: want.ID, IdempotencyKey: "mut_key"}}
+		resultPayload, _ := json.Marshal(wantResult)
+		sock, received := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true, Data: resultPayload})
+		got, err := NewClient(sock).CommentOnTaskIssue(TaskCommentRequest{TaskID: want.ID, Body: "done", DryRun: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if received.Action != "task-comment" || got.Plan.IdempotencyKey != "mut_key" {
+			t.Fatalf("action=%s got=%+v", received.Action, got)
+		}
+	})
 }
 
 func TestTaskReadActionsAreClassified(t *testing.T) {
 	if !readOnlyActions["task-list"] || !readOnlyActions["task-get"] {
 		t.Fatal("task reads must be classified read-only")
 	}
-	if readOnlyActions["task-create"] || readOnlyActions["task-new"] || readOnlyActions["task-execution-add"] {
+	if readOnlyActions["task-create"] || readOnlyActions["task-new"] || readOnlyActions["task-execution-add"] || readOnlyActions["task-comment"] {
 		t.Fatal("task writes must not be classified read-only")
 	}
 }

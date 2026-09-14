@@ -233,6 +233,11 @@ jin task new --repo ~/repos/monorepo --workdir services/api \
 jin task new --repo ~/repos/myapp --issue 42
 jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
 
+# 外部への書き込みは独立した preview/confirm フローで行う
+jin task comment <task-selector> --body "関連PRで実装しました。" --dry-run
+jin task comment <task-selector> --body "関連PRで実装しました。" \
+  --confirm --idempotency-key <dry-runで表示されたkey>
+
 jin task list
 jin task info <task-selector>
 jin task execution add <task-selector> --session <session-selector>
@@ -257,6 +262,16 @@ idempotency key は、client/daemon 間の結果が不明な場合に、同一�
 `--idempotency-key <key>` 付きで再試行するために使います。`jin task info` では永続化された
 run phase、失敗内容、安全な再試行・確認手順を確認できます。prompt 投入中に中断して到達結果が
 不明になった場合は、自動再送で二重投入せず session を保持して確認を求めます。
+
+`task comment` は最初の明示的な provider mutation capability です。dry-run は元Issue、認証済み
+GitHub actor、既存のidempotency markerを読み取りますが、GitHubにもTaskにも書き込みません。
+confirmではcommentを送る前に`running` auditを保存します。本文はstdin経由で`gh api`へ渡し、
+TaskにはSHA-256とbyte数だけを保存します。成功時に保存するprovider結果もcomment ID/URL/actorに
+制限します。timeout、応答喪失、不正な結果、daemon再起動は`unknown`となり、同じkeyの再試行は
+不可視markerを照合するだけで、証拠なしに再POSTしません。GitHubのcomment APIには
+idempotency-keyの保証がないため、不明な結果では重複を賭けず確認を求めます。label、assign、close
+など他のIssue mutationはまだ対応しません。同じTaskで完全に同じ本文を指定すると同一commentの
+再試行として扱われます。新しい追記commentには本文を変更してください。
 
 ### セッション管理
 

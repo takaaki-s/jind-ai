@@ -54,6 +54,11 @@ const (
 	// "send" needs its own prompt-derived bound rather than a bigger constant.
 	defaultRequestTimeout = 60 * time.Second
 
+	// task-comment performs three bounded provider stages synchronously: Issue
+	// identity read, actor/reconciliation inspection, then an optional POST.
+	// Each subprocess has a 20s context plus process-group teardown headroom.
+	taskCommentRequestTimeout = 90 * time.Second
+
 	// hookRequestTimeout bounds the agent-facing hook path. The trade cuts both
 	// ways: a stalled hook blocks the agent process itself, but an overrun is
 	// worse than an ordinary failure, because cmd/jin/cmd/hook.go only logs it
@@ -116,6 +121,22 @@ func (c *Client) NewTask(req TaskNewRequest) (*TaskNewResponse, error) {
 		return nil, errors.New(resp.Error)
 	}
 	var result TaskNewResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) CommentOnTaskIssue(req TaskCommentRequest) (*TaskCommentResponse, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.sendWithTimeout(Request{Action: "task-comment", Data: data}, taskCommentRequestTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var result TaskCommentResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, err
 	}

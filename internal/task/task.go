@@ -4,14 +4,18 @@
 package task
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 const (
 	MaxTitleLength           = 200
@@ -33,6 +37,10 @@ const (
 	MaxWorktreeBranchLength  = 512
 	MaxRunMessageLength      = 2048
 	MaxPromptBytes           = 64 * 1024
+	MaxMutationBodyBytes     = 48 * 1024
+	MaxMutationActorLength   = 128
+	MaxMutationResultID      = 128
+	MaxMutationMessageLength = 512
 )
 
 // Source identifies where the task request came from without copying provider
@@ -58,8 +66,55 @@ type Task struct {
 	RequestedBase string      `json:"requested_base,omitempty"`
 	PromptSummary string      `json:"prompt_summary,omitempty"`
 	Executions    []Execution `json:"executions"`
+	Mutations     []Mutation  `json:"mutations"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
+type MutationStatus string
+
+const (
+	MutationRunning   MutationStatus = "running"
+	MutationSucceeded MutationStatus = "succeeded"
+	MutationUnknown   MutationStatus = "unknown"
+)
+
+// Mutation is a bounded audit receipt for one explicit provider side effect.
+// Request content is represented only by its irreversible digest and byte
+// count; credentials and provider output never enter this record.
+type Mutation struct {
+	ID             string          `json:"id"`
+	Sequence       uint64          `json:"sequence"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	Kind           string          `json:"kind"`
+	Target         MutationTarget  `json:"target"`
+	Actor          string          `json:"actor"`
+	Request        MutationRequest `json:"request"`
+	Status         MutationStatus  `json:"status"`
+	Result         MutationResult  `json:"result,omitzero"`
+	Error          string          `json:"error,omitempty"`
+	Guidance       string          `json:"guidance,omitempty"`
+	StartedAt      time.Time       `json:"started_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type MutationTarget struct {
+	Provider   string `json:"provider"`
+	Repository string `json:"repository"`
+	ExternalID string `json:"external_id"`
+	URL        string `json:"url"`
+}
+
+type MutationRequest struct {
+	SHA256 string `json:"sha256"`
+	Bytes  int    `json:"bytes"`
+}
+
+type MutationResult struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Actor    string `json:"actor"`
 }
 
 // Execution is a stable link from one task attempt to one existing session.
@@ -151,9 +206,76 @@ type Info struct {
 	RequestedBase   string           `json:"requested_base,omitempty"`
 	PromptSummary   string           `json:"prompt_summary,omitempty"`
 	Executions      []ExecutionInfo  `json:"executions"`
+	Mutations       []Mutation       `json:"mutations"`
 	LatestAttention *LatestAttention `json:"latest_attention,omitempty"`
 	CreatedAt       time.Time        `json:"created_at"`
 	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+var mutationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
+func MutationBodyDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+func DefaultMutationKey(taskID, kind string, target MutationTarget, request MutationRequest) string {
+	sum := sha256.Sum256([]byte(taskID + "\x00" + kind + "\x00" + target.Provider + "\x00" +
+		target.Repository + "\x00" + target.ExternalID + "\x00" + request.SHA256))
+	return "mut_" + hex.EncodeToString(sum[:16])
+}
+
+func ValidateMutation(m Mutation) error {
+	if m.Kind != "issue_comment" {
+		return fmt.Errorf("unsupported mutation kind %q", m.Kind)
+	}
+	if !mutationKeyPattern.MatchString(m.IdempotencyKey) {
+		return fmt.Errorf("invalid mutation idempotency key")
+	}
+	if m.Target.Provider == "" || len(m.Target.Provider) > MaxProviderLength ||
+		m.Target.Repository == "" || len(m.Target.Repository) > MaxRepositoryLength ||
+		m.Target.ExternalID == "" || len(m.Target.ExternalID) > MaxExternalIDLength {
+		return fmt.Errorf("invalid mutation target identity")
+	}
+	if err := validateMutationURL(m.Target.URL); err != nil {
+		return err
+	}
+	if m.Actor == "" || len(m.Actor) > MaxMutationActorLength || strings.ContainsAny(m.Actor, "\r\n\x00") {
+		return fmt.Errorf("invalid mutation actor")
+	}
+	if len(m.Request.SHA256) != sha256.Size*2 || m.Request.Bytes <= 0 || m.Request.Bytes > MaxMutationBodyBytes {
+		return fmt.Errorf("invalid mutation request metadata")
+	}
+	if _, err := hex.DecodeString(m.Request.SHA256); err != nil {
+		return fmt.Errorf("invalid mutation request digest")
+	}
+	if m.Status != MutationRunning && m.Status != MutationSucceeded && m.Status != MutationUnknown {
+		return fmt.Errorf("invalid mutation status %q", m.Status)
+	}
+	if len(m.Error) > MaxMutationMessageLength || len(m.Guidance) > MaxMutationMessageLength {
+		return fmt.Errorf("mutation diagnostic exceeds %d bytes", MaxMutationMessageLength)
+	}
+	if m.Status == MutationSucceeded {
+		if m.Result.Provider != m.Target.Provider || m.Result.ID == "" || len(m.Result.ID) > MaxMutationResultID ||
+			m.Result.Actor != m.Actor || len(m.Result.Actor) > MaxMutationActorLength {
+			return fmt.Errorf("invalid mutation result identity")
+		}
+		if err := validateMutationURL(m.Result.URL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMutationURL(value string) error {
+	if value == "" || len(value) > MaxSourceURLLength {
+		return fmt.Errorf("invalid mutation URL")
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" {
+		return fmt.Errorf("mutation URL must be https without credentials or query")
+	}
+	return nil
 }
 
 type CreateOptions struct {
@@ -214,6 +336,9 @@ func normalize(t *Task) {
 	if t.Executions == nil {
 		t.Executions = []Execution{}
 	}
+	if t.Mutations == nil {
+		t.Mutations = []Mutation{}
+	}
 	var next uint64 = 1
 	for i := range t.Executions {
 		if t.Executions[i].Sequence == 0 {
@@ -228,6 +353,16 @@ func normalize(t *Task) {
 			run.Phase = ExecutionInterrupted
 			run.Error = "daemon restarted while this execution was in progress"
 			run.Guidance = "retry `jin task new` with the same idempotency key and input; jind-ai will reuse recorded identities"
+		}
+	}
+	for i := range t.Mutations {
+		if t.Mutations[i].Sequence == 0 {
+			t.Mutations[i].Sequence = uint64(i + 1)
+		}
+		if t.Mutations[i].Status == MutationRunning {
+			t.Mutations[i].Status = MutationUnknown
+			t.Mutations[i].Error = "daemon restarted while the provider mutation was running"
+			t.Mutations[i].Guidance = "retry with the same idempotency key to reconcile; jind-ai will not submit the mutation again unless success is proven"
 		}
 	}
 }

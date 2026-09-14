@@ -19,14 +19,15 @@ type SessionLookup interface {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	store    *Store
-	sessions SessionLookup
-	tasks    map[string]Task
-	runs     map[string]runLocation
-	sources  map[string]string
-	now      func() time.Time
-	newID    func() string
+	mu        sync.RWMutex
+	store     *Store
+	sessions  SessionLookup
+	tasks     map[string]Task
+	runs      map[string]runLocation
+	sources   map[string]string
+	mutations map[string]mutationLocation
+	now       func() time.Time
+	newID     func() string
 }
 
 type runLocation struct {
@@ -70,7 +71,8 @@ func NewManager(dir string, sessions SessionLookup) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{
-		store: store, sessions: sessions, tasks: make(map[string]Task), runs: make(map[string]runLocation), sources: make(map[string]string),
+		store: store, sessions: sessions, tasks: make(map[string]Task), runs: make(map[string]runLocation),
+		sources: make(map[string]string), mutations: make(map[string]mutationLocation),
 		now: time.Now, newID: func() string { return uuid.New().String() },
 	}
 	for _, value := range values {
@@ -89,6 +91,15 @@ func NewManager(dir string, sessions SessionLookup) (*Manager, error) {
 				return nil, fmt.Errorf("duplicate task idempotency key %q", execution.Run.IdempotencyKey)
 			}
 			m.runs[execution.Run.IdempotencyKey] = runLocation{taskID: value.ID, executionID: execution.ID}
+		}
+		for _, mutation := range value.Mutations {
+			if mutation.IdempotencyKey == "" {
+				continue
+			}
+			if _, exists := m.mutations[mutation.IdempotencyKey]; exists {
+				return nil, fmt.Errorf("duplicate mutation idempotency key %q", mutation.IdempotencyKey)
+			}
+			m.mutations[mutation.IdempotencyKey] = mutationLocation{taskID: value.ID, mutationID: mutation.ID}
 		}
 	}
 	return m, nil
@@ -186,7 +197,7 @@ func (m *Manager) ReserveRun(opts RunOptions) (RunReservation, error) {
 	value := Task{
 		SchemaVersion: SchemaVersion, ID: taskID, Title: strings.TrimSpace(opts.Title),
 		Source: opts.Source, RequestedBase: opts.RequestedBase,
-		Executions: []Execution{execution}, CreatedAt: now, UpdatedAt: now,
+		Executions: []Execution{execution}, Mutations: []Mutation{}, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := m.store.Save(value); err != nil {
 		return RunReservation{}, err
@@ -293,7 +304,7 @@ func (m *Manager) Create(opts CreateOptions) (Info, error) {
 	value := Task{
 		SchemaVersion: SchemaVersion, ID: m.newID(), Title: strings.TrimSpace(opts.Title),
 		Source: opts.Source, RequestedBase: opts.RequestedBase,
-		PromptSummary: opts.PromptSummary, Executions: []Execution{}, CreatedAt: now, UpdatedAt: now,
+		PromptSummary: opts.PromptSummary, Executions: []Execution{}, Mutations: []Mutation{}, CreatedAt: now, UpdatedAt: now,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -388,6 +399,7 @@ func (m *Manager) project(value Task) Info {
 		SchemaVersion: value.SchemaVersion, ID: value.ID, Title: value.Title, Source: value.Source,
 		RequestedBase: value.RequestedBase, PromptSummary: value.PromptSummary,
 		Executions: make([]ExecutionInfo, 0, len(value.Executions)),
+		Mutations:  append([]Mutation(nil), value.Mutations...),
 		CreatedAt:  value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
 	for _, execution := range value.Executions {
