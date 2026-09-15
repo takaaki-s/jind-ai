@@ -50,6 +50,22 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "codex" }
 
+// Capabilities records the two deliberate Codex opt-outs alongside the
+// surfaces the adapter implements. PermissionRequest is not treated as a
+// reliable human-wait signal, and its prompt cannot be answered by jin.
+func (a *Agent) Capabilities() agent.AgentCapabilities {
+	return agent.AgentCapabilities{
+		SchemaVersion:       agent.AgentCapabilitiesSchemaVersion,
+		Liveness:            agent.CapabilitySupported,
+		Send:                agent.CapabilitySupported,
+		Respond:             agent.CapabilityUnsupported,
+		Resume:              agent.CapabilitySupported,
+		Hooks:               agent.CapabilitySupported,
+		Transcript:          agent.CapabilitySupported,
+		ReliableNeedsAnswer: agent.CapabilityUnsupported,
+	}
+}
+
 // RecognizesSessionID accepts anything written as a UUID. Codex has no
 // --session-id equivalent, so the real id only ever arrives through the
 // SessionStart hook payload, and this predicate is what stands between that

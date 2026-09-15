@@ -208,6 +208,32 @@ request and is persisted only as SHA-256 plus byte count. Provider receipts are
 bounded to provider/comment ID/URL/actor. An unknown retry reconciles but never
 blindly repeats the POST.
 
+Protocol v13 adds the required `Info.capabilities` object to every session
+projection. It describes adapter support rather than runtime health:
+
+```json
+{
+  "capabilities": {
+    "schema_version": 1,
+    "liveness": "supported",
+    "send": "supported",
+    "respond": "unsupported",
+    "resume": "supported",
+    "hooks": "supported",
+    "transcript": "supported",
+    "reliable_needs_answer": "unknown"
+  }
+}
+```
+
+Every state is one of `supported`, `unsupported`, or `unknown`. A missing
+object (an older peer), schema version zero or unknown, an absent adapter
+declaration, and an unrecognised state all read as unknown. Consumers must use
+only `supported` as affirmative evidence; `unsupported` is a confirmed adapter
+limitation, while `unknown` means no compatible declaration exists. Capability
+sets are resolved live from the adapter registry and are not persisted in
+session records.
+
 **Last-message enrichment** fills `Info.last_user_message` and
 `Info.last_assistant_message` by reading the conversation through the session's
 own agent adapter (`Manager.AttachLastMessages`). Unlike `result`, it never
@@ -245,8 +271,9 @@ optional fingerprint-bound `Info.review_disposition`. Protocol v8 adds the
 optional `Info.pr_handoff`. Protocol v9 adds the optional
 `Info.merge_handoff`. Protocol v10 adds the optional Task Execution `run`
 journal. Protocol v11 adds bounded external identity/sync fields to Task
-`source`. Protocol v12 adds the bounded Task `mutations` timeline. A settled
-managed-worktree example is:
+`source`. Protocol v12 adds the bounded Task `mutations` timeline. Protocol
+v13 adds the required session `capabilities` object. A settled managed-worktree
+example is:
 
 ```json
 {
@@ -706,6 +733,11 @@ fields change the Task shape returned by all existing Task read actions.
 
 v12 follows it for provider mutation audit: `task-comment` is a new action, but
 the `mutations` array changes the Task shape returned by existing Task reads.
+
+v13 follows it for agent capability negotiation: the required `capabilities`
+object changes the `session.Info` shape returned by existing session and Task
+reads. Old payloads still decode safely to unknown, but the strict wire-version
+check makes a daemon restart explicit when client and server builds differ.
 
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is

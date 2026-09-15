@@ -42,6 +42,21 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "opencode" }
 
+// Capabilities records that opencode reports permission waits reliably even
+// though jin deliberately does not yet drive its selection-based dialog.
+func (a *Agent) Capabilities() agent.AgentCapabilities {
+	return agent.AgentCapabilities{
+		SchemaVersion:       agent.AgentCapabilitiesSchemaVersion,
+		Liveness:            agent.CapabilitySupported,
+		Send:                agent.CapabilitySupported,
+		Respond:             agent.CapabilityUnsupported,
+		Resume:              agent.CapabilitySupported,
+		Hooks:               agent.CapabilitySupported,
+		Transcript:          agent.CapabilitySupported,
+		ReliableNeedsAnswer: agent.CapabilitySupported,
+	}
+}
+
 // RecognizesSessionID answers with hasSessionIDPrefix — the LOOSE predicate,
 // not isSessionID beside it — and the choice is the point.
 //

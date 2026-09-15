@@ -108,6 +108,15 @@ jind-ai は個人プロジェクトです。開発者が自身の日常利用の
 Claude Code を first-class citizen としてサポートしています。他エージェントは
 `internal/agent/<kind>/` にアダプタを追加することで拡張可能です。
 
+セッションの JSON には、選択した adapter のバージョン付き `capabilities` も含まれます。
+項目は `liveness`、`send`、`respond`、`resume`、`hooks`、`transcript`、
+`reliable_needs_answer` で、値は `supported` / `unsupported` / `unknown` の三値です。
+自動化で利用可能と判断してよいのは `supported` だけです。これは実行中プロセスの現在の
+健全性ではなく、adapter が実装している能力を表します。現時点では Claude は全項目に対応、
+Codex は確実な needs-answer 検出とブロッキングプロンプトへの応答を未対応、opencode は
+needs-answer を確実に報告できますが、選択位置に依存する許可ダイアログを jin が安全に
+操作できないため応答は未対応です。
+
 セッションごとに adapter を選ぶ:
 
 ```bash

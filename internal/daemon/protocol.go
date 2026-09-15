@@ -33,4 +33,5 @@ package daemon
 // accepts a read-only GitHub Issue source in place of a direct prompt.
 // v12: tasks include a bounded provider-mutation audit timeline; add the
 // explicit task-comment action.
-const ProtocolVersion = 12
+// v13: session.Info includes the adapter's versioned capability declaration.
+const ProtocolVersion = 13
