@@ -130,11 +130,12 @@ type Session struct {
 	TmuxPaneID     string `json:"tmux_pane_id,omitempty"`     // CC pane ID (e.g., "%42") for capture-pane
 
 	// Runtime fields (not persisted)
-	LastOutputTime   time.Time        `json:"-"` // Last PTY output received (for idle stability detection)
-	StartedAt        time.Time        `json:"-"` // Process start time (prevents false error detection right after startup)
-	SSHAuthSock      string           `json:"-"` // SSH_AUTH_SOCK (for git operations, not persisted)
-	DescriptionLayer DescriptionLayer `json:"-"` // Runtime-only enhancer layer; see DescriptionLayer docs + TryUpgradeDescription's restart guard
-	PersistedStatus  Status           `json:"-"` // Status read from disk at load time, before the in-memory normalization to Stopped; consumed once by recovery
+	LastOutputTime   time.Time         `json:"-"` // Last PTY output received (for idle stability detection)
+	StartedAt        time.Time         `json:"-"` // Process start time (prevents false error detection right after startup)
+	SSHAuthSock      string            `json:"-"` // SSH_AUTH_SOCK (for git operations, not persisted)
+	DescriptionLayer DescriptionLayer  `json:"-"` // Runtime-only enhancer layer; see DescriptionLayer docs + TryUpgradeDescription's restart guard
+	PersistedStatus  Status            `json:"-"` // Status read from disk at load time, before the in-memory normalization to Stopped; consumed once by recovery
+	Capabilities     AgentCapabilities `json:"-"` // Live adapter declaration; refreshed when the resolver is installed
 	// killSeq counts the stops Kill has recorded, so code that dropped m.mu can
 	// tell whether a Kill landed while it was away. Nothing else answers that any
 	// more: a kill now leaves the tmux window standing so the session can be
@@ -163,21 +164,22 @@ type Session struct {
 
 // Info returns session information for display
 type Info struct {
-	ID                string     `json:"id"`
-	Description       string     `json:"description"`
-	DescriptionLocked bool       `json:"description_locked,omitempty"`
-	WorkDir           string     `json:"work_dir"`
-	Status            Status     `json:"status"`
-	CreatedAt         time.Time  `json:"created_at"`
-	LastActiveAt      time.Time  `json:"last_active_at,omitzero"`
-	ErrorMessage      string     `json:"error_message,omitempty"`
-	CreationWarning   string     `json:"creation_warning,omitempty"` // Non-fatal warning from async provisioning (see Session.CreationWarning)
-	ReviewBase        ReviewBase `json:"review_base,omitzero"`       // Immutable base of a managed worktree; zero means legacy/unknown
-	AgentKind         string     `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
-	AgentSessionID    string     `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
-	Model             string     `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
-	TmuxWindowName    string     `json:"tmux_window_name,omitempty"` // tmux window name
-	Fleet             string     `json:"fleet"`                      // Fleet name for session grouping
+	ID                string            `json:"id"`
+	Description       string            `json:"description"`
+	DescriptionLocked bool              `json:"description_locked,omitempty"`
+	WorkDir           string            `json:"work_dir"`
+	Status            Status            `json:"status"`
+	CreatedAt         time.Time         `json:"created_at"`
+	LastActiveAt      time.Time         `json:"last_active_at,omitzero"`
+	ErrorMessage      string            `json:"error_message,omitempty"`
+	CreationWarning   string            `json:"creation_warning,omitempty"` // Non-fatal warning from async provisioning (see Session.CreationWarning)
+	ReviewBase        ReviewBase        `json:"review_base,omitzero"`       // Immutable base of a managed worktree; zero means legacy/unknown
+	AgentKind         string            `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
+	AgentSessionID    string            `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
+	Model             string            `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
+	Capabilities      AgentCapabilities `json:"capabilities"`               // Live adapter support; zero/old peer means every state is unknown
+	TmuxWindowName    string            `json:"tmux_window_name,omitempty"` // tmux window name
+	Fleet             string            `json:"fleet"`                      // Fleet name for session grouping
 
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
@@ -237,6 +239,7 @@ func (s *Session) ToInfo() Info {
 		AgentKind:         s.AgentKind,
 		AgentSessionID:    s.AgentSessionID,
 		Model:             s.Model,
+		Capabilities:      s.Capabilities,
 		TmuxWindowName:    s.TmuxWindowName,
 		Fleet:             s.Fleet,
 		Attention:         attention.toInfo(),

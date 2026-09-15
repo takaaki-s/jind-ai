@@ -61,6 +61,58 @@ func TestRegisterInit_LookupOpencode(t *testing.T) {
 	}
 }
 
+func TestRegisterInit_CapabilityDeclarations(t *testing.T) {
+	want := map[string]session.AgentCapabilities{
+		"claude": {
+			SchemaVersion:       session.AgentCapabilitiesSchemaVersion,
+			Liveness:            session.CapabilitySupported,
+			Send:                session.CapabilitySupported,
+			Respond:             session.CapabilitySupported,
+			Resume:              session.CapabilitySupported,
+			Hooks:               session.CapabilitySupported,
+			Transcript:          session.CapabilitySupported,
+			ReliableNeedsAnswer: session.CapabilitySupported,
+		},
+		"codex": {
+			SchemaVersion:       session.AgentCapabilitiesSchemaVersion,
+			Liveness:            session.CapabilitySupported,
+			Send:                session.CapabilitySupported,
+			Respond:             session.CapabilityUnsupported,
+			Resume:              session.CapabilitySupported,
+			Hooks:               session.CapabilitySupported,
+			Transcript:          session.CapabilitySupported,
+			ReliableNeedsAnswer: session.CapabilityUnsupported,
+		},
+		"opencode": {
+			SchemaVersion:       session.AgentCapabilitiesSchemaVersion,
+			Liveness:            session.CapabilitySupported,
+			Send:                session.CapabilitySupported,
+			Respond:             session.CapabilityUnsupported,
+			Resume:              session.CapabilitySupported,
+			Hooks:               session.CapabilitySupported,
+			Transcript:          session.CapabilitySupported,
+			ReliableNeedsAnswer: session.CapabilitySupported,
+		},
+	}
+
+	for _, kind := range agent.Kinds() {
+		t.Run(kind, func(t *testing.T) {
+			ag, err := agent.Lookup(kind)
+			if err != nil {
+				t.Fatalf("Lookup(%s): %v", kind, err)
+			}
+			got := session.CapabilitiesOf(ag)
+			expected, ok := want[kind]
+			if !ok {
+				t.Fatalf("registered adapter %q has no capability contract test", kind)
+			}
+			if got != expected {
+				t.Errorf("Capabilities() = %+v, want %+v", got, expected)
+			}
+		})
+	}
+}
+
 // TestRegisterInit_TranscriptWiring guards the three one-line methods that
 // decide what `jin session result` answers for each kind.
 //

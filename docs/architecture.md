@@ -301,6 +301,24 @@ so `internal/session/` never imports `internal/agent/*`. Adding a new
 adapter is a matter of dropping `internal/agent/<kind>/` with an
 implementation and adding one line to `internal/agent/register/register.go`.
 
+Adapters may also implement the optional `session.CapabilityProvider`. Its
+versioned, three-state declaration is resolved when the daemon installs the
+registry and is projected through `session.Info`; it is runtime metadata and
+is never copied into session files. Keeping it optional is the compatibility
+boundary: an older adapter still satisfies `Agent`, but every capability is
+`unknown`. A missing adapter, an unknown schema/state, and JSON from an older
+peer fail the same way. Consumers call `AgentCapabilities.State` or
+`Supports`, and must treat only `supported` as authoritative — never infer a
+capability from `AgentKind`, an executable name, or the presence of another
+method. `RespondToBlock` applies that rule before even capturing the pane, so
+an undeclared adapter can never cause keys to reach a permission dialog.
+
+The current vocabulary separates adapter support from runtime health:
+`liveness`, `send`, `respond`, `resume`, `hooks`, `transcript`, and
+`reliable_needs_answer`. For example, `hooks: supported` says the adapter has
+hook integration; it does not claim that a particular session's hook file was
+written successfully. Operational failures remain errors/status evidence.
+
 ## Task and Execution Domain
 
 `internal/task/` owns durable intent separately from `internal/session/`'s

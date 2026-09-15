@@ -111,6 +111,16 @@ Bug reports with reproduction steps are the most welcome kind of contribution.
 Claude Code is the first-class citizen; other agents plug in as adapters under
 `internal/agent/<kind>/`.
 
+Session JSON also reports the selected adapter's versioned `capabilities`:
+`liveness`, `send`, `respond`, `resume`, `hooks`, `transcript`, and
+`reliable_needs_answer`. Each value is `supported`, `unsupported`, or
+`unknown`; automation must treat only `supported` as permission to use a
+capability. The declaration describes adapter support, not the current health
+of one running process. Today Claude supports every listed capability; Codex
+does not claim reliable needs-answer detection or blocking-prompt response,
+and opencode reports needs-answer reliably but does not claim response because
+its selection-based permission dialog is not safe for jin to drive yet.
+
 Select a non-default adapter per session:
 
 ```bash
