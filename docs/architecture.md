@@ -455,6 +455,29 @@ Who touches it:
 The state machine and its exclusions are in
 [session-lifecycle.md](session-lifecycle.md#completion-attention).
 
+## Reliable Human-answer Evidence
+
+`Session.NeedsAnswer` (`internal/session/needs_answer.go`) is independent of
+both process status and completion attention. Its wire state is always one of
+`unknown`, `not-needed`, or `needs-answer`; unsupported, missing, invalid, and
+older capability declarations all project `unknown` rather than a false
+negative.
+
+Adapters attach an explicit required/resolved signal to `StatusUpdate`.
+`Manager.HandleHookEvent` applies that signal only when the resolved adapter
+declares `reliable_needs_answer: supported`. It never promotes
+`StatusPermission`, `PermissionRequest`, pane contents, transcript contents or
+a timeout into evidence. This keeps Codex unknown even if its raw hook uses a
+permission-shaped name.
+
+The persisted representation uses monotonic generation, resolved-generation
+and seen-generation cursors. A duplicate required event does not advance the
+generation; marking seen leaves the wait unresolved; an explicit adapter clear
+or a verified `RespondToBlock` advances the resolved cursor. `Store.Save`
+merges each cursor by maximum, so an unrelated stale full-session save cannot
+resurrect or erase a wait. The TUI prioritizes all unresolved waits within each
+fleet, with unseen waits ahead of seen ones, then unseen completion attention.
+
 ## Session Description Model
 
 Sessions carry a human-readable `Description` field decoupled from the technical `ID`. It is filled by a 3-layer generation pipeline (see [session-lifecycle.md](session-lifecycle.md) for the state machine):

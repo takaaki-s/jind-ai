@@ -70,5 +70,20 @@ func TestRenderSessionInfoText(t *testing.T) {
 		if !bytes.Contains([]byte(output), []byte("main")) {
 			t.Errorf("expected output to contain branch, got:\n%s", output)
 		}
+		if !bytes.Contains([]byte(output), []byte("NeedsAnswer:")) ||
+			!bytes.Contains([]byte(output), []byte("unknown")) {
+			t.Errorf("expected explicit unknown needs-answer evidence, got:\n%s", output)
+		}
+	})
+
+	t.Run("keeps a seen wait visibly unresolved", func(t *testing.T) {
+		info := &session.Info{NeedsAnswer: session.NeedsAnswerInfo{
+			State: session.NeedsAnswerRequired, Generation: 2, SeenGeneration: 2,
+		}}
+		var buf bytes.Buffer
+		renderSessionInfoText(&buf, info)
+		if !bytes.Contains(buf.Bytes(), []byte("needs-answer (seen, unresolved)")) {
+			t.Errorf("output hides the unresolved wait:\n%s", buf.String())
+		}
 	})
 }

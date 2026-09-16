@@ -134,7 +134,8 @@ type StatusSignal struct {
 }
 
 // StatusUpdate is the adapter's verdict on a signal: which Status the
-// session should move to and whether a desktop notification should fire.
+// session should move to, whether a desktop notification should fire, and any
+// explicit transition for the independent human-answer evidence axis.
 //
 // ErrorMessage / ClearError work as a tri-state:
 //
@@ -145,6 +146,10 @@ type StatusUpdate struct {
 	Status       Status
 	ErrorMessage string
 	ClearError   bool
+	// NeedsAnswer is an explicit human-wait verdict from the adapter. Manager
+	// applies it only when reliable-needs-answer is declared supported; raw
+	// event names and StatusPermission are never promoted on their own.
+	NeedsAnswer NeedsAnswerSignal
 	// Liveness marks a verdict that reports the agent is alive rather than
 	// that a turn began — a tool finishing, say, which can only happen inside
 	// a turn something else already opened. Manager honours it on the "hook"
@@ -160,6 +165,16 @@ type StatusUpdate struct {
 	Liveness bool
 	Notify   NotifyKind
 }
+
+// NeedsAnswerSignal is an adapter's explicit transition for the independent
+// human-wait evidence axis. None leaves it untouched.
+type NeedsAnswerSignal uint8
+
+const (
+	NeedsAnswerSignalNone NeedsAnswerSignal = iota
+	NeedsAnswerSignalRequired
+	NeedsAnswerSignalResolved
+)
 
 // NotifyKind is the abstract notification category an adapter attaches to
 // a StatusUpdate. Manager forwards it unchanged as plugin.Event.NotifyKind

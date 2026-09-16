@@ -13,15 +13,16 @@ func hookSignal(event string) agent.StatusSignal {
 
 func TestInterpret_StatusMapping(t *testing.T) {
 	tests := []struct {
-		event      string
-		wantStatus session.Status
-		wantNotify agent.NotifyKind
-		wantClear  bool
+		event           string
+		wantStatus      session.Status
+		wantNotify      agent.NotifyKind
+		wantClear       bool
+		wantNeedsAnswer session.NeedsAnswerSignal
 	}{
-		{eventUserPromptSubmit, session.StatusThinking, agent.NotifyNone, true},
-		{eventPermission, session.StatusPermission, agent.NotifyPermission, false},
-		{eventStop, session.StatusIdle, agent.NotifyTaskComplete, true},
-		{eventStopFailure, session.StatusIdle, agent.NotifyError, false},
+		{eventUserPromptSubmit, session.StatusThinking, agent.NotifyNone, true, session.NeedsAnswerSignalResolved},
+		{eventPermission, session.StatusPermission, agent.NotifyPermission, false, session.NeedsAnswerSignalRequired},
+		{eventStop, session.StatusIdle, agent.NotifyTaskComplete, true, session.NeedsAnswerSignalResolved},
+		{eventStopFailure, session.StatusIdle, agent.NotifyError, false, session.NeedsAnswerSignalResolved},
 	}
 
 	s := NewEventStatusSource()
@@ -39,6 +40,9 @@ func TestInterpret_StatusMapping(t *testing.T) {
 			}
 			if upd.ClearError != tt.wantClear {
 				t.Errorf("ClearError = %v, want %v", upd.ClearError, tt.wantClear)
+			}
+			if upd.NeedsAnswer != tt.wantNeedsAnswer {
+				t.Errorf("NeedsAnswer = %v, want %v", upd.NeedsAnswer, tt.wantNeedsAnswer)
 			}
 		})
 	}

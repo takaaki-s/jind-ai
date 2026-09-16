@@ -53,6 +53,9 @@ func TestHookStatusSource_EventMapping(t *testing.T) {
 			if got.Liveness != tc.wantLiveness {
 				t.Errorf("Liveness = %v, want %v", got.Liveness, tc.wantLiveness)
 			}
+			if got.NeedsAnswer != session.NeedsAnswerSignalNone {
+				t.Errorf("NeedsAnswer = %v, want none — Codex cannot assert this evidence", got.NeedsAnswer)
+			}
 		})
 	}
 }

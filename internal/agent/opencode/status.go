@@ -46,26 +46,30 @@ func (s *EventStatusSource) Interpret(sig agent.StatusSignal) (agent.StatusUpdat
 	switch sig.Payload["event"] {
 	case eventUserPromptSubmit:
 		return agent.StatusUpdate{
-			Status:     session.StatusThinking,
-			ClearError: true,
-			Notify:     agent.NotifyNone,
+			Status:      session.StatusThinking,
+			ClearError:  true,
+			Notify:      agent.NotifyNone,
+			NeedsAnswer: session.NeedsAnswerSignalResolved,
 		}, true
 	case eventPermission:
 		return agent.StatusUpdate{
-			Status: session.StatusPermission,
-			Notify: agent.NotifyPermission,
+			Status:      session.StatusPermission,
+			Notify:      agent.NotifyPermission,
+			NeedsAnswer: session.NeedsAnswerSignalRequired,
 		}, true
 	case eventStop:
 		return agent.StatusUpdate{
-			Status:     session.StatusIdle,
-			ClearError: true,
-			Notify:     agent.NotifyTaskComplete,
+			Status:      session.StatusIdle,
+			ClearError:  true,
+			Notify:      agent.NotifyTaskComplete,
+			NeedsAnswer: session.NeedsAnswerSignalResolved,
 		}, true
 	case eventStopFailure:
 		return agent.StatusUpdate{
 			Status:       session.StatusIdle,
 			ErrorMessage: errorMessage,
 			Notify:       agent.NotifyError,
+			NeedsAnswer:  session.NeedsAnswerSignalResolved,
 		}, true
 	}
 	// SessionStart and anything we don't recognise (opencode emits a large

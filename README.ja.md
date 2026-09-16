@@ -117,6 +117,12 @@ Codex は確実な needs-answer 検出とブロッキングプロンプトへの
 needs-answer を確実に報告できますが、選択位置に依存する許可ダイアログを jin が安全に
 操作できないため応答は未対応です。
 
+別の `needs_answer` オブジェクトは status ではなく、実行時の証拠です。state は
+`needs-answer` / `not-needed` / `unknown` の三値で、
+`reliable_needs_answer: supported` を宣言した adapter の明示イベントだけが確定・解除できます。
+permission らしいイベント名、pane 出力、transcript、timeout からは推測しません。そのため
+Codex は誤った inbox 項目を作らず `unknown` のままです。
+
 セッションごとに adapter を選ぶ:
 
 ```bash
@@ -192,11 +198,12 @@ TUI 内で `n` キーを押してセッション作成、`Enter` でアタッチ
 アタッチして操作してください。Claude Code と opencode は影響を受けません。
 
 TUI の一覧では、この列の左隣にもう 1 列あります。これは**ステータスではありません**。
-オレンジの ● は未確認の完了ターン、緑の ◆ は空でないローカルレビュー差分、赤の ✕ は
-現在の workspace fingerprint に対して明示的に報告されたチェック失敗を表します。
-TUI からそのセッションに attach すると印は消えます。アクションパレットの
-「mark completion seen」と `jin session seen <selector>` でも消えます。
-消えない操作を含む詳細は[完了したターン](#完了したターン)にあります。
+`?` は確実に確認できた人間の回答待ち、オレンジの ● は未確認の完了ターン、緑の ◆ は
+空でないローカルレビュー差分、赤の ✕ は現在の workspace fingerprint に対して明示的に
+報告されたチェック失敗です。未解決の `?` は fleet 内で完了通知より上に並びます。
+attach や `jin session seen <selector>` は通知を確認済みにしますが、回答済みとは扱いません。
+`?` は adapter の明示的な解除イベント、または `jin session respond` がブロッキング
+プロンプトの消失を確認するまで残ります。他の印の詳細は[完了したターン](#完了したターン)にあります。
 
 ## CLI コマンド
 
@@ -443,6 +450,13 @@ attentionが載り、評価後は `review_facts` / `check_report` / `review_disp
     "seen_generation": 3,
     "unseen": true
   },
+  "needs_answer": {
+    "state": "needs-answer",
+    "generation": 2,
+    "resolved_generation": 1,
+    "seen_generation": 2,
+    "unseen": false
+  },
   "check_report": {
     "source": "reported",
     "status": "failed",
@@ -464,6 +478,10 @@ attentionが載り、評価後は `review_facts` / `check_report` / `review_disp
 確認すべきものがありません。カウンタが 2 つあるのは、直前のターンを確認している最中に次の
 ターンが終わっても取りこぼさないためです — generation 3 を確認しても generation 4 は未確認
 のまま残ります。
+
+`needs_answer` の `unseen: false` は確認済みという意味で、解決済みではありません。
+`resolved_generation` が追いつくまで state は `needs-answer` のままです。`unknown` は常に
+明示され、`not-needed` として扱ってはいけません。
 
 ### スクリプト / 別のエージェントから動かす
 

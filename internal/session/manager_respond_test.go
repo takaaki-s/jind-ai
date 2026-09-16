@@ -55,8 +55,9 @@ func newRespondFixture(t *testing.T, kind BlockKind, steps []KeyStep, capturesIn
 
 	ag := &fakeAgent{
 		capabilities: AgentCapabilities{
-			SchemaVersion: AgentCapabilitiesSchemaVersion,
-			Respond:       CapabilitySupported,
+			SchemaVersion:       AgentCapabilitiesSchemaVersion,
+			Respond:             CapabilitySupported,
+			ReliableNeedsAnswer: CapabilitySupported,
 		},
 		detectFn: func(capture string) BlockKind {
 			// The fake keys off the capture so a test can drive the
@@ -102,6 +103,22 @@ func TestRespondToBlock_Option(t *testing.T) {
 	}
 	if n := countCalls(f.mock, "SendKeys", f.pane); n != 0 {
 		t.Errorf("SendKeys called %d times, want 0 — a digit commits on its own", n)
+	}
+}
+
+func TestRespondToBlock_VerifiedClearResolvesNeedsAnswer(t *testing.T) {
+	f := newRespondFixture(t, BlockPermission, []KeyStep{{Literal: "2"}},
+		[]string{somePane, somePane + "CLEARED"})
+	f.mgr.mu.Lock()
+	f.sess.NeedsAnswer = f.sess.NeedsAnswer.required()
+	f.mgr.mu.Unlock()
+
+	if _, err := f.mgr.RespondToBlock(f.sess.ID, BlockAnswer{Option: 2}); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := f.mgr.GetInfo(f.sess.ID)
+	if info.NeedsAnswer.State != NeedsAnswerNotNeeded || info.NeedsAnswer.ResolvedGeneration != 1 {
+		t.Errorf("NeedsAnswer = %+v, want resolved generation 1", info.NeedsAnswer)
 	}
 }
 

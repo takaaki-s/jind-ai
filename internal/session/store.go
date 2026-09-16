@@ -72,9 +72,9 @@ func (s *Store) cleanupTempFiles() {
 
 // Save persists a session.
 //
-// Attention is merged with what is already on disk rather than overwritten, so
-// a stale snapshot cannot roll a receipt back; every other field is
-// last-writer-wins. A caller cannot lower attention through Save.
+// Attention and NeedsAnswer are merged with what is already on disk rather
+// than overwritten, so a stale snapshot cannot roll either cursor back; every
+// other field is last-writer-wins.
 //
 // The write is atomic (see atomicfile.Write). Several goroutines reach Save
 // without holding a shared lock, and a half-written record is one LoadAll
@@ -97,6 +97,7 @@ func (s *Store) Save(session Session) error {
 	}
 
 	session.Attention = mergeAttention(session.Attention, persistedAttention(path))
+	session.NeedsAnswer = mergeNeedsAnswer(session.NeedsAnswer, persistedNeedsAnswer(path))
 	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
@@ -112,6 +113,24 @@ func (s *Store) Save(session Session) error {
 	}
 
 	return atomicWrite(path, data, mode, session.ID+tmpSuffixPattern)
+}
+
+func persistedNeedsAnswer(path string) NeedsAnswer {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			debugLog("[STORE] needs-answer probe failed for %s: %v", path, err)
+		}
+		return NeedsAnswer{}
+	}
+	var probe struct {
+		NeedsAnswer NeedsAnswer `json:"needs_answer"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		debugLog("[STORE] needs-answer probe could not parse %s: %v", path, err)
+		return NeedsAnswer{}
+	}
+	return probe.NeedsAnswer
 }
 
 func persistedReviewCleanupKey(path string) string {

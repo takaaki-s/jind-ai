@@ -54,6 +54,13 @@ var (
 			Foreground(warningColor).
 			Bold(true)
 
+	needsAnswerStyle = lipgloss.NewStyle().
+				Foreground(warningColor).
+				Bold(true)
+
+	needsAnswerSeenStyle = lipgloss.NewStyle().
+				Foreground(warningColor)
+
 	reviewReadyStyle = lipgloss.NewStyle().
 				Foreground(successColor).
 				Bold(true)

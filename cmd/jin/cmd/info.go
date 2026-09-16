@@ -67,6 +67,15 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 		}
 		fmt.Fprintln(tw)
 	}
+	fmt.Fprintf(tw, "NeedsAnswer:\t%s", info.NeedsAnswer.EvidenceState())
+	if info.NeedsAnswer.Unresolved() {
+		if info.NeedsAnswer.Unseen {
+			fmt.Fprint(tw, " (unseen)")
+		} else {
+			fmt.Fprint(tw, " (seen, unresolved)")
+		}
+	}
+	fmt.Fprintln(tw)
 	if info.ReviewFacts.Status != "" {
 		fmt.Fprintf(tw, "Review:\t%s", info.ReviewFacts.Status)
 		if info.ReviewFacts.Status == session.ReviewFactsAvailable {

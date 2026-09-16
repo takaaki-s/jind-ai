@@ -121,6 +121,13 @@ does not claim reliable needs-answer detection or blocking-prompt response,
 and opencode reports needs-answer reliably but does not claim response because
 its selection-based permission dialog is not safe for jin to drive yet.
 
+The separate `needs_answer` object is runtime evidence, not another status.
+Its state is `needs-answer`, `not-needed`, or `unknown`. Only an explicit event
+from an adapter declaring `reliable_needs_answer: supported` can assert or
+clear it; jin does not guess from a permission-shaped event, pane output,
+transcripts, or timeouts. That is why Codex stays `unknown` instead of producing
+a false inbox item.
+
 Select a non-default adapter per session:
 
 ```bash
@@ -214,12 +221,14 @@ as `thinking`, `jin session respond` cannot answer it, and no timer moves it:
 attach to the pane. Claude Code and opencode are unaffected.
 
 The TUI list carries one more column to the left of this one. It is **not a
-status**: orange ● is an unacknowledged completion, green ◆ is a non-empty local
-review delta, and red ✕ is an explicitly reported check failure for the current
-workspace fingerprint. Attaching to the session from the TUI clears the mark,
-as do the action palette's "mark completion seen" and
-`jin session seen <selector>` — [Completed turns](#completed-turns) has the
-rest, including what does *not* clear it.
+status**: `?` is a reliably confirmed human-answer wait, orange ● is an
+unacknowledged completion, green ◆ is a non-empty local review delta, and red ✕
+is an explicitly reported check failure for the current workspace fingerprint.
+Unresolved `?` sessions rise above completion receipts within their fleet.
+Attaching or `jin session seen <selector>` acknowledges the signal, but does
+not pretend the question was answered: `?` remains until the adapter explicitly
+clears it or `jin session respond` verifies that the blocking prompt left the
+pane. [Completed turns](#completed-turns) covers the other marks.
 
 ## CLI Commands
 
@@ -482,6 +491,13 @@ the latest `pr_handoff` and `merge_handoff`.
     "seen_generation": 3,
     "unseen": true
   },
+  "needs_answer": {
+    "state": "needs-answer",
+    "generation": 2,
+    "resolved_generation": 1,
+    "seen_generation": 2,
+    "unseen": false
+  },
   "check_report": {
     "source": "reported",
     "status": "failed",
@@ -503,6 +519,10 @@ the latest `pr_handoff` and `merge_handoff`.
 has nothing to acknowledge. The counters exist so that a turn finishing while
 you acknowledge the previous one cannot be lost: acknowledging generation 3
 leaves generation 4 unseen.
+
+For `needs_answer`, `unseen: false` means acknowledged, not resolved. The state
+remains `needs-answer` until `resolved_generation` catches up. `unknown` is
+always explicit and must not be treated as `not-needed`.
 
 ### Agent-facing documentation
 
