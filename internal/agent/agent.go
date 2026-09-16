@@ -25,6 +25,36 @@ import "github.com/takaaki-s/jind-ai/internal/session"
 // Agent is the interface satisfied by every adapter.
 type Agent = session.Agent
 
+// CapabilityProvider is the optional, versioned support declaration an
+// adapter may expose. Adapters without it safely negotiate to unknown.
+type CapabilityProvider = session.CapabilityProvider
+
+// AgentCapabilities is the adapter capability set projected in session Info.
+type AgentCapabilities = session.AgentCapabilities
+
+// AgentCapability names one entry in AgentCapabilities.
+type AgentCapability = session.AgentCapability
+
+// CapabilityState distinguishes confirmed support, confirmed lack of support,
+// and an unknown declaration.
+type CapabilityState = session.CapabilityState
+
+const AgentCapabilitiesSchemaVersion = session.AgentCapabilitiesSchemaVersion
+
+const (
+	CapabilityUnknown     = session.CapabilityUnknown
+	CapabilitySupported   = session.CapabilitySupported
+	CapabilityUnsupported = session.CapabilityUnsupported
+
+	CapabilityLiveness            = session.CapabilityLiveness
+	CapabilitySend                = session.CapabilitySend
+	CapabilityRespond             = session.CapabilityRespond
+	CapabilityResume              = session.CapabilityResume
+	CapabilityHooks               = session.CapabilityHooks
+	CapabilityTranscript          = session.CapabilityTranscript
+	CapabilityReliableNeedsAnswer = session.CapabilityReliableNeedsAnswer
+)
+
 // SpawnOptions is the input to Agent.SpawnCommand.
 type SpawnOptions = session.SpawnOptions
 

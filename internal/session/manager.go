@@ -127,6 +127,20 @@ func (m *Manager) SetTmuxSocketName(name string) {
 // at runtime while other goroutines are already reading would race regardless.
 func (m *Manager) SetAgentResolver(ar AgentResolver) {
 	m.agentResolver = ar
+	for _, sess := range m.sessions {
+		sess.Capabilities = capabilitiesForKind(ar, sess.AgentKind)
+	}
+}
+
+func capabilitiesForKind(resolver AgentResolver, kind string) AgentCapabilities {
+	if resolver == nil {
+		return AgentCapabilities{}
+	}
+	agent, err := resolver.Resolve(kind)
+	if err != nil {
+		return AgentCapabilities{}
+	}
+	return CapabilitiesOf(agent)
 }
 
 // RecoverTmuxSessions checks for sessions with existing tmux windows after a
@@ -838,6 +852,7 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 		CreatedAt:         time.Now(),
 		Status:            StatusCreating,
 		AgentKind:         agentKind,
+		Capabilities:      capabilitiesForKind(m.agentResolver, agentKind),
 		AgentSessionID:    uuid.New().String(),
 		Model:             opts.Model,
 		Fleet:             opts.Fleet,
@@ -1937,6 +1952,11 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 	if ag == nil {
 		return BlockNone, fmt.Errorf("no adapter for agent kind %q, so jin cannot tell "+
 			"what keys its prompts take; attach the session and answer it directly", agentKind)
+	}
+	respondCapability := CapabilitiesOf(ag).State(CapabilityRespond)
+	if respondCapability != CapabilitySupported {
+		return BlockNone, fmt.Errorf("agent kind %q has %s respond capability, so jin will not send keys; "+
+			"attach the session and answer it directly", agentKind, respondCapability.wireValue())
 	}
 
 	capture, err := m.tmuxClient.CapturePane(paneID, false)

@@ -120,10 +120,12 @@ type fakeAgent struct {
 	// statusFn overrides StatusSource().Interpret so a test can hand Manager
 	// a verdict in another adapter's vocabulary. Nil (the default) keeps the
 	// Claude Code mapping below, which every other test reads.
-	statusFn func(StatusSignal) (StatusUpdate, bool)
+	statusFn     func(StatusSignal) (StatusUpdate, bool)
+	capabilities AgentCapabilities
 }
 
-func (a *fakeAgent) Kind() string { return "claude" }
+func (a *fakeAgent) Kind() string                    { return "claude" }
+func (a *fakeAgent) Capabilities() AgentCapabilities { return a.capabilities }
 func (a *fakeAgent) Setup(ctx SetupContext) error {
 	if a.setupFn != nil {
 		return a.setupFn(ctx)

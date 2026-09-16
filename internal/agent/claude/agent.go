@@ -39,6 +39,21 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "claude" }
 
+// Capabilities declares adapter support, independent of whether one running
+// process currently has healthy hook wiring.
+func (a *Agent) Capabilities() agent.AgentCapabilities {
+	return agent.AgentCapabilities{
+		SchemaVersion:       agent.AgentCapabilitiesSchemaVersion,
+		Liveness:            agent.CapabilitySupported,
+		Send:                agent.CapabilitySupported,
+		Respond:             agent.CapabilitySupported,
+		Resume:              agent.CapabilitySupported,
+		Hooks:               agent.CapabilitySupported,
+		Transcript:          agent.CapabilitySupported,
+		ReliableNeedsAnswer: agent.CapabilitySupported,
+	}
+}
+
 // RecognizesSessionID accepts anything written as a UUID. Claude Code is told
 // its session id rather than minting one, so a re-key is the exception rather
 // than the rule — and the value kept on a refusal is the one CC was launched

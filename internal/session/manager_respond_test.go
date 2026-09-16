@@ -54,6 +54,10 @@ func newRespondFixture(t *testing.T, kind BlockKind, steps []KeyStep, capturesIn
 	sess := newIdleSessionWithPane(t, mgr, t.TempDir(), "blocked", pane)
 
 	ag := &fakeAgent{
+		capabilities: AgentCapabilities{
+			SchemaVersion: AgentCapabilitiesSchemaVersion,
+			Respond:       CapabilitySupported,
+		},
 		detectFn: func(capture string) BlockKind {
 			// The fake keys off the capture so a test can drive the
 			// transition by changing what CapturePane returns.
@@ -114,6 +118,25 @@ func TestRespondToBlock_IdleStatusIsAllowed(t *testing.T) {
 
 	if _, err := f.mgr.RespondToBlock(f.sess.ID, BlockAnswer{Option: 1}); err != nil {
 		t.Fatalf("RespondToBlock on an idle session returned err=%v, want nil", err)
+	}
+}
+
+func TestRespondToBlock_RequiresConfirmedCapabilityBeforeCapture(t *testing.T) {
+	for _, state := range []CapabilityState{CapabilityUnknown, CapabilityUnsupported} {
+		t.Run(state.wireValue(), func(t *testing.T) {
+			f := newRespondFixture(t, BlockPermission, []KeyStep{{Literal: "1"}}, nil)
+			f.agent.capabilities.Respond = state
+
+			if _, err := f.mgr.RespondToBlock(f.sess.ID, BlockAnswer{Option: 1}); err == nil {
+				t.Fatal("RespondToBlock returned nil, want a capability refusal")
+			}
+			if n := countCalls(f.mock, "CapturePane", f.pane); n != 0 {
+				t.Errorf("CapturePane called %d times, want 0", n)
+			}
+			if n := f.keyCalls(); n != 0 {
+				t.Errorf("key calls = %d, want 0", n)
+			}
+		})
 	}
 }
 
