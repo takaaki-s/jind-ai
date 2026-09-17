@@ -34,4 +34,5 @@ package daemon
 // v12: tasks include a bounded provider-mutation audit timeline; add the
 // explicit task-comment action.
 // v13: session.Info includes the adapter's versioned capability declaration.
-const ProtocolVersion = 13
+// v14: session.Info includes explicit tri-state needs-answer evidence.
+const ProtocolVersion = 14

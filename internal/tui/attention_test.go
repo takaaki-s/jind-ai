@@ -35,6 +35,20 @@ func plainInfo(id, fleet string) session.Info {
 	return session.Info{ID: id, Description: id, Fleet: fleet, Status: session.StatusIdle}
 }
 
+func needsAnswerInfo(id, fleet string, unseen bool) session.Info {
+	generation, seen := uint64(1), uint64(1)
+	if unseen {
+		seen = 0
+	}
+	return session.Info{
+		ID: id, Description: id, Fleet: fleet, Status: session.StatusIdle,
+		NeedsAnswer: session.NeedsAnswerInfo{
+			State: session.NeedsAnswerRequired, Generation: generation,
+			SeenGeneration: seen, Unseen: unseen,
+		},
+	}
+}
+
 func idsOf(sessions []session.Info) []string {
 	ids := make([]string, len(sessions))
 	for i, s := range sessions {
@@ -102,6 +116,17 @@ func TestRenderSession_NoDotWhenNothingIsUnseen(t *testing.T) {
 				t.Errorf("row = %q, want no unseen dot", stripANSI(row))
 			}
 		})
+	}
+}
+
+func TestRenderSession_NeedsAnswerSurvivesAcknowledgement(t *testing.T) {
+	m := plainModel()
+	for _, unseen := range []bool{true, false} {
+		sess := needsAnswerInfo("s", session.DefaultFleet, unseen)
+		row := sessionRowLines(m.renderSession(sess, false, false, 40))[0]
+		if !strings.Contains(row, "?") {
+			t.Errorf("unseen=%v row = %q, want needs-answer marker", unseen, stripANSI(row))
+		}
 	}
 }
 
@@ -224,6 +249,14 @@ func TestPartitionUnseenFirst(t *testing.T) {
 			name: "an unseen completion rises within its fleet",
 			in:   []session.Info{plainInfo("a", "f"), unseenInfo("b", "f"), plainInfo("c", "f")},
 			want: []string{"b", "a", "c"},
+		},
+		{
+			name: "an unresolved answer wait outranks unseen completion even after it is seen",
+			in: []session.Info{
+				plainInfo("a", "f"), unseenInfo("completion", "f"),
+				needsAnswerInfo("wait-seen", "f", false), needsAnswerInfo("wait-new", "f", true),
+			},
+			want: []string{"wait-new", "wait-seen", "completion", "a"},
 		},
 		{
 			name: "both halves keep their relative order",

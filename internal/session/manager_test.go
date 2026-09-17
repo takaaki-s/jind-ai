@@ -195,28 +195,29 @@ func (fakeStatusSource) Interpret(sig StatusSignal) (StatusUpdate, bool) {
 	}
 	switch sig.Payload["event"] {
 	case "UserPromptSubmit":
-		return StatusUpdate{Status: StatusThinking, ClearError: true, Notify: NotifyNone}, true
+		return StatusUpdate{Status: StatusThinking, ClearError: true, Notify: NotifyNone, NeedsAnswer: NeedsAnswerSignalResolved}, true
 	case "PreToolUse", "PostToolUse":
 		// Liveness mirrors the real adapter: a tool hook cannot open a turn.
 		// Without it the tests below would exercise a Manager rule no shipped
 		// adapter asks for.
 		return StatusUpdate{Status: StatusThinking, ClearError: true, Notify: NotifyNone, Liveness: true}, true
 	case "Stop":
-		return StatusUpdate{Status: StatusIdle, ClearError: true, Notify: NotifyTaskComplete}, true
+		return StatusUpdate{Status: StatusIdle, ClearError: true, Notify: NotifyTaskComplete, NeedsAnswer: NeedsAnswerSignalResolved}, true
 	case "StopFailure":
 		return StatusUpdate{
 			Status:       StatusIdle,
 			ErrorMessage: sig.Payload["stop_reason"],
 			Notify:       NotifyError,
+			NeedsAnswer:  NeedsAnswerSignalResolved,
 		}, true
 	case "SessionEnd":
-		return StatusUpdate{Status: StatusStopped, Notify: NotifyNone}, true
+		return StatusUpdate{Status: StatusStopped, Notify: NotifyNone, NeedsAnswer: NeedsAnswerSignalResolved}, true
 	case "Notification":
 		switch sig.Payload["notification_type"] {
 		case "permission_prompt", "elicitation_dialog":
-			return StatusUpdate{Status: StatusPermission, Notify: NotifyPermission}, true
+			return StatusUpdate{Status: StatusPermission, Notify: NotifyPermission, NeedsAnswer: NeedsAnswerSignalRequired}, true
 		case "idle_prompt":
-			return StatusUpdate{Status: StatusIdle, Notify: NotifyNone}, true
+			return StatusUpdate{Status: StatusIdle, Notify: NotifyNone, NeedsAnswer: NeedsAnswerSignalResolved}, true
 		}
 	}
 	return StatusUpdate{}, false

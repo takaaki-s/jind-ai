@@ -50,7 +50,7 @@ func (h *HookStatusSource) Interpret(sig agent.StatusSignal) (agent.StatusUpdate
 	event := sig.Payload["event"]
 	switch event {
 	case "UserPromptSubmit":
-		return agent.StatusUpdate{Status: session.StatusThinking, ClearError: true, Notify: agent.NotifyNone}, true
+		return agent.StatusUpdate{Status: session.StatusThinking, ClearError: true, Notify: agent.NotifyNone, NeedsAnswer: session.NeedsAnswerSignalResolved}, true
 	case "PreToolUse", "PostToolUse":
 		// Liveness, not a turn start: a tool can only run inside a turn
 		// something else opened — but not necessarily THIS session's turn.
@@ -63,24 +63,25 @@ func (h *HookStatusSource) Interpret(sig agent.StatusSignal) (agent.StatusUpdate
 		// those 8. See docs/gotchas.md ("Hook") for the measurement.
 		return agent.StatusUpdate{Status: session.StatusThinking, ClearError: true, Notify: agent.NotifyNone, Liveness: true}, true
 	case "Stop":
-		return agent.StatusUpdate{Status: session.StatusIdle, ClearError: true, Notify: agent.NotifyTaskComplete}, true
+		return agent.StatusUpdate{Status: session.StatusIdle, ClearError: true, Notify: agent.NotifyTaskComplete, NeedsAnswer: session.NeedsAnswerSignalResolved}, true
 	case "StopFailure":
 		return agent.StatusUpdate{
 			Status:       session.StatusIdle,
 			ErrorMessage: sig.Payload["stop_reason"],
 			Notify:       agent.NotifyError,
+			NeedsAnswer:  session.NeedsAnswerSignalResolved,
 		}, true
 	case "SessionEnd":
 		// Historically SessionEnd did not touch ErrorMessage — a session
 		// that ended with a StopFailure message should still surface it
 		// after the process is gone.
-		return agent.StatusUpdate{Status: session.StatusStopped, Notify: agent.NotifyNone}, true
+		return agent.StatusUpdate{Status: session.StatusStopped, Notify: agent.NotifyNone, NeedsAnswer: session.NeedsAnswerSignalResolved}, true
 	case "Notification":
 		switch sig.Payload["notification_type"] {
 		case "permission_prompt", "elicitation_dialog":
-			return agent.StatusUpdate{Status: session.StatusPermission, Notify: agent.NotifyPermission}, true
+			return agent.StatusUpdate{Status: session.StatusPermission, Notify: agent.NotifyPermission, NeedsAnswer: session.NeedsAnswerSignalRequired}, true
 		case "idle_prompt":
-			return agent.StatusUpdate{Status: session.StatusIdle, Notify: agent.NotifyNone}, true
+			return agent.StatusUpdate{Status: session.StatusIdle, Notify: agent.NotifyNone, NeedsAnswer: session.NeedsAnswerSignalResolved}, true
 		}
 	}
 	// SessionStart / CwdChanged / unknown events — no status change, but

@@ -2664,7 +2664,13 @@ func (m Model) renderSession(sess session.Info, selected bool, viewed bool, widt
 	b.WriteString(cursorBar)
 	// Its own column rather than a second meaning loaded onto the status icon:
 	// a session can be running with an unacknowledged completion from before.
-	if sess.Attention.Unseen {
+	if sess.NeedsAnswer.Unresolved() {
+		style := needsAnswerSeenStyle
+		if sess.NeedsAnswer.Unseen {
+			style = needsAnswerStyle
+		}
+		b.WriteString(withBg(style).Render(padIcon("?")))
+	} else if sess.Attention.Unseen {
 		glyph, style := attentionDisplay(sess.Attention.State)
 		b.WriteString(withBg(style).Render(padIcon(glyph)))
 	} else {
@@ -2773,6 +2779,18 @@ func (m Model) renderDetailPane(sess session.Info, width int) string {
 	// never fires today — but that headroom lives in View()'s width clamp, far
 	// from here, and a line that outgrows it would wrap and cost the pane a row.
 	statusCluster := statusStyle.Render(truncateString(padIcon(icon)+" "+label, avail))
+	answerLabel := "ASK " + strings.ToUpper(string(sess.NeedsAnswer.EvidenceState()))
+	answerStyle := helpStyle
+	if sess.NeedsAnswer.Unresolved() {
+		answerLabel = "ASK WAIT·SEEN"
+		answerStyle = needsAnswerSeenStyle
+		if sess.NeedsAnswer.Unseen {
+			answerLabel = "ASK WAIT·NEW"
+			answerStyle = needsAnswerStyle
+		}
+	}
+	answerCluster := answerStyle.Render(" · " + answerLabel)
+	statusCluster = truncateString(statusCluster+answerCluster, avail)
 	statusLine := detailIndent + statusCluster
 	var disposition string
 	if sess.ReviewDisposition.Decision != "" {
@@ -3130,8 +3148,10 @@ func padIcon(icon string) string {
 	return icon
 }
 
-// partitionUnseenFirst reorders sessions so that, inside each fleet, the ones
-// holding an unseen completion come first. Order is preserved in both halves
+// partitionUnseenFirst reorders sessions so that, inside each fleet, unresolved
+// human waits come first, followed by unseen completions. A seen human wait
+// stays ahead of completion receipts because acknowledgement is not resolution.
+// Order is preserved in each class
 // and no session crosses a fleet boundary, so the daemon's canonical order
 // (session.SortInfos) still decides everything else.
 //
@@ -3155,14 +3175,20 @@ func partitionUnseenFirst(sessions []session.Info) []session.Info {
 	out := make([]session.Info, 0, len(sessions))
 	for _, fleet := range fleetOrder {
 		members := byFleet[fleet]
-		for _, sess := range members {
-			if sess.Attention.Unseen {
-				out = append(out, sess)
-			}
-		}
-		for _, sess := range members {
-			if !sess.Attention.Unseen {
-				out = append(out, sess)
+		for priority := 0; priority < 4; priority++ {
+			for _, sess := range members {
+				class := 3
+				switch {
+				case sess.NeedsAnswer.Unresolved() && sess.NeedsAnswer.Unseen:
+					class = 0
+				case sess.NeedsAnswer.Unresolved():
+					class = 1
+				case sess.Attention.Unseen:
+					class = 2
+				}
+				if class == priority {
+					out = append(out, sess)
+				}
 			}
 		}
 	}

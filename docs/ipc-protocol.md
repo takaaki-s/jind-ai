@@ -234,6 +234,25 @@ limitation, while `unknown` means no compatible declaration exists. Capability
 sets are resolved live from the adapter registry and are not persisted in
 session records.
 
+Protocol v14 adds the required `Info.needs_answer` evidence object. Unknown is
+spelled out so consumers cannot collapse missing or untrusted evidence into a
+false `not-needed` result:
+
+```json
+{
+  "needs_answer": {
+    "state": "needs-answer",
+    "generation": 2,
+    "resolved_generation": 1,
+    "seen_generation": 2,
+    "unseen": false
+  }
+}
+```
+
+`unseen: false` does not mean the wait is resolved; state remains
+`needs-answer` until `resolved_generation` catches up.
+
 **Last-message enrichment** fills `Info.last_user_message` and
 `Info.last_assistant_message` by reading the conversation through the session's
 own agent adapter (`Manager.AttachLastMessages`). Unlike `result`, it never
@@ -272,8 +291,8 @@ optional `Info.pr_handoff`. Protocol v9 adds the optional
 `Info.merge_handoff`. Protocol v10 adds the optional Task Execution `run`
 journal. Protocol v11 adds bounded external identity/sync fields to Task
 `source`. Protocol v12 adds the bounded Task `mutations` timeline. Protocol
-v13 adds the required session `capabilities` object. A settled managed-worktree
-example is:
+v13 adds the required session `capabilities` object. Protocol v14 adds the
+required `needs_answer` evidence object. A settled managed-worktree example is:
 
 ```json
 {
@@ -282,6 +301,13 @@ example is:
     "generation": 2,
     "seen_generation": 1,
     "unseen": true
+  },
+  "needs_answer": {
+    "state": "not-needed",
+    "generation": 1,
+    "resolved_generation": 1,
+    "seen_generation": 1,
+    "unseen": false
   },
   "review_facts": {
     "status": "available",
@@ -738,6 +764,11 @@ v13 follows it for agent capability negotiation: the required `capabilities`
 object changes the `session.Info` shape returned by existing session and Task
 reads. Old payloads still decode safely to unknown, but the strict wire-version
 check makes a daemon restart explicit when client and server builds differ.
+
+v14 follows it for reliable human-wait evidence: the required `needs_answer`
+object changes every `session.Info` projection. Its explicit `unknown` state is
+the compatibility result for older or untrusted evidence, while the strict
+wire-version check still requires client and daemon to run the same build.
 
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is

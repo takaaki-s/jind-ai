@@ -76,6 +76,39 @@ no adapter has to know attention exists. It is applied inside the same
 "applied transition" predicate that gates the save and the plugin
 `status_changed` event.
 
+## Human-answer Evidence
+
+`NeedsAnswer` is a third, independent axis. It answers a narrower question than
+Status: whether jind-ai has reliable affirmative evidence that progress is
+blocked on a human answer. It is never inferred from `permission`, an event
+name, elapsed time, pane text, or a transcript.
+
+```go
+NeedsAnswer (persisted, internal/session/needs_answer.go)
+├─ Known              bool
+├─ Generation         uint64 // one per distinct confirmed wait
+├─ ResolvedGeneration uint64 // catches up on an explicit clear
+└─ SeenGeneration     uint64 // catches up on acknowledgement
+
+state = unknown      when the adapter capability/evidence is not authoritative
+        needs-answer when Generation > ResolvedGeneration
+        not-needed   otherwise
+```
+
+Only a `StatusUpdate.NeedsAnswer` verdict from an adapter whose
+`reliable_needs_answer` capability is `supported` can change the evidence.
+Claude Code's permission/elicitation notification and opencode's translated
+permission request assert it; their prompt-submit, stop and error/end events
+clear it. Codex declares the capability unsupported, so its approval hook
+projects `unknown` and never creates an inbox signal.
+
+`Manager.MarkSeen` advances both inbox seen cursors, but does not resolve a
+wait. A seen unresolved wait remains visible and ahead of completion receipts
+in the TUI. A verified successful `RespondToBlock` clears it immediately; the
+adapter's later clear event is idempotent. All counters are monotonic and
+`Store.Save` merges them with the persisted record, so duplicate events, stale
+snapshots and daemon restarts neither invent a generation nor roll one back.
+
 For a jind-ai-managed worktree, the completion transition also schedules a
 bounded local comparison with its immutable `ReviewBase`. The git subprocesses
 run outside `Manager.mu`, under one shared five-second deadline, a four-worker
@@ -189,6 +222,7 @@ Session (persisted)
 │  ├─ WorktreePath       string    // Immutable path of the checkout jind-ai created
 │  └─ UnavailableReason  string    // `not_managed_worktree` for newly created ordinary sessions
 ├─ Attention                       // Completion generation, state and seen cursor
+├─ NeedsAnswer                     // Reliable human-wait generation, resolved and seen cursors
 ├─ ReviewFacts                     // Bounded cached comparison for one attention generation
 │  ├─ Status              string   // pending | available | unavailable
 │  ├─ AttentionGeneration uint64

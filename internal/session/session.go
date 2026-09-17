@@ -94,6 +94,11 @@ type Session struct {
 	// no attention migration.
 	Attention Attention `json:"attention,omitzero"`
 
+	// NeedsAnswer is the independent, evidence-backed human-wait cursor. Its
+	// zero value is unknown, which is the safe interpretation for legacy
+	// records and adapters without reliable-needs-answer support.
+	NeedsAnswer NeedsAnswer `json:"needs_answer,omitzero"`
+
 	// ReviewFacts is the latest bounded local comparison against ReviewBase.
 	// It is populated only on completion or an explicit refresh, never by the
 	// list polling path.
@@ -185,6 +190,7 @@ type Info struct {
 	// entirely at zero, so a consumer that finds no object may read it as
 	// none/seen.
 	Attention         AttentionInfo         `json:"attention,omitzero"`
+	NeedsAnswer       NeedsAnswerInfo       `json:"needs_answer"`
 	ReviewFacts       ReviewFacts           `json:"review_facts,omitzero"`
 	CheckReport       CheckReportInfo       `json:"check_report,omitzero"`
 	ReviewDisposition ReviewDispositionInfo `json:"review_disposition,omitzero"`
@@ -243,6 +249,7 @@ func (s *Session) ToInfo() Info {
 		TmuxWindowName:    s.TmuxWindowName,
 		Fleet:             s.Fleet,
 		Attention:         attention.toInfo(),
+		NeedsAnswer:       s.NeedsAnswer.toInfo(s.Capabilities.State(CapabilityReliableNeedsAnswer)),
 		ReviewFacts:       s.ReviewFacts,
 		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
 		ReviewDisposition: s.ReviewDisposition.toInfo(s.ReviewFacts),

@@ -28,17 +28,18 @@ func TestInterpret_HookEventMap(t *testing.T) {
 		// previous StopFailure message, and the ones that only report presence
 		// leave it. Splitting the thinking arm in two duplicated that decision,
 		// so the column exists to keep the halves from drifting apart.
-		wantClearError bool
+		wantClearError  bool
+		wantNeedsAnswer session.NeedsAnswerSignal
 	}{
-		{name: "UserPromptSubmit → thinking", event: "UserPromptSubmit", wantOK: true, wantStatus: session.StatusThinking, wantNotify: agent.NotifyNone, wantClearError: true},
+		{name: "UserPromptSubmit → thinking", event: "UserPromptSubmit", wantOK: true, wantStatus: session.StatusThinking, wantNotify: agent.NotifyNone, wantClearError: true, wantNeedsAnswer: session.NeedsAnswerSignalResolved},
 		{name: "PreToolUse → thinking, liveness", event: "PreToolUse", wantOK: true, wantStatus: session.StatusThinking, wantNotify: agent.NotifyNone, wantLiveness: true, wantClearError: true},
 		{name: "PostToolUse → thinking, liveness", event: "PostToolUse", wantOK: true, wantStatus: session.StatusThinking, wantNotify: agent.NotifyNone, wantLiveness: true, wantClearError: true},
-		{name: "Stop → idle + task-complete", event: "Stop", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyTaskComplete, wantClearError: true},
-		{name: "StopFailure carries reason", event: "StopFailure", stopReason: "rate_limit", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyError, wantErrMsg: "rate_limit"},
-		{name: "SessionEnd → stopped", event: "SessionEnd", wantOK: true, wantStatus: session.StatusStopped, wantNotify: agent.NotifyNone},
-		{name: "Notification permission_prompt → permission", event: "Notification", notificationTyp: "permission_prompt", wantOK: true, wantStatus: session.StatusPermission, wantNotify: agent.NotifyPermission},
-		{name: "Notification elicitation_dialog → permission", event: "Notification", notificationTyp: "elicitation_dialog", wantOK: true, wantStatus: session.StatusPermission, wantNotify: agent.NotifyPermission},
-		{name: "Notification idle_prompt → idle", event: "Notification", notificationTyp: "idle_prompt", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyNone},
+		{name: "Stop → idle + task-complete", event: "Stop", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyTaskComplete, wantClearError: true, wantNeedsAnswer: session.NeedsAnswerSignalResolved},
+		{name: "StopFailure carries reason", event: "StopFailure", stopReason: "rate_limit", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyError, wantErrMsg: "rate_limit", wantNeedsAnswer: session.NeedsAnswerSignalResolved},
+		{name: "SessionEnd → stopped", event: "SessionEnd", wantOK: true, wantStatus: session.StatusStopped, wantNotify: agent.NotifyNone, wantNeedsAnswer: session.NeedsAnswerSignalResolved},
+		{name: "Notification permission_prompt → permission", event: "Notification", notificationTyp: "permission_prompt", wantOK: true, wantStatus: session.StatusPermission, wantNotify: agent.NotifyPermission, wantNeedsAnswer: session.NeedsAnswerSignalRequired},
+		{name: "Notification elicitation_dialog → permission", event: "Notification", notificationTyp: "elicitation_dialog", wantOK: true, wantStatus: session.StatusPermission, wantNotify: agent.NotifyPermission, wantNeedsAnswer: session.NeedsAnswerSignalRequired},
+		{name: "Notification idle_prompt → idle", event: "Notification", notificationTyp: "idle_prompt", wantOK: true, wantStatus: session.StatusIdle, wantNotify: agent.NotifyNone, wantNeedsAnswer: session.NeedsAnswerSignalResolved},
 		{name: "Notification unknown type → false", event: "Notification", notificationTyp: "something-else", wantOK: false},
 		{name: "SessionStart → no status change", event: "SessionStart", wantOK: false},
 		{name: "CwdChanged → no status change", event: "CwdChanged", wantOK: false},
@@ -76,6 +77,9 @@ func TestInterpret_HookEventMap(t *testing.T) {
 			}
 			if upd.ClearError != tc.wantClearError {
 				t.Errorf("ClearError = %v, want %v", upd.ClearError, tc.wantClearError)
+			}
+			if upd.NeedsAnswer != tc.wantNeedsAnswer {
+				t.Errorf("NeedsAnswer = %v, want %v", upd.NeedsAnswer, tc.wantNeedsAnswer)
 			}
 		})
 	}

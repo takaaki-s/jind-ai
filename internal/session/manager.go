@@ -867,6 +867,9 @@ func (m *Manager) ReserveCreation(opts CreateOptions) (*Session, Info, error) {
 		// worktree path will; ProvisionAsync recomputes it anyway.
 		RepoName: ResolveRepoName(opts.WorkDir),
 	}
+	if session.Capabilities.State(CapabilityReliableNeedsAnswer) == CapabilitySupported {
+		session.NeedsAnswer = session.NeedsAnswer.resolved()
+	}
 	if !opts.Worktree {
 		// A session opened in a normal directory (or pointed at a worktree
 		// created elsewhere) has no creation point observed by jind-ai. Record
@@ -2080,6 +2083,9 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 			return kind, fmt.Errorf("capture-pane after answering failed: %w", err)
 		}
 		if ag.DetectBlock(after) == BlockNone {
+			if err := m.resolveNeedsAnswerAfterResponse(id, paneID); err != nil {
+				return kind, fmt.Errorf("the prompt was answered but its needs-answer state could not be saved: %w", err)
+			}
 			return kind, nil
 		}
 		if time.Now().After(deadline) {
@@ -2089,6 +2095,26 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 		}
 		time.Sleep(respondClearPollDelay)
 	}
+}
+
+// resolveNeedsAnswerAfterResponse records RespondToBlock's verified
+// postcondition. The pane identity is rechecked because the key sequence ran
+// without Manager.mu; a concurrent revive must not clear the replacement
+// process's wait.
+func (m *Manager) resolveNeedsAnswerAfterResponse(id, paneID string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[id]
+	if !ok || sess.TmuxPaneID != paneID {
+		m.mu.Unlock()
+		return nil
+	}
+	if sess.Capabilities.State(CapabilityReliableNeedsAnswer) != CapabilitySupported {
+		m.mu.Unlock()
+		return nil
+	}
+	sess.NeedsAnswer = sess.NeedsAnswer.resolved()
+	saved := m.snapshotAndUnlock(sess)
+	return m.store.Save(saved)
 }
 
 // resolveAgent returns the adapter for kind, or nil when the resolver is not
@@ -2256,9 +2282,9 @@ func (m *Manager) PaneSendKeys(id, keys string, literal bool) error {
 	return m.tmuxClient.SendKeys(target, keys)
 }
 
-// MarkSeen acknowledges the session's completion receipt: seen_generation
-// catches up to generation. It is idempotent and touches no process status,
-// and returns the postcondition Info alongside any save error.
+// MarkSeen acknowledges both independent inbox cursors. For NeedsAnswer this
+// changes only SeenGeneration: an acknowledged wait remains unresolved until
+// a reliable adapter event or a verified RespondToBlock clears it.
 //
 // The save runs even when the in-memory mutation was a no-op: that is exactly
 // the state a retry after a failed write is in, and skipping it would report
@@ -2271,6 +2297,7 @@ func (m *Manager) MarkSeen(id string) (Info, error) {
 		return Info{}, fmt.Errorf("session not found: %s", id)
 	}
 	session.Attention = session.Attention.acknowledged()
+	session.NeedsAnswer = session.NeedsAnswer.acknowledged()
 	saved := m.snapshotAndUnlock(session)
 
 	err := m.store.Save(saved)
@@ -3438,8 +3465,9 @@ func (m *Manager) FindByAgentSessionID(agentSessionID string) (*Session, bool) {
 //     if the reported id passes both gates (see rejectAgentSessionID)
 //  3. run agent-agnostic side effects (CWD tracking, AgentSessionStarted)
 //  4. hand the raw event to the adapter's StatusSource for interpretation
-//  5. dispatch notifications the adapter requested
-//  6. trigger a Layer C description upgrade on prompt/stop events
+//  5. capability-gate any explicit human-wait evidence from that verdict
+//  6. dispatch notifications the adapter requested
+//  7. trigger a Layer C description upgrade on prompt/stop events
 func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notificationType, cwd, stopReason string) {
 	var session *Session
 	var ok bool
@@ -3478,6 +3506,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		debugLog("[HOOK] Session %s: cannot resolve agent %q: %v", desc, kind, err)
 		return
 	}
+	reliableNeedsAnswer := CapabilitiesOf(ag).State(CapabilityReliableNeedsAnswer) == CapabilitySupported
 
 	upd, updOK := ag.StatusSource().Interpret(StatusSignal{
 		Kind: "hook",
@@ -3507,6 +3536,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 
 	m.mu.Lock()
 	oldStatus := session.Status
+	oldNeedsAnswer := session.NeedsAnswer
 	sessionID := session.ID
 	sessionName := session.Description
 	reviewGeneration := uint64(0)
@@ -3591,6 +3621,19 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 		session.Status = StatusIdle
 	}
 
+	// Human-wait evidence is applied independently from process status and only
+	// for adapters that explicitly promise this event contract. In particular,
+	// StatusPermission and an event named PermissionRequest are not evidence.
+	if updOK && reliableNeedsAnswer {
+		switch upd.NeedsAnswer {
+		case NeedsAnswerSignalRequired:
+			session.NeedsAnswer = session.NeedsAnswer.required()
+		case NeedsAnswerSignalResolved:
+			session.NeedsAnswer = session.NeedsAnswer.resolved()
+		}
+	}
+	needsAnswerChanged := session.NeedsAnswer != oldNeedsAnswer
+
 	// SessionEnd on an already-stopped session: no verdict fields should be
 	// applied (they would mutate LastOutputTime / LastActiveAt in memory but
 	// only persist on cwdChanged, which drops the change on daemon restart).
@@ -3598,9 +3641,11 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 	// pre-refactor SessionEnd branch that also short-circuited here.
 	if updOK && upd.Status == StatusStopped && oldStatus == StatusStopped {
 		saved := m.snapshotAndUnlock(session)
-		if cwdChanged {
+		if cwdChanged || needsAnswerChanged {
 			_ = m.store.Save(saved)
-			debugLog("[HOOK] Session %s: CWD updated to %s (SessionEnd, already stopped)", sessionName, cwd)
+			if cwdChanged {
+				debugLog("[HOOK] Session %s: CWD updated to %s (SessionEnd, already stopped)", sessionName, cwd)
+			}
 		}
 		return
 	}
@@ -3700,7 +3745,7 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 	}
 
 	// Persist status/CWD/session-started changes
-	if oldStatus != saved.Status || cwdChanged || sessionStarted {
+	if oldStatus != saved.Status || cwdChanged || sessionStarted || needsAnswerChanged {
 		_ = m.store.Save(saved)
 		if oldStatus != saved.Status {
 			debugLog("[HOOK] Session %s: %s -> %s (hook: %s)", sessionName, oldStatus, saved.Status, eventName)

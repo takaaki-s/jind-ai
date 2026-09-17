@@ -2180,6 +2180,26 @@ func TestRenderDetailPane_NarrowWidths(t *testing.T) {
 	}
 }
 
+func TestRenderDetailPane_ShowsNeedsAnswerEvidence(t *testing.T) {
+	m := plainModel()
+	unknown := stripANSI(m.renderDetailPane(session.Info{
+		Description: "unknown", Status: session.StatusIdle,
+	}, 60))
+	if !strings.Contains(unknown, "ASK UNKNOWN") {
+		t.Errorf("unknown detail = %q, want explicit ASK UNKNOWN", unknown)
+	}
+
+	required := stripANSI(m.renderDetailPane(session.Info{
+		Description: "waiting", Status: session.StatusThinking,
+		NeedsAnswer: session.NeedsAnswerInfo{
+			State: session.NeedsAnswerRequired, Generation: 1, SeenGeneration: 1,
+		},
+	}, 60))
+	if !strings.Contains(required, "ASK WAIT·SEEN") {
+		t.Errorf("required detail = %q, want acknowledged but unresolved evidence", required)
+	}
+}
+
 // sessionRowLines splits a rendered list row into its lines, dropping the
 // trailing newline every row ends with. Every caller then asserts against
 // sessionRowHeight, so the invariant is stated once per test rather than
