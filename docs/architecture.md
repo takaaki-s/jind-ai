@@ -389,6 +389,13 @@ deliberately not retried because delivery may already have occurred. Background
 Issue synchronization, remote scheduling, automatic review, and merge remain
 outside this action.
 
+Remote execution is designed as a separate backend rather than an extension of
+local paths or tmux ownership. Its implementation boundary, SSH stdio protocol,
+identity model, and disconnect semantics are fixed in
+[remote-execution-contract.md](remote-execution-contract.md). That document is
+a design contract and executable-fixture target; it does not imply that a
+remote CLI is available yet.
+
 Provider mutation is a separate capability and command path:
 
 ```

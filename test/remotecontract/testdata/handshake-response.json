@@ -1,0 +1,28 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-handshake-1",
+  "operation": "handshake",
+  "status": "ok",
+  "payload": {
+    "selected_version": 1,
+    "server": {
+      "instance_id": "srv-state-1",
+      "boot_id": "srv-boot-1",
+      "jin_version": "0.8.0"
+    },
+    "capabilities": [
+      "repository.preflight.v1",
+      "execution.start.v1",
+      "execution.inspect.v1",
+      "execution.cancel.v1",
+      "execution.cleanup.v1",
+      "summary.structured.v1"
+    ],
+    "limits": {
+      "max_frame_bytes": 1048576,
+      "max_prompt_bytes": 65536,
+      "max_diagnostic_bytes": 32768
+    }
+  }
+}

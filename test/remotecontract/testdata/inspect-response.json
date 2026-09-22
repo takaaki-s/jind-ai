@@ -1,0 +1,48 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-inspect-1",
+  "operation": "execution.inspect",
+  "status": "ok",
+  "payload": {
+    "remote_task_id": "task-remote-1",
+    "remote_execution_id": "exec-remote-1",
+    "summary": {
+      "sequence": 7,
+      "observed_at": "2026-09-22T10:02:00Z",
+      "execution": {
+        "phase": "submitted"
+      },
+      "session": {
+        "id": "session-remote-1",
+        "status": "idle",
+        "attention": {
+          "state": "ready-for-review",
+          "generation": 1,
+          "seen_generation": 0,
+          "unseen": true
+        },
+        "review_facts": {
+          "status": "available",
+          "attention_generation": 1,
+          "base_commit": "1111111111111111111111111111111111111111",
+          "head_commit": "2222222222222222222222222222222222222222",
+          "branch": "jin/remote-contract",
+          "workspace_fingerprint": "sha256:fixture",
+          "changed_files": 3,
+          "additions": 42,
+          "deletions": 7,
+          "commit_count": 1,
+          "observed_at": "2026-09-22T10:02:00Z"
+        },
+        "check_report": {
+          "source": "reported",
+          "status": "passed",
+          "workspace_fingerprint": "sha256:fixture",
+          "reported_at": "2026-09-22T10:01:30Z",
+          "stale": false
+        }
+      }
+    }
+  }
+}

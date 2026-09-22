@@ -1,0 +1,12 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-cancel-1",
+  "controller_id": "ctl-local-1",
+  "operation": "execution.cancel",
+  "payload": {
+    "controller_execution_id": "exec-local-1",
+    "remote_execution_id": "exec-remote-1",
+    "idempotency_key": "remote-cancel-1"
+  }
+}
