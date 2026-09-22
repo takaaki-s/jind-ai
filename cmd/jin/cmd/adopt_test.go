@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
+	"github.com/takaaki-s/jind-ai/internal/daemon"
+	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
@@ -18,21 +22,47 @@ func resetAdoptFlags(t *testing.T) {
 	})
 }
 
-func TestAdoptOptionsRequiresExplicitPhaseAndAgent(t *testing.T) {
+func TestPrintAdoptionPreview_AmbiguousRequiresExplicitPreview(t *testing.T) {
+	var out bytes.Buffer
+	old := adoptCmd.OutOrStdout()
+	adoptCmd.SetOut(&out)
+	t.Cleanup(func() { adoptCmd.SetOut(old) })
+
+	printAdoptionPreview(adoptCmd, &daemon.AdoptResponse{Preview: session.AdoptionPreview{
+		Server: tmux.ServerRef{Kind: tmux.ServerDefault},
+		Pane: tmux.PaneInfo{
+			SessionID: "$1", SessionName: "work", WindowID: "@1", PaneID: "%1",
+			PanePID: 42, PaneStarted: "now", CurrentPath: "/repo", CurrentCommand: "codex",
+		},
+		Detection: session.AgentDetection{
+			Provenance: session.AgentDetectionAmbiguous,
+			Candidates: []session.AgentDetectionCandidate{{Kind: "codex", Score: 400}, {Kind: "claude", Score: 300}},
+		},
+		Capabilities:    session.AgentCapabilities{SchemaVersion: session.AgentCapabilitiesSchemaVersion, Liveness: session.CapabilitySupported},
+		ConfirmationKey: "key",
+	}})
+	got := out.String()
+	for _, want := range []string{"Agent:   ambiguous", "codex (score 400)", "claude (score 300)", "Re-run --dry-run with --agent"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("preview missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Repeat with --confirm") {
+		t.Fatalf("ambiguous preview offered confirmation:\n%s", got)
+	}
+}
+
+func TestAdoptOptionsRequiresExplicitPhaseAndAllowsDetection(t *testing.T) {
 	resetAdoptFlags(t)
 	if _, err := adoptOptions(adoptCmd, "%1"); err == nil {
 		t.Fatal("adoptOptions accepted neither phase")
 	}
 	_ = adoptCmd.Flags().Set("dry-run", "true")
-	if _, err := adoptOptions(adoptCmd, "%1"); err == nil {
-		t.Fatal("adoptOptions accepted missing --agent")
-	}
-	_ = adoptCmd.Flags().Set("agent", "claude")
 	opts, err := adoptOptions(adoptCmd, "%1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Server.Kind != tmux.ServerDefault || !opts.DryRun {
+	if opts.Server.Kind != tmux.ServerDefault || !opts.DryRun || opts.AgentKind != "" {
 		t.Fatalf("options = %+v", opts)
 	}
 	_ = adoptCmd.Flags().Set("dry-run", "false")

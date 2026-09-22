@@ -58,10 +58,15 @@ type Session struct {
 	// The zero value means a legacy record for which no evidence was observed.
 	ReviewBase ReviewBase `json:"review_base,omitzero"`
 
-	// AgentKind identifies the adapter (registry key) that owns this session.
-	// Always non-empty in persisted form; the store migration backfills legacy
-	// records with "claude".
+	// AgentKind identifies the adapter (registry key) that owns this session, or
+	// the adoption-only "generic" kind for an unclassified foreign pane. Always
+	// non-empty in persisted form; store migration backfills legacy records with
+	// "claude".
 	AgentKind string `json:"agent_kind"`
+	// AgentDetection is non-zero for externally adopted panes classified from
+	// process evidence or an explicit user selection. It is audit metadata,
+	// never a substitute for Capabilities.
+	AgentDetection AgentDetection `json:"agent_detection,omitzero"`
 	// AgentSessionID is the adapter-side persistent identifier (Claude Code's
 	// --session-id / --resume UUID, for example). Kept alongside AgentKind so
 	// the same field can serve every adapter.
@@ -182,7 +187,8 @@ type Info struct {
 	ErrorMessage      string            `json:"error_message,omitempty"`
 	CreationWarning   string            `json:"creation_warning,omitempty"` // Non-fatal warning from async provisioning (see Session.CreationWarning)
 	ReviewBase        ReviewBase        `json:"review_base,omitzero"`       // Immutable base of a managed worktree; zero means legacy/unknown
-	AgentKind         string            `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
+	AgentKind         string            `json:"agent_kind,omitempty"`       // Adapter identifier, or adoption-only "generic"
+	AgentDetection    AgentDetection    `json:"agent_detection,omitzero"`   // adopted-pane classification and provenance
 	AgentSessionID    string            `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
 	Model             string            `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
 	Capabilities      AgentCapabilities `json:"capabilities"`               // Live effective support; zero/old peer means every state is unknown
@@ -248,6 +254,7 @@ func (s *Session) ToInfo() Info {
 		CreationWarning:   s.CreationWarning,
 		ReviewBase:        s.ReviewBase,
 		AgentKind:         s.AgentKind,
+		AgentDetection:    s.AgentDetection,
 		AgentSessionID:    s.AgentSessionID,
 		Model:             s.Model,
 		Capabilities:      s.Capabilities,

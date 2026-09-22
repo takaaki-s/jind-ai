@@ -42,6 +42,10 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "opencode" }
 
+// RecognizesExecutable identifies only opencode's CLI process. Bun and shell
+// wrappers are traversed as ancestry evidence and are not themselves matches.
+func (a *Agent) RecognizesExecutable(name string) bool { return name == "opencode" }
+
 // Capabilities records that opencode reports permission waits reliably even
 // though jin deliberately does not yet drive its selection-based dialog.
 func (a *Agent) Capabilities() agent.AgentCapabilities {

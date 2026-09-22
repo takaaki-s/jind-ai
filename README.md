@@ -335,8 +335,10 @@ jin session new
 jin session new --workdir ~/repos/myrepo
 
 # Preview, then adopt an already-running local tmux pane without restarting it
+jin session adopt work:1.0 --dry-run
+jin session adopt work:1.0 --confirm --confirmation-key <key>
+# If detection is ambiguous, preview an explicit choice before confirming
 jin session adopt work:1.0 --agent claude --dry-run
-jin session adopt work:1.0 --agent claude --confirm --confirmation-key <key>
 # Use --tmux-socket <name> for tmux -L, or --tmux-socket-path <path> for tmux -S
 
 # List sessions
@@ -402,12 +404,17 @@ jin cleanup stopped --dry-run   # Preview what will be deleted
 
 Adoption is intentionally read-only until confirmation. The preview resolves
 the exact local server/session/window/pane, cwd, command, PID, process start
-time, process ancestry, and current jin owner. Confirmation repeats that
-inspection and refuses a moved, exited, reused, or already-owned pane. jin does
-not inject hooks or rewrite/restart the process, so an adopted session reports
-only liveness and manual pane evidence. `kill` and restart are refused;
+time, process ancestry, current jin owner, and ranked agent candidates.
+Registered adapters match normalized executable names in the pane process tree:
+one kind is recorded as `detected`, no match becomes the adoption-only
+`generic` kind, and multiple kinds remain `ambiguous` until a fresh preview
+uses `--agent <kind>` (or `--agent generic`). The provenance and bounded
+evidence are persisted and exposed in JSON. Detection is identity evidence,
+not capability evidence: it never enables hooks, resume, transcript, send, or
+respond. Confirmation repeats inspection and refuses a moved, exited, reused,
+already-owned, or differently classified pane. `kill` and restart are refused;
 `delete` detaches the jin record and never kills the foreign pane. Remote tmux
-servers and automatic agent detection are not part of this command yet.
+servers are not part of this command yet.
 
 > **Aliases**: `session` can be shortened to `sess` (e.g., `jin sess list`). `list` to `ls`, `delete` to `rm`.
 

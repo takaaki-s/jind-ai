@@ -50,6 +50,10 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "codex" }
 
+// RecognizesExecutable identifies only the Codex CLI process. Capability
+// support is deliberately not inferred from this match.
+func (a *Agent) RecognizesExecutable(name string) bool { return name == "codex" }
+
 // Capabilities records the two deliberate Codex opt-outs alongside the
 // surfaces the adapter implements. PermissionRequest is not treated as a
 // reliable human-wait signal, and its prompt cannot be answered by jin.

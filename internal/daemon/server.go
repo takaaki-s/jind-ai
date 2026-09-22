@@ -39,6 +39,18 @@ func (agentResolverAdapter) Resolve(kind string) (session.Agent, error) {
 	return agent.Lookup(kind)
 }
 
+func (agentResolverAdapter) Agents() []session.Agent {
+	kinds := agent.Kinds()
+	agents := make([]session.Agent, 0, len(kinds))
+	for _, kind := range kinds {
+		ag, err := agent.Lookup(kind)
+		if err == nil {
+			agents = append(agents, ag)
+		}
+	}
+	return agents
+}
+
 var debugLog = debug.NewLogger("daemon-debug.log")
 
 // Server is the daemon server
@@ -697,7 +709,7 @@ type NewRequest struct {
 type AdoptRequest struct {
 	Server          tmux.ServerRef `json:"server"`
 	Target          string         `json:"target"`
-	AgentKind       string         `json:"agent_kind"`
+	AgentKind       string         `json:"agent_kind,omitempty"`
 	Description     string         `json:"description,omitempty"`
 	Fleet           string         `json:"fleet,omitempty"`
 	ConfirmationKey string         `json:"confirmation_key,omitempty"`
@@ -735,8 +747,8 @@ func (s *Server) handleAdopt(data json.RawMessage) Response {
 		return Response{Success: false, Error: err.Error()}
 	}
 	preview := session.AdoptionPreview{
-		Server: req.Server, Capabilities: info.Capabilities,
-		ConfirmationKey: info.TmuxBinding.IdentityKey,
+		Server: req.Server, Detection: info.AgentDetection, Capabilities: info.Capabilities,
+		ConfirmationKey: req.ConfirmationKey,
 	}
 	payload, _ := json.Marshal(AdoptResponse{Preview: preview, Session: &info})
 	return Response{Success: true, Data: payload}

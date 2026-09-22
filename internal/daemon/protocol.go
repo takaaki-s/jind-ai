@@ -37,4 +37,6 @@ package daemon
 // v14: session.Info includes explicit tri-state needs-answer evidence.
 // v15: session.Info includes exact tmux pane/binding ownership metadata; add
 // the two-phase local tmux pane adoption action.
-const ProtocolVersion = 15
+// v16: adoption previews and session.Info include agent detection candidates,
+// selection provenance, and the adoption-only generic fallback.
+const ProtocolVersion = 16

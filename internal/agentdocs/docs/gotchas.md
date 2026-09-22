@@ -47,6 +47,12 @@ and restart refuse; `delete` drops only the record and never touches the
 foreign pane. Check `session info --json` capabilities before automating an
 adopted session.
 
+`session adopt` can label a pane from executable evidence, but the label is not
+permission to use that adapter's features. One matching kind is `detected`, no
+match is `generic`, and multiple kinds are `ambiguous` until you repeat the
+preview with `--agent`. Always read `capabilities`; executable detection never
+proves that hooks, resume state, or a transcript were installed.
+
 When the result is empty, or the limits below say you cannot trust it, go to
 the artifacts:
 
