@@ -5,6 +5,8 @@ import "encoding/json"
 // AgentCapabilitiesSchemaVersion is the capability vocabulary understood by
 // this build. Capability declarations describe adapter support, not the
 // current health of an agent process or one particular hook installation.
+// Session projections may narrow adapter support when jin did not establish
+// the prerequisite (notably externally adopted panes).
 const AgentCapabilitiesSchemaVersion = 1
 
 // CapabilityState is an adapter's declaration for one capability. Its zero
@@ -50,6 +52,8 @@ func (s CapabilityState) wireValue() string {
 		return "unknown"
 	}
 }
+
+func (s CapabilityState) String() string { return s.wireValue() }
 
 // AgentCapability names one stable entry in AgentCapabilities. Consumers use
 // State rather than selecting struct fields directly so unknown schema

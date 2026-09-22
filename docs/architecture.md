@@ -304,7 +304,10 @@ implementation and adding one line to `internal/agent/register/register.go`.
 Adapters may also implement the optional `session.CapabilityProvider`. Its
 versioned, three-state declaration is resolved when the daemon installs the
 registry and is projected through `session.Info`; it is runtime metadata and
-is never copied into session files. Keeping it optional is the compatibility
+is never copied into session files. For a foreign adopted pane, Manager applies
+an effective-session mask: only liveness is supported, while capabilities that
+would require jin-created hooks, transcript identity, safe prompt state, or a
+restart contract are unsupported. Keeping the provider optional is the compatibility
 boundary: an older adapter still satisfies `Agent`, but every capability is
 `unknown`. A missing adapter, an unknown schema/state, and JSON from an older
 peer fail the same way. Consumers call `AgentCapabilities.State` or
@@ -318,6 +321,14 @@ The current vocabulary separates adapter support from runtime health:
 `reliable_needs_answer`. For example, `hooks: supported` says the adapter has
 hook integration; it does not claim that a particular session's hook file was
 written successfully. Operational failures remain errors/status evidence.
+
+Local pane adoption stores a `TmuxBinding` with explicit default/name/path
+server identity plus tmux session/window/pane IDs, pane PID, and process start
+time. Preview and confirm both inspect the pane; the confirmation key hashes
+that immutable identity, so a moved or reused `%pane` cannot inherit a record.
+Every operation resolves the session's own tmux server. Managed sessions keep
+using jin's named inner server; adopted sessions use their recorded local
+server. Remote tmux remains a separate transport concern.
 
 ## Task and Execution Domain
 

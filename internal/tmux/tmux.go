@@ -143,6 +143,38 @@ func NewClientWithSocketPath(socketPath string) (*Client, error) {
 	return &Client{tmuxPath: path, socketPath: socketPath}, nil
 }
 
+// NewClientForServer creates a client for an explicit local server identity.
+func NewClientForServer(server ServerRef) (*Client, error) {
+	if err := server.Validate(); err != nil {
+		return nil, err
+	}
+	switch server.Kind {
+	case ServerDefault:
+		path, err := exec.LookPath("tmux")
+		if err != nil {
+			return nil, fmt.Errorf("tmux not found: %w", err)
+		}
+		return &Client{tmuxPath: path}, nil
+	case ServerName:
+		return NewClientWithSocket(server.Value)
+	case ServerPath:
+		return NewClientWithSocketPath(server.Value)
+	default:
+		return nil, fmt.Errorf("unknown tmux server kind %q", server.Kind)
+	}
+}
+
+// ServerRef reports the exact local server addressed by this client.
+func (c *Client) ServerRef() ServerRef {
+	if c.socketPath != "" {
+		return ServerRef{Kind: ServerPath, Value: c.socketPath}
+	}
+	if c.socketName != "" {
+		return ServerRef{Kind: ServerName, Value: c.socketName}
+	}
+	return ServerRef{Kind: ServerDefault}
+}
+
 // NewClient creates a new tmux client using the default socket name resolved
 // by DefaultSocketName (JIN_TMUX_SOCKET → SocketName).
 // Returns error if tmux is not found.
@@ -201,7 +233,7 @@ func (c *Client) baseArgs() []string {
 	var args []string
 	if c.socketPath != "" {
 		args = []string{"-S", c.socketPath}
-	} else {
+	} else if c.socketName != "" {
 		args = []string{"-L", c.socketName}
 	}
 	if c.configFile != "" {

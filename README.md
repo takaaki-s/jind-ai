@@ -115,8 +115,10 @@ Session JSON also reports the selected adapter's versioned `capabilities`:
 `liveness`, `send`, `respond`, `resume`, `hooks`, `transcript`, and
 `reliable_needs_answer`. Each value is `supported`, `unsupported`, or
 `unknown`; automation must treat only `supported` as permission to use a
-capability. The declaration describes adapter support, not the current health
-of one running process. Today Claude supports every listed capability; Codex
+capability. Managed sessions normally project adapter support, not the current
+health of one running process. An externally adopted pane narrows that set to
+what jin actually established: liveness is supported, while send/respond,
+resume, hooks, transcript, and reliable needs-answer are unsupported. Today Claude supports every listed capability; Codex
 does not claim reliable needs-answer detection or blocking-prompt response,
 and opencode reports needs-answer reliably but does not claim response because
 its selection-based permission dialog is not safe for jin to drive yet.
@@ -332,6 +334,11 @@ jin session new
 # Create session (specify working directory)
 jin session new --workdir ~/repos/myrepo
 
+# Preview, then adopt an already-running local tmux pane without restarting it
+jin session adopt work:1.0 --agent claude --dry-run
+jin session adopt work:1.0 --agent claude --confirm --confirmation-key <key>
+# Use --tmux-socket <name> for tmux -L, or --tmux-socket-path <path> for tmux -S
+
 # List sessions
 jin session list
 
@@ -392,6 +399,15 @@ jin session delete <session-name>
 jin cleanup stopped
 jin cleanup stopped --dry-run   # Preview what will be deleted
 ```
+
+Adoption is intentionally read-only until confirmation. The preview resolves
+the exact local server/session/window/pane, cwd, command, PID, process start
+time, process ancestry, and current jin owner. Confirmation repeats that
+inspection and refuses a moved, exited, reused, or already-owned pane. jin does
+not inject hooks or rewrite/restart the process, so an adopted session reports
+only liveness and manual pane evidence. `kill` and restart are refused;
+`delete` detaches the jin record and never kills the foreign pane. Remote tmux
+servers and automatic agent detection are not part of this command yet.
 
 > **Aliases**: `session` can be shortened to `sess` (e.g., `jin sess list`). `list` to `ls`, `delete` to `rm`.
 

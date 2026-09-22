@@ -438,7 +438,29 @@ idle transitions while a task is still executing.
 
 ## Kill
 
-`Kill()` stops the agent; it does not tear the session's tmux state down.
+## Adopted pane ownership
+
+`session adopt` is a two-phase link to an already-running local tmux pane.
+Dry-run performs one atomic tmux identity snapshot and a local process-tree
+read. Confirm repeats it and requires the same server/session/window/pane IDs,
+pane PID, and pane-process start time before persisting `TmuxOwnershipAdopted`.
+Neither phase sends keys, tags the pane, installs hooks, respawns a process, or
+changes tmux options.
+
+An adopted pane remains externally owned throughout its lifecycle:
+
+- monitoring uses the persisted server and fingerprint; missing, moved, dead,
+  or reused panes stop the jin record with a diagnostic
+- `Start` and `Kill` refuse instead of respawning or signalling it
+- popup/split/close helpers refuse foreign-layout mutation; explicit capture
+  and low-level pane key transport use the adopted server
+- `Delete` removes only the record and never kills tmux or removes a worktree
+- daemon recovery preserves the binding as forensic evidence when inspection
+  fails and never converts the pane into managed ownership
+
+## Managed pane stop and delete
+
+`Kill()` stops a managed agent; it does not tear the session's tmux state down.
 It sends SIGTERM to the agent pane's process and leaves the pane in place
 (`remain-on-exit`), so:
 

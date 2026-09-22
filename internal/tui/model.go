@@ -163,13 +163,14 @@ type Model struct {
 	focused bool // true when TUI pane has focus (changes border/title color)
 
 	// tmux integration
-	tmuxClient         *tmux.Client // outer tmux client (-L jin-mgr, nil in legacy mode)
-	popups             popupOpener  // outer tmux popup spawner; same client, narrowed — see popupOpener
-	innerTmuxClient    *tmux.Client // inner tmux client (-L jin, for switch-client)
-	tuiPaneID          string       // TUI pane unique ID (e.g. "%42") in outer tmux
-	displayPaneID      string       // Right pane unique ID (for session display) in outer tmux
-	currentSessionID   string       // Session ID currently displayed in right pane
-	displayLocalAttach bool         // true when display pane is running tmux attach to inner tmux
+	tmuxClient         *tmux.Client   // outer tmux client (-L jin-mgr, nil in legacy mode)
+	popups             popupOpener    // outer tmux popup spawner; same client, narrowed — see popupOpener
+	innerTmuxClient    *tmux.Client   // inner tmux client (-L jin, for switch-client)
+	displayTmuxServer  tmux.ServerRef // server currently attached in the display pane
+	tuiPaneID          string         // TUI pane unique ID (e.g. "%42") in outer tmux
+	displayPaneID      string         // Right pane unique ID (for session display) in outer tmux
+	currentSessionID   string         // Session ID currently displayed in right pane
+	displayLocalAttach bool           // true when display pane is running tmux attach to inner tmux
 
 	// Focus after create
 	focusSessionID string // Session ID to focus after creation
@@ -244,6 +245,9 @@ func NewModelWithTmux(client *daemon.Client, tc, innerTC *tmux.Client, tuiPaneID
 	// live client. Models with no tmux come from NewModel, which leaves it nil.
 	m.popups = tc
 	m.innerTmuxClient = innerTC
+	if innerTC != nil {
+		m.displayTmuxServer = innerTC.ServerRef()
+	}
 	m.tuiPaneID = tuiPaneID
 	m.displayPaneID = displayPaneID
 	// One tmux call covers both startup reads below.
@@ -707,6 +711,27 @@ func (m *Model) clearPendingFocus() {
 // Passing the constant sends the pane to the real "jin" server even when
 // JIN_TMUX_SOCKET points everything else somewhere else.
 func buildInnerAttachCmd(socketName, innerSession string) string {
+	return buildInnerAttachCmdForServer(tmux.ServerRef{Kind: tmux.ServerName, Value: socketName}, innerSession)
+}
+
+func shellQuoteTmuxArg(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') && !strings.ContainsRune("._/-", r)
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func buildInnerAttachCmdForServer(server tmux.ServerRef, innerSession string) string {
+	var serverArg string
+	switch server.Kind {
+	case tmux.ServerName:
+		serverArg = " -L " + shellQuoteTmuxArg(server.Value)
+	case tmux.ServerPath:
+		serverArg = " -S " + shellQuoteTmuxArg(server.Value)
+	}
 	// Unset $TMUX so tmux does not refuse with "sessions should be nested
 	// with care": the display pane runs inside the outer tmux, so $TMUX points
 	// to the outer session and attaching to the inner one on the same host is
@@ -716,7 +741,24 @@ func buildInnerAttachCmd(socketName, innerSession string) string {
 	// later user-initiated detach — leaves the pane with a still-running
 	// process. Without it the shell exits, and remain-on-exit=on surfaces
 	// tmux's "Pane is dead" overlay until the next respawn.
-	return fmt.Sprintf("env -u TMUX tmux -L %s attach -t %s; tail -f /dev/null", socketName, innerSession)
+	return fmt.Sprintf("env -u TMUX tmux%s attach -t %s; tail -f /dev/null", serverArg, shellQuoteTmuxArg(innerSession))
+}
+
+func tmuxServerForInfo(sess *session.Info) tmux.ServerRef {
+	if sess.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
+		return sess.TmuxBinding.Server
+	}
+	return tmux.ServerRef{Kind: tmux.ServerName, Value: tmux.DefaultSocketName()}
+}
+
+func (m *Model) currentDisplayTmuxServer() tmux.ServerRef {
+	if m.displayTmuxServer.Kind != "" {
+		return m.displayTmuxServer
+	}
+	if m.innerTmuxClient != nil {
+		return m.innerTmuxClient.ServerRef()
+	}
+	return tmux.ServerRef{}
 }
 
 // switchToSession displays the given session in the right pane via RespawnPane:
@@ -794,7 +836,8 @@ func (m *Model) switchToSession(sessionID string) {
 	}
 
 	// Local alive session: prefer switch-client over respawn-pane to avoid "pane is dead"
-	if m.displayLocalAttach && m.innerTmuxClient != nil {
+	desiredServer := tmuxServerForInfo(sess)
+	if m.displayLocalAttach && m.innerTmuxClient != nil && m.currentDisplayTmuxServer() == desiredServer {
 		paneTTY, err := m.tmuxClient.GetPaneTTY(m.displayPaneID)
 		if err == nil && paneTTY != "" {
 			if m.innerTmuxClient.SwitchClient(paneTTY, sess.TmuxWindowName) == nil {
@@ -804,14 +847,24 @@ func (m *Model) switchToSession(sessionID string) {
 		}
 		// switch-client failed — fall through to respawn
 	}
+	if m.displayLocalAttach {
+		m.detachInnerClient()
+	}
+	desiredClient, err := tmux.NewClientForServer(desiredServer)
+	if err != nil {
+		m.err = err
+		return
+	}
 
 	// Local: respawn right pane with inner tmux attach. The socket is resolved
 	// the same way m.innerTmuxClient was built (tmux.NewClient →
 	// DefaultSocketName), so the pane and the Model agree on which inner
 	// server they are talking about.
-	attachCmd := buildInnerAttachCmd(tmux.DefaultSocketName(), sess.TmuxWindowName)
+	attachCmd := buildInnerAttachCmdForServer(desiredServer, sess.TmuxWindowName)
 	_ = m.tmuxClient.RespawnPane(m.displayPaneID, attachCmd, nil)
 	_ = m.tmuxClient.ClearHistory(m.displayPaneID)
+	m.innerTmuxClient = desiredClient
+	m.displayTmuxServer = desiredServer
 	m.displayLocalAttach = true
 
 	m.recordDisplayedSession(sess)
@@ -828,8 +881,17 @@ func (m *Model) adoptAttachedSession(attached string) {
 	}
 	// TmuxWindowName is the inner tmux *session* name (one per jin session) —
 	// the same namespace as #{client_session}.
+	displayServer := m.currentDisplayTmuxServer()
 	i := slices.IndexFunc(m.sessions, func(s session.Info) bool {
-		return s.TmuxWindowName == attached
+		if s.TmuxWindowName != attached {
+			return false
+		}
+		// Models without concrete tmux clients occur in degraded mode and unit
+		// tests; before pane adoption a session name alone was unambiguous there.
+		if displayServer.Kind == "" {
+			return s.TmuxBinding.Ownership != session.TmuxOwnershipAdopted
+		}
+		return tmuxServerForInfo(&s) == displayServer
 	})
 	if i < 0 {
 		return // jin-unmanaged session: leave the TUI untouched.
@@ -1030,6 +1092,10 @@ func (m Model) handleSelectSession() (tea.Model, tea.Cmd) {
 	if m.tmuxClient != nil {
 		needsStart := sess.Status == session.StatusStopped
 		if needsStart {
+			if sess.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
+				m.err = fmt.Errorf("adopted pane is no longer live; preview and adopt it again")
+				return m, nil
+			}
 			if err := m.client.Start(sess.ID); err != nil {
 				m.err = err
 				return m, nil

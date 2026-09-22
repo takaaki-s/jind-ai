@@ -12,6 +12,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
 )
 
 // The client sets a bound only when it can name one that is certainly longer
@@ -336,6 +337,33 @@ type NewOptions struct {
 	WorktreeBranch string // Override auto-generated branch name
 	WorktreeBase   string // Override auto-detected base branch
 	NoHook         bool   // Skip .jin/worktree-post-create.sh hook
+}
+
+type AdoptOptions struct {
+	Server          tmux.ServerRef
+	Target          string
+	AgentKind       string
+	Description     string
+	Fleet           string
+	ConfirmationKey string
+	DryRun          bool
+	Confirm         bool
+}
+
+func (c *Client) Adopt(opts AdoptOptions) (*AdoptResponse, error) {
+	data, _ := json.Marshal(AdoptRequest(opts))
+	resp, err := c.send(Request{Action: "adopt", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var out AdoptResponse
+	if err := json.Unmarshal(resp.Data, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // New creates a new session. Any non-fatal creation warning is discarded;

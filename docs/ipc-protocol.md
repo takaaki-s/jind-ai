@@ -140,6 +140,7 @@ it alone.
 | Action | Data Type | Description |
 |--------|-----------|-------------|
 | `new` | `NewRequest` | Create session (async; poll via `get`) |
+| `adopt` | `AdoptRequest` | Read-only preview or explicit adoption of an existing local tmux pane |
 | `list` | (none) | List all sessions (with last-message enrichment) |
 | `get` | `IDRequest` | Get a single session (with last-message enrichment) |
 | `task-create` | `TaskCreateRequest` | Persist bounded task metadata without starting a session |
@@ -209,7 +210,9 @@ bounded to provider/comment ID/URL/actor. An unknown retry reconciles but never
 blindly repeats the POST.
 
 Protocol v13 adds the required `Info.capabilities` object to every session
-projection. It describes adapter support rather than runtime health:
+projection. Managed sessions describe adapter support rather than runtime
+health; adopted panes narrow the live projection to the capabilities jin
+actually established:
 
 ```json
 {
@@ -233,6 +236,16 @@ only `supported` as affirmative evidence; `unsupported` is a confirmed adapter
 limitation, while `unknown` means no compatible declaration exists. Capability
 sets are resolved live from the adapter registry and are not persisted in
 session records.
+
+`adopt` requires exactly one of `dry_run` or `confirm`. Both carry an explicit
+local `server` (`kind`: `default`, `name`, or `path`), a tmux `target`, and an
+explicit `agent_kind`. Dry-run returns an `AdoptionPreview` containing the
+atomic pane snapshot, process ancestry, existing owner, effective capabilities,
+and a reuse-resistant `confirmation_key`. Confirm must echo that key; the
+daemon repeats inspection and refuses any different session/window/pane ID,
+pane PID, or pane-process start time. Confirm creates only a session record and
+monitor—it sends no tmux mutation. An adopted `Info` includes `tmux_pane_id`
+and `tmux_binding`; its delete path never kills tmux or removes a worktree.
 
 Protocol v14 adds the required `Info.needs_answer` evidence object. Unknown is
 spelled out so consumers cannot collapse missing or untrusted evidence into a
@@ -292,7 +305,9 @@ optional `Info.pr_handoff`. Protocol v9 adds the optional
 journal. Protocol v11 adds bounded external identity/sync fields to Task
 `source`. Protocol v12 adds the bounded Task `mutations` timeline. Protocol
 v13 adds the required session `capabilities` object. Protocol v14 adds the
-required `needs_answer` evidence object. A settled managed-worktree example is:
+required `needs_answer` evidence object. Protocol v15 adds `Info.tmux_pane_id`,
+the adopted `Info.tmux_binding`, and the `adopt` action. A settled
+managed-worktree example is:
 
 ```json
 {

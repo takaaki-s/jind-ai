@@ -315,6 +315,8 @@ func (s *Server) handleRequest(req *Request) Response {
 	switch req.Action {
 	case "new":
 		return s.handleNew(req.Data)
+	case "adopt":
+		return s.handleAdopt(req.Data)
 	case "list":
 		return s.handleList()
 	case "get":
@@ -690,6 +692,54 @@ type NewRequest struct {
 	WorktreeBranch string `json:"worktree_branch,omitempty"` // Override auto-generated branch name
 	WorktreeBase   string `json:"worktree_base,omitempty"`   // Override auto-detected base branch
 	NoHook         bool   `json:"no_hook,omitempty"`         // Skip .jin/worktree-post-create.sh hook
+}
+
+type AdoptRequest struct {
+	Server          tmux.ServerRef `json:"server"`
+	Target          string         `json:"target"`
+	AgentKind       string         `json:"agent_kind"`
+	Description     string         `json:"description,omitempty"`
+	Fleet           string         `json:"fleet,omitempty"`
+	ConfirmationKey string         `json:"confirmation_key,omitempty"`
+	DryRun          bool           `json:"dry_run,omitempty"`
+	Confirm         bool           `json:"confirm,omitempty"`
+}
+
+type AdoptResponse struct {
+	Preview session.AdoptionPreview `json:"preview"`
+	Session *session.Info           `json:"session,omitempty"`
+}
+
+func (s *Server) handleAdopt(data json.RawMessage) Response {
+	var req AdoptRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if req.DryRun == req.Confirm {
+		return Response{Success: false, Error: "choose exactly one of dry_run or confirm"}
+	}
+	opts := session.AdoptOptions{
+		Server: req.Server, Target: req.Target, AgentKind: req.AgentKind,
+		Description: req.Description, Fleet: req.Fleet, ConfirmationKey: req.ConfirmationKey,
+	}
+	if req.DryRun {
+		preview, err := s.manager.PreviewAdoption(opts)
+		if err != nil {
+			return Response{Success: false, Error: err.Error()}
+		}
+		payload, _ := json.Marshal(AdoptResponse{Preview: preview})
+		return Response{Success: true, Data: payload}
+	}
+	info, err := s.manager.AdoptPane(opts)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	preview := session.AdoptionPreview{
+		Server: req.Server, Capabilities: info.Capabilities,
+		ConfirmationKey: info.TmuxBinding.IdentityKey,
+	}
+	payload, _ := json.Marshal(AdoptResponse{Preview: preview, Session: &info})
+	return Response{Success: true, Data: payload}
 }
 
 // NewResponse is the payload for the "new" action. Warning is a non-fatal

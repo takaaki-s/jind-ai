@@ -8,6 +8,7 @@ package tmux
 // relation is load-bearing and belongs to the compiler.
 type Runner interface {
 	PaneSlotOps
+	InspectPane(target string) (PaneInfo, error)
 
 	HasSession(name string) bool
 	KillSession(name string) error

@@ -1,0 +1,182 @@
+package session
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/takaaki-s/jind-ai/internal/tmux"
+)
+
+type AdoptOptions struct {
+	Server          tmux.ServerRef
+	Target          string
+	AgentKind       string
+	Description     string
+	Fleet           string
+	ConfirmationKey string
+}
+
+type AdoptionPreview struct {
+	Server          tmux.ServerRef    `json:"server"`
+	Pane            tmux.PaneInfo     `json:"pane"`
+	Owner           *Info             `json:"owner,omitempty"`
+	Capabilities    AgentCapabilities `json:"capabilities"`
+	ConfirmationKey string            `json:"confirmation_key"`
+}
+
+func adoptionIdentity(server tmux.ServerRef, pane tmux.PaneInfo) string {
+	payload := fmt.Sprintf("v1\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s",
+		server.DisplayName(), pane.SessionID, pane.WindowID, pane.PaneID, pane.PanePID, pane.PaneStarted)
+	sum := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("adopt-v1-%x", sum[:16])
+}
+
+func (m *Manager) managedTmuxServer() tmux.ServerRef {
+	name := m.tmuxSocketName
+	if name == "" {
+		name = tmux.DefaultSocketName()
+	}
+	return tmux.ServerRef{Kind: tmux.ServerName, Value: name}
+}
+
+func (m *Manager) runnerForSession(sess *Session) (tmux.Runner, error) {
+	if !sess.IsAdopted() {
+		if m.tmuxClient == nil {
+			return nil, fmt.Errorf("tmux client not available")
+		}
+		return m.tmuxClient, nil
+	}
+	if m.tmuxFactory == nil {
+		return nil, fmt.Errorf("tmux client factory not available")
+	}
+	return m.tmuxFactory(sess.TmuxBinding.Server)
+}
+
+func sameTmuxPane(server tmux.ServerRef, paneID string, sess *Session, managed tmux.ServerRef) bool {
+	if paneID == "" || sess.TmuxPaneID != paneID {
+		return false
+	}
+	otherServer := managed
+	if sess.IsAdopted() {
+		otherServer = sess.TmuxBinding.Server
+	}
+	return server == otherServer
+}
+
+// PreviewAdoption is read-only. It resolves target to one exact pane and
+// reports any jind-ai record that already owns that server/pane pair.
+func (m *Manager) PreviewAdoption(opts AdoptOptions) (AdoptionPreview, error) {
+	if err := opts.Server.Validate(); err != nil {
+		return AdoptionPreview{}, err
+	}
+	if strings.TrimSpace(opts.Target) == "" {
+		return AdoptionPreview{}, fmt.Errorf("tmux pane target is required")
+	}
+	if strings.TrimSpace(opts.AgentKind) == "" {
+		return AdoptionPreview{}, fmt.Errorf("agent kind is required; automatic detection is not available yet")
+	}
+	if m.agentResolver == nil {
+		return AdoptionPreview{}, fmt.Errorf("agent registry is not available")
+	}
+	if _, err := m.agentResolver.Resolve(opts.AgentKind); err != nil {
+		return AdoptionPreview{}, err
+	}
+	if m.tmuxFactory == nil {
+		return AdoptionPreview{}, fmt.Errorf("tmux client factory not available")
+	}
+	tc, err := m.tmuxFactory(opts.Server)
+	if err != nil {
+		return AdoptionPreview{}, err
+	}
+	pane, err := tc.InspectPane(opts.Target)
+	if err != nil {
+		return AdoptionPreview{}, err
+	}
+	if pane.Dead {
+		return AdoptionPreview{}, fmt.Errorf("tmux pane %s is dead and cannot be adopted", pane.PaneID)
+	}
+	key := adoptionIdentity(opts.Server, pane)
+	preview := AdoptionPreview{
+		Server: opts.Server, Pane: pane, ConfirmationKey: key,
+		Capabilities: adoptedCapabilities(capabilitiesForKind(m.agentResolver, opts.AgentKind)),
+	}
+	managed := m.managedTmuxServer()
+	m.mu.RLock()
+	for _, sess := range m.sessions {
+		if sameTmuxPane(opts.Server, pane.PaneID, sess, managed) {
+			info := sess.ToInfo()
+			preview.Owner = &info
+			break
+		}
+	}
+	m.mu.RUnlock()
+	return preview, nil
+}
+
+// AdoptPane repeats the inspection and commits only when it still matches the
+// key printed by PreviewAdoption. No tmux mutation occurs on either path.
+func (m *Manager) AdoptPane(opts AdoptOptions) (Info, error) {
+	if opts.ConfirmationKey == "" {
+		return Info{}, fmt.Errorf("confirmation key from dry-run is required")
+	}
+	m.adoptMu.Lock()
+	defer m.adoptMu.Unlock()
+
+	preview, err := m.PreviewAdoption(opts)
+	if err != nil {
+		return Info{}, err
+	}
+	if preview.ConfirmationKey != opts.ConfirmationKey {
+		return Info{}, fmt.Errorf("tmux pane changed or moved after preview; run the dry-run again")
+	}
+	if preview.Owner != nil {
+		if preview.Owner.TmuxBinding.IdentityKey == preview.ConfirmationKey {
+			return *preview.Owner, nil // idempotent retry of the same adoption
+		}
+		return Info{}, fmt.Errorf("tmux pane %s is already owned by session %s (%s)",
+			preview.Pane.PaneID, preview.Owner.ID, preview.Owner.Description)
+	}
+
+	description := strings.TrimSpace(opts.Description)
+	locked := description != ""
+	if description == "" {
+		description = fmt.Sprintf("%s @ %s", preview.Pane.CurrentCommand, preview.Pane.CanonicalTarget())
+	}
+	fleet := opts.Fleet
+	if fleet == "" {
+		fleet = DefaultFleet
+	}
+	now := time.Now()
+	sess := &Session{
+		ID: uuid.New().String(), Description: description, DescriptionLocked: locked,
+		WorkDir: preview.Pane.CurrentPath, CurrentWorkDir: preview.Pane.CurrentPath,
+		CreatedAt: now, LastActiveAt: now, Status: StatusRunning,
+		AgentKind: opts.AgentKind, Fleet: fleet, Capabilities: preview.Capabilities,
+		TmuxWindowName: preview.Pane.SessionName, TmuxPaneID: preview.Pane.PaneID,
+		TmuxBinding: TmuxBinding{
+			Ownership: TmuxOwnershipAdopted, Server: opts.Server,
+			SessionID: preview.Pane.SessionID, SessionName: preview.Pane.SessionName,
+			WindowID: preview.Pane.WindowID, WindowName: preview.Pane.WindowName,
+			WindowIndex: preview.Pane.WindowIndex, PaneID: preview.Pane.PaneID,
+			PaneIndex: preview.Pane.PaneIndex, PanePID: preview.Pane.PanePID,
+			PaneStarted: preview.Pane.PaneStarted, IdentityKey: preview.ConfirmationKey,
+		},
+		ReviewBase: ReviewBase{UnavailableReason: ReviewBaseUnavailableNotManagedWorktree},
+		RepoName:   ResolveRepoName(preview.Pane.CurrentPath),
+	}
+	m.mu.Lock()
+	m.sessions[sess.ID] = sess
+	saved := *sess
+	info := sess.ToInfo()
+	if err := m.store.Save(saved); err != nil {
+		delete(m.sessions, sess.ID)
+		m.mu.Unlock()
+		return Info{}, err
+	}
+	m.mu.Unlock()
+	go m.captureOutputTmux(sess)
+	return info, nil
+}
