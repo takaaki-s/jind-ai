@@ -1,4 +1,4 @@
-.PHONY: build install clean test fmt lint lint-install
+.PHONY: build install clean test test-remote-contract fmt lint lint-install
 
 # Version comes from git so local builds never drift from release tags.
 # The sed rewrites describe's post-tag "-N-gSHA[-dirty]" suffix as semver
@@ -64,6 +64,11 @@ test-e2e:
 
 test-race:
 	go test -race ./...
+
+# Opt-in transport measurement: starts an isolated sshd on loopback with
+# temporary keys. The ordinary test target still runs the contract fixtures.
+test-remote-contract:
+	JIN_REMOTE_CONTRACT_SSH=1 go test -v ./test/remotecontract
 
 test-coverage:
 	go test -coverprofile=coverage.out ./...

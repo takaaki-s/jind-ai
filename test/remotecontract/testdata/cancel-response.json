@@ -1,0 +1,26 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-cancel-1",
+  "operation": "execution.cancel",
+  "status": "ok",
+  "payload": {
+    "remote_task_id": "task-remote-1",
+    "remote_execution_id": "exec-remote-1",
+    "receipt": {
+      "idempotency_key": "remote-cancel-1",
+      "status": "succeeded"
+    },
+    "summary": {
+      "sequence": 8,
+      "observed_at": "2026-09-22T10:03:00Z",
+      "execution": {
+        "phase": "submitted"
+      },
+      "session": {
+        "id": "session-remote-1",
+        "status": "stopped"
+      }
+    }
+  }
+}

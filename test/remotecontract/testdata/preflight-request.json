@@ -1,0 +1,10 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-preflight-1",
+  "controller_id": "ctl-local-1",
+  "operation": "repository.preflight",
+  "payload": {
+    "repository_id": "jind-ai"
+  }
+}

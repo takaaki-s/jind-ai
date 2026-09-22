@@ -1,0 +1,18 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-start-1",
+  "operation": "execution.start",
+  "status": "ok",
+  "payload": {
+    "remote_task_id": "task-remote-1",
+    "remote_execution_id": "exec-remote-1",
+    "summary": {
+      "sequence": 1,
+      "observed_at": "2026-09-22T10:00:00Z",
+      "execution": {
+        "phase": "reserved"
+      }
+    }
+  }
+}

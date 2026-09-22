@@ -1,0 +1,29 @@
+{
+  "protocol": "jind-ai.remote",
+  "protocol_version": 1,
+  "request_id": "req-start-1",
+  "controller_id": "ctl-local-1",
+  "operation": "execution.start",
+  "payload": {
+    "controller_execution_id": "exec-local-1",
+    "idempotency_key": "remote-run-1",
+    "repository_id": "jind-ai",
+    "expected_repository_identity": "sha256:fa34b15a4ebc1234567890abcdef1234567890abcdef1234567890abcdef1234",
+    "title": "Implement bounded remote execution",
+    "source": {
+      "kind": "prompt",
+      "ref": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    },
+    "requested_base": "main",
+    "relative_work_dir": "internal",
+    "agent_kind": "claude",
+    "model": "sonnet",
+    "fleet": "default",
+    "no_hook": false,
+    "prompt": {
+      "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "bytes": 5,
+      "body": "hello"
+    }
+  }
+}
