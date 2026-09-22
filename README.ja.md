@@ -670,6 +670,45 @@ popups:
     # my-notifier:  { width: 40, height: 20 }
 ```
 
+### リモートターゲットの事前検証（実験的）
+
+Task を作る前に、明示的に設定したリモート実行先を検証できます。controller 側では、
+ローカルのリポジトリラベルを target が理解する不透明なラベルへ対応付けます:
+
+```yaml
+remote:
+  targets:
+    buildbox:
+      ssh_host: buildbox                 # OpenSSH config の alias
+      jin_path: /home/worker/.local/bin/jin
+      repositories:
+        jind-ai: jind-ai
+```
+
+target 側では明示的に serving を有効化し、ラベルをローカルパスへ解決します。
+このリモートパスが controller に返されることはありません:
+
+```yaml
+remote:
+  serve:
+    enabled: true
+    repositories:
+      jind-ai: /srv/src/jind-ai
+```
+
+target 側の daemon を起動してから、controller 側で実行します:
+
+```bash
+jin remote preflight buildbox --repository jind-ai
+```
+
+このコマンドは forwarding を無効にした非対話 SSH を使い、プロトコルと capability
+を交渉したうえで、安定した server/repository identity、default branch、利用可能な
+agent kind を表示します。ラベルは英小文字または数字で始め、英小文字・数字・
+`.`・`_`・`-` が使用できます。この実験的な段階で利用できるのは preflight のみで、リモート Task
+の作成・操作はまだ有効ではありません。詳細は
+[remote execution contract](docs/remote-execution-contract.md) を参照してください。
+
 ### Worktree の作成先
 
 `jin session new --worktree` はデフォルトで `$XDG_STATE_HOME/jind-ai/worktrees/{name}`（通常 `~/.local/state/jind-ai/worktrees/` 配下）に worktree を作成します。`config.yaml` の `worktree.base_dir` で任意の場所に変更できます:

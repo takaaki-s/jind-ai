@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
@@ -143,14 +144,119 @@ type PopupsConfig struct {
 	Plugins       map[string]*PopupSizeConfig `mapstructure:"plugins,omitempty"`
 }
 
+// RemoteTargetConfig is controller-side SSH configuration. Repositories maps
+// a local label to the opaque label accepted by the remote daemon; it never
+// contains a remote path.
+type RemoteTargetConfig struct {
+	SSHHost      string            `mapstructure:"ssh_host"`
+	JinPath      string            `mapstructure:"jin_path,omitempty"`
+	Repositories map[string]string `mapstructure:"repositories,omitempty"`
+}
+
+// RemoteServeConfig is read only on the target host. Serving is opt-in and
+// repository paths never leave that host; the wire protocol uses their labels.
+type RemoteServeConfig struct {
+	Enabled      bool              `mapstructure:"enabled,omitempty"`
+	Repositories map[string]string `mapstructure:"repositories,omitempty"`
+}
+
+type RemoteConfig struct {
+	Targets map[string]RemoteTargetConfig `mapstructure:"targets,omitempty"`
+	Serve   RemoteServeConfig             `mapstructure:"serve,omitempty"`
+}
+
 // Config represents the application-wide configuration
 type Config struct {
 	Keybindings  KeybindingsConfig `mapstructure:"keybindings,omitempty"`   // Keybinding settings
 	Worktree     WorktreeConfig    `mapstructure:"worktree,omitempty"`      // Git worktree session settings
 	Plugins      PluginsConfig     `mapstructure:"plugins,omitempty"`       // Plugin dispatcher settings
 	Popups       PopupsConfig      `mapstructure:"popups,omitempty"`        // Popup size overrides (core + plugin)
+	Remote       RemoteConfig      `mapstructure:"remote,omitempty"`        // Explicit SSH execution targets and target-side repository allowlist
 	Env          map[string]string `mapstructure:"-"`                       // Custom environment variables (loaded separately to preserve key case)
 	DefaultAgent string            `mapstructure:"default_agent,omitempty"` // Adapter used when `jin session new` omits --agent (empty ⇒ "claude")
+}
+
+// ResolveRemoteTarget returns one immutable controller-side target snapshot.
+// Revision changes whenever connection-affecting configuration changes.
+func (m *Manager) ResolveRemoteTarget(name, repository string) (RemoteTargetConfig, string, string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !validRemoteLabel(name) {
+		return RemoteTargetConfig{}, "", "", fmt.Errorf("invalid remote target name")
+	}
+	if !validRemoteLabel(repository) {
+		return RemoteTargetConfig{}, "", "", fmt.Errorf("invalid remote repository label")
+	}
+	target, ok := m.config.Remote.Targets[name]
+	if !ok {
+		return RemoteTargetConfig{}, "", "", fmt.Errorf("remote target not found: %s", name)
+	}
+	if target.SSHHost == "" {
+		return RemoteTargetConfig{}, "", "", fmt.Errorf("remote target %s has no ssh_host", name)
+	}
+	remoteRepository, ok := target.Repositories[repository]
+	if !ok || !validRemoteLabel(remoteRepository) {
+		return RemoteTargetConfig{}, "", "", fmt.Errorf("remote target %s has no valid repository mapping for %s", name, repository)
+	}
+	if target.JinPath == "" {
+		target.JinPath = "jin"
+	}
+	target.Repositories = cloneStringMap(target.Repositories)
+	return target, remoteRepository, remoteTargetRevision(name, target), nil
+}
+
+func (m *Manager) GetRemoteServeConfig() RemoteServeConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	config := m.config.Remote.Serve
+	config.Repositories = cloneStringMap(config.Repositories)
+	return config
+}
+
+func remoteTargetRevision(name string, target RemoteTargetConfig) string {
+	keys := make([]string, 0, len(target.Repositories))
+	for key := range target.Repositories {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var value strings.Builder
+	value.WriteString(name)
+	value.WriteByte(0)
+	value.WriteString(target.SSHHost)
+	value.WriteByte(0)
+	value.WriteString(target.JinPath)
+	for _, key := range keys {
+		value.WriteByte(0)
+		value.WriteString(key)
+		value.WriteByte(0)
+		value.WriteString(target.Repositories[key])
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(value.String())))
+}
+
+func validRemoteLabel(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for i, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			(i > 0 && strings.ContainsRune("._-", r)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 // Manager manages reading and writing configuration files
@@ -422,6 +528,15 @@ func (m *Manager) Get() *Config {
 		}
 		cfg.Env = env
 	}
+	if cfg.Remote.Targets != nil {
+		targets := make(map[string]RemoteTargetConfig, len(cfg.Remote.Targets))
+		for name, target := range cfg.Remote.Targets {
+			target.Repositories = cloneStringMap(target.Repositories)
+			targets[name] = target
+		}
+		cfg.Remote.Targets = targets
+	}
+	cfg.Remote.Serve.Repositories = cloneStringMap(cfg.Remote.Serve.Repositories)
 	return &cfg
 }
 

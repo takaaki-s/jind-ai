@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/takaaki-s/jind-ai/internal/config"
+	"github.com/takaaki-s/jind-ai/internal/remote"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
@@ -126,6 +127,56 @@ func (c *Client) NewTask(req TaskNewRequest) (*TaskNewResponse, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *Client) PreflightRemoteTarget(req RemoteTargetPreflightRequest) (*remote.TargetPreflight, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "remote-preflight", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var result remote.TargetPreflight
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Handshake and Preflight satisfy remote.Backend for `jin remote serve`.
+// The machine endpoint remains a thin framed adapter over the local daemon.
+func (c *Client) Handshake(req remote.HandshakeRequest) (remote.HandshakeResponse, *remote.WireError) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: "remote-backend-handshake", Data: data})
+	if err != nil {
+		return remote.HandshakeResponse{}, remote.NewWireError("internal", "remote daemon is unavailable", true)
+	}
+	if !resp.Success {
+		return remote.HandshakeResponse{}, remote.NewWireError("internal", "remote daemon rejected handshake", false)
+	}
+	var result remoteBackendHandshakeResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return remote.HandshakeResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid handshake", false)
+	}
+	return result.Value, result.Error
+}
+
+func (c *Client) Preflight(controllerID string, req remote.PreflightRequest) (remote.PreflightResponse, *remote.WireError) {
+	data, _ := json.Marshal(remoteBackendPreflightRequest{ControllerID: controllerID, Request: req})
+	resp, err := c.send(Request{Action: "remote-backend-preflight", Data: data})
+	if err != nil {
+		return remote.PreflightResponse{}, remote.NewWireError("internal", "remote daemon is unavailable", true)
+	}
+	if !resp.Success {
+		return remote.PreflightResponse{}, remote.NewWireError("internal", "remote daemon rejected preflight", false)
+	}
+	var result remoteBackendPreflightResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return remote.PreflightResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid preflight", false)
+	}
+	return result.Value, result.Error
 }
 
 func (c *Client) CommentOnTaskIssue(req TaskCommentRequest) (*TaskCommentResponse, error) {

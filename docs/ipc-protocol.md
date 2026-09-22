@@ -149,6 +149,9 @@ it alone.
 | `task-get` | `IDRequest` | Get one task with its ordered execution history |
 | `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
 | `task-comment` | `TaskCommentRequest` | Preview or explicitly create/reconcile one comment on a Task's source GitHub Issue |
+| `remote-preflight` | `RemoteTargetPreflightRequest` | Resolve one configured target/repository mapping and perform bounded SSH handshake plus repository preflight |
+| `remote-backend-handshake` | `remote.HandshakeRequest` | Internal adapter used by `jin remote serve --stdio` to negotiate against the target daemon |
+| `remote-backend-preflight` | controller ID + `remote.PreflightRequest` | Internal adapter used by the stdio server to resolve one allowlisted repository locally |
 | `send` | `SendRequest` | Send a prompt to a session (alias `prompt` on the CLI) |
 | `respond` | `RespondRequest` | Answer a prompt an agent is blocked on; returns `RespondResponse` |
 | `start` | `IDRequest` | Start session |

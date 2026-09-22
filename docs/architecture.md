@@ -393,8 +393,9 @@ Remote execution is designed as a separate backend rather than an extension of
 local paths or tmux ownership. Its implementation boundary, SSH stdio protocol,
 identity model, and disconnect semantics are fixed in
 [remote-execution-contract.md](remote-execution-contract.md). That document is
-a design contract and executable-fixture target; it does not imply that a
-remote CLI is available yet.
+also the executable-fixture target. The bounded transport and repository
+preflight CLI are available; remote Task start/sync/cancel/cleanup remain the
+next implementation slice.
 
 Provider mutation is a separate capability and command path:
 
