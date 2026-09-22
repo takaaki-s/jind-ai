@@ -241,6 +241,14 @@ func (r *fakeAgentResolver) Resolve(kind string) (Agent, error) {
 	return a, nil
 }
 
+func (r *fakeAgentResolver) Agents() []Agent {
+	agents := make([]Agent, 0, len(r.agents))
+	for _, agent := range r.agents {
+		agents = append(agents, agent)
+	}
+	return agents
+}
+
 // fakeClaudeAgent returns the stub adapter newTestManager registers under
 // kind "claude", so a test can set whatever behaviour SendPrompt (or
 // HandleHookEvent) will read off it. One accessor rather than one wrapper per

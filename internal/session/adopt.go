@@ -23,6 +23,7 @@ type AdoptionPreview struct {
 	Server          tmux.ServerRef    `json:"server"`
 	Pane            tmux.PaneInfo     `json:"pane"`
 	Owner           *Info             `json:"owner,omitempty"`
+	Detection       AgentDetection    `json:"detection"`
 	Capabilities    AgentCapabilities `json:"capabilities"`
 	ConfirmationKey string            `json:"confirmation_key"`
 }
@@ -32,6 +33,16 @@ func adoptionIdentity(server tmux.ServerRef, pane tmux.PaneInfo) string {
 		server.DisplayName(), pane.SessionID, pane.WindowID, pane.PaneID, pane.PanePID, pane.PaneStarted)
 	sum := sha256.Sum256([]byte(payload))
 	return fmt.Sprintf("adopt-v1-%x", sum[:16])
+}
+
+func adoptionConfirmationKey(identity string, detection AgentDetection) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "v1\x00%s\x00%s\x00%s", identity, detection.Provenance, detection.SelectedKind)
+	for _, candidate := range detection.Candidates {
+		fmt.Fprintf(&b, "\x00%s", candidate.Kind)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("adopt-confirm-v1-%x", sum[:16])
 }
 
 func (m *Manager) managedTmuxServer() tmux.ServerRef {
@@ -75,15 +86,6 @@ func (m *Manager) PreviewAdoption(opts AdoptOptions) (AdoptionPreview, error) {
 	if strings.TrimSpace(opts.Target) == "" {
 		return AdoptionPreview{}, fmt.Errorf("tmux pane target is required")
 	}
-	if strings.TrimSpace(opts.AgentKind) == "" {
-		return AdoptionPreview{}, fmt.Errorf("agent kind is required; automatic detection is not available yet")
-	}
-	if m.agentResolver == nil {
-		return AdoptionPreview{}, fmt.Errorf("agent registry is not available")
-	}
-	if _, err := m.agentResolver.Resolve(opts.AgentKind); err != nil {
-		return AdoptionPreview{}, err
-	}
 	if m.tmuxFactory == nil {
 		return AdoptionPreview{}, fmt.Errorf("tmux client factory not available")
 	}
@@ -98,10 +100,19 @@ func (m *Manager) PreviewAdoption(opts AdoptOptions) (AdoptionPreview, error) {
 	if pane.Dead {
 		return AdoptionPreview{}, fmt.Errorf("tmux pane %s is dead and cannot be adopted", pane.PaneID)
 	}
-	key := adoptionIdentity(opts.Server, pane)
+	detection, err := detectAgent(pane, m.agentResolver, opts.AgentKind)
+	if err != nil {
+		return AdoptionPreview{}, err
+	}
+	identity := adoptionIdentity(opts.Server, pane)
+	key := adoptionConfirmationKey(identity, detection)
+	baseCapabilities := AgentCapabilities{}
+	if detection.SelectedKind != "" && detection.SelectedKind != GenericAgentKind {
+		baseCapabilities = capabilitiesForKind(m.agentResolver, detection.SelectedKind)
+	}
 	preview := AdoptionPreview{
-		Server: opts.Server, Pane: pane, ConfirmationKey: key,
-		Capabilities: adoptedCapabilities(capabilitiesForKind(m.agentResolver, opts.AgentKind)),
+		Server: opts.Server, Pane: pane, Detection: detection, ConfirmationKey: key,
+		Capabilities: adoptedCapabilities(baseCapabilities),
 	}
 	managed := m.managedTmuxServer()
 	m.mu.RLock()
@@ -130,10 +141,16 @@ func (m *Manager) AdoptPane(opts AdoptOptions) (Info, error) {
 		return Info{}, err
 	}
 	if preview.ConfirmationKey != opts.ConfirmationKey {
-		return Info{}, fmt.Errorf("tmux pane changed or moved after preview; run the dry-run again")
+		return Info{}, fmt.Errorf("tmux pane or agent selection changed after preview; run the dry-run again")
+	}
+	if preview.Detection.SelectedKind == "" {
+		return Info{}, fmt.Errorf("agent detection is ambiguous; run the dry-run again with --agent <kind> or --agent generic")
 	}
 	if preview.Owner != nil {
-		if preview.Owner.TmuxBinding.IdentityKey == preview.ConfirmationKey {
+		identity := adoptionIdentity(opts.Server, preview.Pane)
+		if preview.Owner.TmuxBinding.IdentityKey == identity &&
+			preview.Owner.AgentKind == preview.Detection.SelectedKind &&
+			preview.Owner.AgentDetection.Provenance == preview.Detection.Provenance {
 			return *preview.Owner, nil // idempotent retry of the same adoption
 		}
 		return Info{}, fmt.Errorf("tmux pane %s is already owned by session %s (%s)",
@@ -154,7 +171,8 @@ func (m *Manager) AdoptPane(opts AdoptOptions) (Info, error) {
 		ID: uuid.New().String(), Description: description, DescriptionLocked: locked,
 		WorkDir: preview.Pane.CurrentPath, CurrentWorkDir: preview.Pane.CurrentPath,
 		CreatedAt: now, LastActiveAt: now, Status: StatusRunning,
-		AgentKind: opts.AgentKind, Fleet: fleet, Capabilities: preview.Capabilities,
+		AgentKind: preview.Detection.SelectedKind, AgentDetection: preview.Detection,
+		Fleet: fleet, Capabilities: preview.Capabilities,
 		TmuxWindowName: preview.Pane.SessionName, TmuxPaneID: preview.Pane.PaneID,
 		TmuxBinding: TmuxBinding{
 			Ownership: TmuxOwnershipAdopted, Server: opts.Server,
@@ -162,7 +180,7 @@ func (m *Manager) AdoptPane(opts AdoptOptions) (Info, error) {
 			WindowID: preview.Pane.WindowID, WindowName: preview.Pane.WindowName,
 			WindowIndex: preview.Pane.WindowIndex, PaneID: preview.Pane.PaneID,
 			PaneIndex: preview.Pane.PaneIndex, PanePID: preview.Pane.PanePID,
-			PaneStarted: preview.Pane.PaneStarted, IdentityKey: preview.ConfirmationKey,
+			PaneStarted: preview.Pane.PaneStarted, IdentityKey: adoptionIdentity(opts.Server, preview.Pane),
 		},
 		ReviewBase: ReviewBase{UnavailableReason: ReviewBaseUnavailableNotManagedWorktree},
 		RepoName:   ResolveRepoName(preview.Pane.CurrentPath),

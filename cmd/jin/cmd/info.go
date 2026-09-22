@@ -52,6 +52,20 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 	if info.AgentKind != "" {
 		fmt.Fprintf(tw, "Agent:\t%s\n", info.AgentKind)
 	}
+	if info.AgentDetection.Provenance != "" {
+		fmt.Fprintf(tw, "AgentDetection:\t%s", info.AgentDetection.Provenance)
+		if len(info.AgentDetection.Candidates) > 0 {
+			fmt.Fprint(tw, " (candidates:")
+			for i, candidate := range info.AgentDetection.Candidates {
+				if i > 0 {
+					fmt.Fprint(tw, ",")
+				}
+				fmt.Fprintf(tw, " %s=%d", candidate.Kind, candidate.Score)
+			}
+			fmt.Fprint(tw, ")")
+		}
+		fmt.Fprintln(tw)
+	}
 	fmt.Fprintf(tw, "WorkDir:\t%s\n", info.WorkDir)
 	if info.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
 		fmt.Fprintf(tw, "Ownership:\tadopted (external; delete detaches only)\n")

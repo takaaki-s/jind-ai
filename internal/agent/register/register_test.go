@@ -38,6 +38,25 @@ func TestRegisterInit_RegistersKnownKinds(t *testing.T) {
 	}
 }
 
+// Every shipped adapter must make an explicit detection choice. Without this
+// splice guard, adding an adapter to register.go would compile and work for new
+// sessions while adoption silently never offered it as a candidate.
+func TestRegisterInit_EveryKindDeclaresExecutableDetection(t *testing.T) {
+	for _, kind := range agent.Kinds() {
+		ag, err := agent.Lookup(kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		detector, ok := ag.(agent.ExecutableDetector)
+		if !ok {
+			t.Fatalf("registered adapter %q does not implement ExecutableDetector", kind)
+		}
+		if !detector.RecognizesExecutable(kind) {
+			t.Fatalf("registered adapter %q does not recognize its canonical executable", kind)
+		}
+	}
+}
+
 func TestRegisterInit_LookupCodex(t *testing.T) {
 	// Beyond presence in Kinds(): the actual Codex adapter object must
 	// come back from Lookup and identify itself correctly.

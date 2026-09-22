@@ -238,14 +238,20 @@ sets are resolved live from the adapter registry and are not persisted in
 session records.
 
 `adopt` requires exactly one of `dry_run` or `confirm`. Both carry an explicit
-local `server` (`kind`: `default`, `name`, or `path`), a tmux `target`, and an
-explicit `agent_kind`. Dry-run returns an `AdoptionPreview` containing the
-atomic pane snapshot, process ancestry, existing owner, effective capabilities,
-and a reuse-resistant `confirmation_key`. Confirm must echo that key; the
-daemon repeats inspection and refuses any different session/window/pane ID,
-pane PID, or pane-process start time. Confirm creates only a session record and
-monitor—it sends no tmux mutation. An adopted `Info` includes `tmux_pane_id`
-and `tmux_binding`; its delete path never kills tmux or removes a worktree.
+local `server` (`kind`: `default`, `name`, or `path`) and a tmux `target`.
+`agent_kind` is optional: when absent, registered executable predicates produce
+ranked candidates. One kind yields `detected`, no matches selects `generic`, and
+multiple kinds yield an unconfirmable `ambiguous` preview. Supplying
+`agent_kind` (including `generic`) records `user-selected`; an ambiguous choice
+must receive a fresh preview before confirmation. Dry-run returns an
+`AdoptionPreview` containing the atomic pane snapshot, process ancestry,
+existing owner, `detection` provenance/candidates/evidence, effective
+capabilities, and a reuse-resistant `confirmation_key`. Confirm must echo that
+key; the daemon repeats inspection and refuses any different pane identity or
+candidate-kind/selection result. Confirm creates only a session record and
+monitor—it sends no tmux mutation. An adopted `Info` includes `tmux_pane_id`,
+`tmux_binding`, and persisted `agent_detection`; its delete path never kills
+tmux or removes a worktree. Detection never promotes adopted capabilities.
 
 Protocol v14 adds the required `Info.needs_answer` evidence object. Unknown is
 spelled out so consumers cannot collapse missing or untrusted evidence into a
@@ -306,7 +312,8 @@ journal. Protocol v11 adds bounded external identity/sync fields to Task
 `source`. Protocol v12 adds the bounded Task `mutations` timeline. Protocol
 v13 adds the required session `capabilities` object. Protocol v14 adds the
 required `needs_answer` evidence object. Protocol v15 adds `Info.tmux_pane_id`,
-the adopted `Info.tmux_binding`, and the `adopt` action. A settled
+the adopted `Info.tmux_binding`, and the `adopt` action. Protocol v16 adds
+adoption `detection` and persisted `Info.agent_detection`. A settled
 managed-worktree example is:
 
 ```json

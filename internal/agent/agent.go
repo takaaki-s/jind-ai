@@ -29,6 +29,10 @@ type Agent = session.Agent
 // adapter may expose. Adapters without it safely negotiate to unknown.
 type CapabilityProvider = session.CapabilityProvider
 
+// ExecutableDetector is the optional process-name predicate used only for
+// adopted-pane classification. Capabilities remain a separate contract.
+type ExecutableDetector = session.AgentExecutableDetector
+
 // AgentCapabilities is the adapter capability set projected in session Info.
 type AgentCapabilities = session.AgentCapabilities
 

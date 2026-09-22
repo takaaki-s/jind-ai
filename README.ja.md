@@ -301,8 +301,10 @@ jin session new
 jin session new --workdir ~/repos/myrepo
 
 # 既に動いているローカル tmux pane を再起動せず preview → adopt
+jin session adopt work:1.0 --dry-run
+jin session adopt work:1.0 --confirm --confirmation-key <key>
+# 検出が ambiguous なら、明示選択をもう一度 preview してから confirm
 jin session adopt work:1.0 --agent claude --dry-run
-jin session adopt work:1.0 --agent claude --confirm --confirmation-key <key>
 # tmux -L には --tmux-socket <name>、tmux -S には --tmux-socket-path <path>
 
 # セッション一覧
@@ -368,11 +370,14 @@ jin cleanup stopped --dry-run   # 削除対象の確認
 
 adopt は confirm まで完全に read-only です。preview ではローカル tmux の exact
 server/session/window/pane、cwd、command、PID、process 開始時刻、process ancestry、現在の jin
-owner を表示します。confirm 時に再検査し、pane の移動・終了・ID 再利用・既存 owner を安全に
-拒否します。hook 注入、command 書換え、process 再起動は行わないため、adopted session が
-持つのは liveness と手動 pane 証拠だけです。`kill` と restart は拒否し、`delete` は jin record
-だけを外して foreign pane を決して kill しません。remote tmux と agent kind 自動検出はまだ
-対象外です。
+owner、ranked agent 候補を表示します。登録 adapter は正規化した executable 名を process tree
+へ照合し、1 kind なら `detected`、一致なしなら adopt 専用 `generic`、複数なら `ambiguous` とします。
+ambiguous は自動確定せず、`--agent <kind>`（または `--agent generic`）付きの新しい preview が必要です。
+provenance と bounded evidence は永続化され JSON にも残ります。ただし検出は identity の証拠であり、
+capability の証拠ではありません。hook、resume、transcript、send、respond を有効化しません。confirm
+時に再検査し、pane の移動・終了・ID 再利用・既存 owner・分類変更を安全に拒否します。`kill` と
+restart は拒否し、`delete` は jin record だけを外して foreign pane を決して kill しません。
+remote tmux はまだ対象外です。
 
 > **エイリアス**: `session` は `sess` でも可（例: `jin sess list`）。`list` は `ls`、`delete` は `rm` でも可。
 

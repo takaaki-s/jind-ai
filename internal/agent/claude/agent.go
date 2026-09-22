@@ -39,6 +39,10 @@ func New() *Agent {
 // Kind is the identifier jind-ai persists in Session.AgentKind.
 func (a *Agent) Kind() string { return "claude" }
 
+// RecognizesExecutable identifies only Claude Code's own executable. Wrappers
+// are handled by the shared process-tree walker rather than broadened here.
+func (a *Agent) RecognizesExecutable(name string) bool { return name == "claude" }
+
 // Capabilities declares adapter support, independent of whether one running
 // process currently has healthy hook wiring.
 func (a *Agent) Capabilities() agent.AgentCapabilities {

@@ -447,6 +447,15 @@ pane PID, and pane-process start time before persisting `TmuxOwnershipAdopted`.
 Neither phase sends keys, tags the pane, installs hooks, respawns a process, or
 changes tmux options.
 
+The preview also runs registered adapters' executable predicates over the pane
+commands and process tree. One matching kind is `detected`; no matches selects
+the adoption-only `generic` kind; two or more matches are `ambiguous` even when
+their scores differ. An ambiguous preview cannot be confirmed. The operator
+must run a fresh preview with `--agent <kind>` or `--agent generic`, which is
+persisted as `user-selected`. The confirmation key binds the provenance and
+candidate-kind set, so it cannot be reused after classification changes.
+Detection metadata never changes the liveness-only adopted capability mask.
+
 An adopted pane remains externally owned throughout its lifecycle:
 
 - monitoring uses the persisted server and fingerprint; missing, moved, dead,

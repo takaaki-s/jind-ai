@@ -324,11 +324,23 @@ written successfully. Operational failures remain errors/status evidence.
 
 Local pane adoption stores a `TmuxBinding` with explicit default/name/path
 server identity plus tmux session/window/pane IDs, pane PID, and process start
-time. Preview and confirm both inspect the pane; the confirmation key hashes
-that immutable identity, so a moved or reused `%pane` cannot inherit a record.
+time. Preview and confirm both inspect the pane. The persisted binding identity
+hashes that immutable pane identity, while the confirmation key also binds the
+agent selection provenance and candidate-kind set, so neither a moved/reused
+`%pane` nor a changed classification can inherit the preview.
 Every operation resolves the session's own tmux server. Managed sessions keep
 using jin's named inner server; adopted sessions use their recorded local
 server. Remote tmux remains a separate transport concern.
+
+Adapters may implement `AgentExecutableDetector`, a predicate over normalized
+executable basenames. The adoption detector walks pane current/start commands
+and the process tree, ranks each matching adapter, but auto-selects only when
+exactly one kind matched. Multiple kinds are ambiguous regardless of score;
+none selects the adoption-only `generic` kind. `--agent` is recorded as
+`user-selected`. `Session.AgentDetection` persists provenance, candidates,
+scores, and bounded evidence independently of `AgentKind`. The generic kind is
+deliberately not registered as spawnable, and detection never promotes
+capabilities: every adopted kind still receives the same liveness-only mask.
 
 ## Task and Execution Domain
 

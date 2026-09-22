@@ -103,11 +103,130 @@ func TestAdoptPane_RejectsChangedPaneAndDuplicateOwner(t *testing.T) {
 	changed.PanePID++
 	foreign.paneInfos["%19"] = changed
 	opts.ConfirmationKey = preview.ConfirmationKey
-	if _, err := mgr.AdoptPane(opts); err == nil || !strings.Contains(err.Error(), "changed or moved") {
+	if _, err := mgr.AdoptPane(opts); err == nil || !strings.Contains(err.Error(), "pane or agent selection changed") {
 		t.Fatalf("changed-pane error = %v", err)
 	}
 	if len(mgr.List()) != 0 {
 		t.Fatal("changed pane produced a session record")
+	}
+}
+
+func TestPreviewAdoption_AutoDetectionAndGenericFallback(t *testing.T) {
+	mgr, foreign, opts := adoptionFixture(t)
+	mgr.SetAgentResolver(detectionResolver("claude", "codex", "opencode"))
+	opts.AgentKind = ""
+
+	preview, err := mgr.PreviewAdoption(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Detection.Provenance != AgentDetectionDetected || preview.Detection.SelectedKind != "claude" {
+		t.Fatalf("detection = %+v", preview.Detection)
+	}
+	opts.ConfirmationKey = preview.ConfirmationKey
+	info, err := mgr.AdoptPane(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.AgentKind != "claude" || info.AgentDetection.Provenance != AgentDetectionDetected {
+		t.Fatalf("persisted detection = kind %q %+v", info.AgentKind, info.AgentDetection)
+	}
+	if info.Capabilities.Liveness != CapabilitySupported || info.Capabilities.Hooks != CapabilityUnsupported ||
+		info.Capabilities.Resume != CapabilityUnsupported || info.Capabilities.Transcript != CapabilityUnsupported {
+		t.Fatalf("detected executable promoted adopted capabilities: %+v", info.Capabilities)
+	}
+	if err := mgr.Delete(info.ID, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	pane := foreign.paneInfos["%19"]
+	pane.CurrentCommand = "vim"
+	pane.StartCommand = "vim"
+	pane.ProcessAncestry = []tmux.PaneProcess{{PID: pane.PanePID, PPID: 1, Command: "zsh"}, {PID: pane.PanePID + 1, PPID: pane.PanePID, Command: "vim"}}
+	foreign.paneInfos["%19"] = pane
+	opts.ConfirmationKey = ""
+	preview, err = mgr.PreviewAdoption(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Detection.Provenance != AgentDetectionGeneric || preview.Detection.SelectedKind != GenericAgentKind {
+		t.Fatalf("generic detection = %+v", preview.Detection)
+	}
+	opts.ConfirmationKey = preview.ConfirmationKey
+	info, err = mgr.AdoptPane(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.AgentKind != GenericAgentKind || info.Capabilities.Liveness != CapabilitySupported || info.Capabilities.Hooks != CapabilityUnsupported {
+		t.Fatalf("generic info = %+v", info)
+	}
+}
+
+func TestAdoptPane_AmbiguousRequiresFreshExplicitPreview(t *testing.T) {
+	mgr, foreign, opts := adoptionFixture(t)
+	mgr.SetAgentResolver(detectionResolver("claude", "codex"))
+	opts.AgentKind = ""
+	pane := foreign.paneInfos["%19"]
+	pane.ProcessAncestry = append(pane.ProcessAncestry, tmux.PaneProcess{PID: 4244, PPID: 4243, Command: "codex"})
+	foreign.paneInfos["%19"] = pane
+
+	preview, err := mgr.PreviewAdoption(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Detection.Provenance != AgentDetectionAmbiguous || preview.Detection.SelectedKind != "" {
+		t.Fatalf("detection = %+v", preview.Detection)
+	}
+	opts.ConfirmationKey = preview.ConfirmationKey
+	if _, err := mgr.AdoptPane(opts); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous confirmation error = %v", err)
+	}
+
+	// Adding --agent changes the audited selection, so the ambiguous preview's
+	// key cannot be reused. The user must preview that explicit choice first.
+	opts.AgentKind = "claude"
+	if _, err := mgr.AdoptPane(opts); err == nil || !strings.Contains(err.Error(), "selection changed") {
+		t.Fatalf("old key with explicit selection error = %v", err)
+	}
+	preview, err = mgr.PreviewAdoption(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.ConfirmationKey = preview.ConfirmationKey
+	info, err := mgr.AdoptPane(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.AgentDetection.Provenance != AgentDetectionUserSelected || info.AgentKind != "claude" {
+		t.Fatalf("explicit adoption = %+v", info.AgentDetection)
+	}
+}
+
+func TestAdoptPane_RejectsCandidateSetChangeWithSamePaneIdentity(t *testing.T) {
+	mgr, foreign, opts := adoptionFixture(t)
+	mgr.SetAgentResolver(detectionResolver("claude", "codex"))
+	opts.AgentKind = ""
+	pane := foreign.paneInfos["%19"]
+	pane.CurrentCommand = "vim"
+	pane.StartCommand = "vim"
+	pane.ProcessAncestry = []tmux.PaneProcess{{PID: pane.PanePID, PPID: 1, Command: "zsh"}}
+	foreign.paneInfos["%19"] = pane
+
+	preview, err := mgr.PreviewAdoption(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Detection.Provenance != AgentDetectionGeneric {
+		t.Fatalf("initial detection = %+v", preview.Detection)
+	}
+
+	// The tmux IDs, pane PID and start time stay identical; only a known agent
+	// appears beneath the pane. The old generic choice must not be confirmed.
+	pane.ProcessAncestry = append(pane.ProcessAncestry, tmux.PaneProcess{PID: pane.PanePID + 1, PPID: pane.PanePID, Command: "claude"})
+	foreign.paneInfos["%19"] = pane
+	opts.ConfirmationKey = preview.ConfirmationKey
+	if _, err := mgr.AdoptPane(opts); err == nil || !strings.Contains(err.Error(), "selection changed") {
+		t.Fatalf("candidate-change error = %v", err)
 	}
 }
 

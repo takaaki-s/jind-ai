@@ -514,3 +514,20 @@ type Agent interface {
 type AgentResolver interface {
 	Resolve(kind string) (Agent, error)
 }
+
+// AgentCatalog is the optional discovery surface used by local pane adoption.
+// Existing resolvers that only need to spawn a known kind can keep implementing
+// AgentResolver alone. A catalog returns a snapshot in any order; detection
+// sorts it before producing user-visible candidates.
+type AgentCatalog interface {
+	Agents() []Agent
+}
+
+// AgentExecutableDetector is the opt-in predicate an adapter supplies for
+// classifying process evidence. The input is a normalized executable basename,
+// never a shell command line. Detection is identity evidence only: a positive
+// result must not be used to infer hooks, resume, transcript, or response
+// support; those remain governed by AgentCapabilities.
+type AgentExecutableDetector interface {
+	RecognizesExecutable(name string) bool
+}
