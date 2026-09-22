@@ -59,12 +59,14 @@ type Manager struct {
 	agentResolver  AgentResolver // resolves AgentKind → Agent adapter (owns Layer C enhancer via Description())
 	mu             sync.RWMutex
 	cleanupMu      sync.Mutex // serializes local review cleanup plans and journal transitions
+	adoptMu        sync.Mutex // serializes inspect-then-register adoption commits
 	paneSlotMu     sync.Mutex // serializes named-slot pane operations (find-then-split is check-then-act; see PaneSplit/PaneClose)
 	tmuxInitMu     sync.Mutex // serializes lazy tmux init AND its recovery pass (see ensureTmuxClient)
 	stateDir       string
-	identity       jinenv.Identity // the jin the agents this Manager starts are told to call back into; handed in whole, never re-derived from the process
-	tmuxSocketName string          // "" ⇒ tmux.SocketName; tests set an isolated name so ensureTmuxClient does not touch the shared "jin" server
-	reviewSem      chan struct{}   // bounds completion-triggered and explicit git inspections together
+	identity       jinenv.Identity                           // the jin the agents this Manager starts are told to call back into; handed in whole, never re-derived from the process
+	tmuxSocketName string                                    // "" ⇒ tmux.SocketName; tests set an isolated name so ensureTmuxClient does not touch the shared "jin" server
+	tmuxFactory    func(tmux.ServerRef) (tmux.Runner, error) // explicit-server resolver for adopted panes; setup-time only
+	reviewSem      chan struct{}                             // bounds completion-triggered and explicit git inspections together
 }
 
 // Identity is the jin the agents this Manager starts are told to call back
@@ -80,6 +82,12 @@ func (m *Manager) Identity() jinenv.Identity {
 // under both tmuxInitMu and m.mu.
 func (m *Manager) SetTmuxClient(tc tmux.Runner) {
 	m.tmuxClient = tc
+}
+
+// SetTmuxFactory replaces the explicit-server client factory. It is intended
+// for tests; production uses tmux.NewClientForServer.
+func (m *Manager) SetTmuxFactory(factory func(tmux.ServerRef) (tmux.Runner, error)) {
+	m.tmuxFactory = factory
 }
 
 // SetHookRunner installs the worktree post-create hook runner. A nil runner
@@ -128,7 +136,7 @@ func (m *Manager) SetTmuxSocketName(name string) {
 func (m *Manager) SetAgentResolver(ar AgentResolver) {
 	m.agentResolver = ar
 	for _, sess := range m.sessions {
-		sess.Capabilities = capabilitiesForKind(ar, sess.AgentKind)
+		sess.Capabilities = capabilitiesForSession(ar, sess)
 	}
 }
 
@@ -143,9 +151,10 @@ func capabilitiesForKind(resolver AgentResolver, kind string) AgentCapabilities 
 	return CapabilitiesOf(agent)
 }
 
-// RecoverTmuxSessions checks for sessions with existing tmux windows after a
-// daemon restart and resumes monitoring for live ones, or clears stale
-// TmuxWindowName for dead ones.
+// RecoverTmuxSessions checks for sessions with existing tmux panes after a
+// daemon restart and resumes monitoring for live ones. Managed records clear a
+// vanished inner session; adopted records preserve their foreign binding and
+// stop with a diagnostic instead.
 //
 // The tmux probes and the adapter's recover verdict are I/O, so none of it runs
 // under m.mu — holding the Manager's central lock across the loop would stall
@@ -154,7 +163,7 @@ func capabilitiesForKind(resolver AgentResolver, kind string) AgentCapabilities 
 // state, so one deleted, killed or started while the probes ran keeps it.
 func (m *Manager) RecoverTmuxSessions() {
 	snaps, tc := m.snapshotForRecovery()
-	if tc == nil {
+	if len(snaps) == 0 {
 		return
 	}
 	decisions := m.decideRecovery(snaps, tc)
@@ -202,11 +211,12 @@ type recoverDecision struct {
 	killSeq uint64
 	// atProbe is Session.Status at snapshot time; apply compares it with the
 	// live value to decide whether the verdict is still current.
-	atProbe   Status
-	outcome   recoverOutcome
-	fromDisk  Status
-	verdict   StatusUpdate
-	verdictOK bool
+	atProbe      Status
+	outcome      recoverOutcome
+	fromDisk     Status
+	verdict      StatusUpdate
+	verdictOK    bool
+	errorMessage string
 }
 
 // snapshotForRecovery copies every session under the lock so the probe phase
@@ -214,16 +224,13 @@ type recoverDecision struct {
 // PersistedStatus while the live field is consumed at pass start, so a later
 // pass cannot resurrect a stale value.
 //
-// The tmux client is captured under the same lock, so recovery never reads
-// m.tmuxClient unsynchronized. tc is nil when no client is installed, and the
-// caller then skips the pass entirely.
+// The managed tmux client is captured under the same lock, so recovery never
+// reads m.tmuxClient unsynchronized. It may be nil: adopted sessions resolve
+// their own explicit server and can still recover independently.
 func (m *Manager) snapshotForRecovery() (snaps []Session, tc tmux.Runner) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.tmuxClient == nil {
-		return nil, nil
-	}
 	snaps = make([]Session, 0, len(m.sessions))
 	for _, session := range m.sessions {
 		snap := *session
@@ -247,9 +254,36 @@ func (m *Manager) decideRecovery(snaps []Session, tc tmux.Runner) []recoverDecis
 			atProbe:    snap.Status,
 			fromDisk:   snap.PersistedStatus,
 		}
+		if snap.IsAdopted() {
+			adoptedTC, err := m.runnerForSession(snap)
+			if err != nil {
+				d.outcome = recoverWindowGone
+				d.errorMessage = fmt.Sprintf("cannot inspect adopted tmux pane: %v", err)
+				decisions = append(decisions, d)
+				continue
+			}
+			pane, err := adoptedTC.InspectPane(snap.TmuxPaneID)
+			switch {
+			case err != nil:
+				d.outcome = recoverWindowGone
+				d.errorMessage = fmt.Sprintf("adopted tmux pane is missing: %v", err)
+			case !snap.TmuxBinding.matches(pane):
+				d.outcome = recoverWindowGone
+				d.errorMessage = "adopted tmux pane identity changed; detached without touching the foreign pane"
+			case pane.Dead:
+				d.outcome = recoverPaneDead
+				d.errorMessage = "adopted tmux pane is dead"
+			default:
+				d.outcome = recoverResume
+			}
+			decisions = append(decisions, d)
+			continue
+		}
 		switch {
 		case snap.TmuxWindowName == "":
 			d.outcome = recoverMarkStopped
+		case tc == nil:
+			d.outcome = recoverWindowGone
 		case !tc.HasSession(snap.TmuxWindowName):
 			d.outcome = recoverWindowGone
 		case tc.IsPaneDead(snap.TmuxPaneID):
@@ -345,16 +379,22 @@ func (m *Manager) applyRecovery(decisions []recoverDecision) (saves []Session, m
 				debugLog("[RECOVER] Session %s: interrupted async op (%s), marked stopped with error", live.Description, d.fromDisk)
 			}
 		case recoverWindowGone:
-			live.TmuxWindowName = ""
+			if !live.IsAdopted() {
+				live.TmuxWindowName = ""
+			}
 			live.Status = StatusStopped
-			if msg := interruptedAsyncMessage(d.fromDisk); msg != "" {
+			if d.errorMessage != "" {
+				live.ErrorMessage = d.errorMessage
+			} else if msg := interruptedAsyncMessage(d.fromDisk); msg != "" {
 				live.ErrorMessage = msg
 			}
 			saves = append(saves, *live)
 			debugLog("[RECOVER] Session %s inner tmux session gone, marked stopped", live.Description)
 		case recoverPaneDead:
 			live.Status = StatusStopped
-			if msg := interruptedAsyncMessage(d.fromDisk); msg != "" {
+			if d.errorMessage != "" {
+				live.ErrorMessage = d.errorMessage
+			} else if msg := interruptedAsyncMessage(d.fromDisk); msg != "" {
 				live.ErrorMessage = msg
 			}
 			saves = append(saves, *live)
@@ -381,7 +421,10 @@ func (m *Manager) applyRecovery(decisions []recoverDecision) (saves []Session, m
 			// The comparison is by value, so a hook that rewrites the same
 			// status is invisible here — unlike killSeq above, which exists
 			// because Status could not stand in for detecting a kill either.
-			if d.verdictOK && live.Status == d.atProbe {
+			if live.IsAdopted() {
+				live.Status = StatusRunning
+				live.ErrorMessage = ""
+			} else if d.verdictOK && live.Status == d.atProbe {
 				// Only Status is applied — see the "recover" contract on
 				// StatusSignal.
 				live.Status = d.verdict.Status
@@ -521,6 +564,7 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 		stateDir:     stateDir,
 		identity:     identity,
 		reviewSem:    make(chan struct{}, reviewProbeConcurrency),
+		tmuxFactory:  func(ref tmux.ServerRef) (tmux.Runner, error) { return tmux.NewClientForServer(ref) },
 	}
 
 	// A local cleanup step has a deterministic, inspectable outcome, unlike a
@@ -586,7 +630,9 @@ func NewManager(sessionsDir, stateDir string, identity jinenv.Identity, configMg
 		// IsWorktree is json:"-" so it's lost on restart; recover it from
 		// disk so the TUI's delete modal shows the worktree option
 		// immediately, without waiting for the next captureOutputTmux poll.
-		s.IsWorktree = git.IsGitWorktreeDir(s.WorkDir)
+		if !s.IsAdopted() {
+			s.IsWorktree = git.IsGitWorktreeDir(s.WorkDir)
+		}
 		// Same story for RepoName, and it matters more for stopped sessions:
 		// they never reach captureOutputTmux at all, so the poll would never
 		// fill it in.
@@ -1693,13 +1739,15 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 	}
 	paneID := sess.TmuxPaneID
 	agentKind := sess.AgentKind
+	snapshot := *sess
 	m.mu.RUnlock()
 
 	if paneID == "" {
 		return fmt.Errorf("session has no tmux pane")
 	}
-	if m.tmuxClient == nil {
-		return fmt.Errorf("tmux client not available")
+	tc, err := m.runnerForSession(&snapshot)
+	if err != nil {
+		return err
 	}
 
 	// Ask the adapter once, up front, how it wants to be driven: neither
@@ -1770,7 +1818,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 		if len(clearKeys) > 0 {
 			for i := 0; i < clearRepeats; i++ {
 				for _, k := range clearKeys {
-					if err := m.tmuxClient.SendKeys(paneID, k); err != nil {
+					if err := tc.SendKeys(paneID, k); err != nil {
 						return fmt.Errorf("failed to send clear key %q: %w", k, err)
 					}
 				}
@@ -1778,7 +1826,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 			time.Sleep(sendClearSettleDelay)
 		}
 
-		before, err := m.tmuxClient.CapturePane(paneID, false)
+		before, err := tc.CapturePane(paneID, false)
 		if err != nil {
 			return fmt.Errorf("capture-pane before failed: %w", err)
 		}
@@ -1788,10 +1836,10 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 			// One atomic bracketed paste. No chunking, so the split-boundary
 			// hazards this path was built around — the argv limit and a chunk
 			// that starts with a dash — cannot arise at all.
-			if err := m.tmuxClient.LoadBuffer(sendPasteBufferName, prompt); err != nil {
+			if err := tc.LoadBuffer(sendPasteBufferName, prompt); err != nil {
 				return fmt.Errorf("failed to load paste buffer: %w", err)
 			}
-			if err := m.tmuxClient.PasteBuffer(paneID, sendPasteBufferName); err != nil {
+			if err := tc.PasteBuffer(paneID, sendPasteBufferName); err != nil {
 				return fmt.Errorf("failed to paste prompt: %w", err)
 			}
 		} else {
@@ -1799,7 +1847,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 				if i > 0 {
 					time.Sleep(sendChunkDelay)
 				}
-				if err := m.tmuxClient.SendKeysLiteral(paneID, c); err != nil {
+				if err := tc.SendKeysLiteral(paneID, c); err != nil {
 					return fmt.Errorf("failed to send prompt: %w", err)
 				}
 			}
@@ -1821,7 +1869,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 			// the input already is, and sending keys into a folded paste
 			// would only risk disturbing it.
 			if !pasting {
-				if err := m.tmuxClient.SendKeys(paneID, sendNudgeKey); err != nil {
+				if err := tc.SendKeys(paneID, sendNudgeKey); err != nil {
 					return fmt.Errorf("failed to send nudge key %q: %w", sendNudgeKey, err)
 				}
 			}
@@ -1831,7 +1879,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 				time.Sleep(sendVerifyLookDelay)
 			}
 
-			after, err := m.tmuxClient.CapturePane(paneID, false)
+			after, err := tc.CapturePane(paneID, false)
 			if err != nil {
 				return fmt.Errorf("capture-pane after failed: %w", err)
 			}
@@ -1875,13 +1923,13 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 	// afterwards, Enter is not pressed at all.
 	if len(dismissKeys) > 0 {
 		for _, k := range dismissKeys {
-			if err := m.tmuxClient.SendKeys(paneID, k); err != nil {
+			if err := tc.SendKeys(paneID, k); err != nil {
 				return fmt.Errorf("failed to send overlay-dismiss key %q: %w", k, err)
 			}
 		}
 		time.Sleep(sendDismissSettleDelay)
 
-		after, err := m.tmuxClient.CapturePane(paneID, false)
+		after, err := tc.CapturePane(paneID, false)
 		if err != nil {
 			return fmt.Errorf("capture-pane after overlay dismiss failed: %w", err)
 		}
@@ -1892,7 +1940,7 @@ func (m *Manager) SendPrompt(id, prompt string) error {
 		}
 	}
 
-	if err := m.tmuxClient.SendKeys(paneID, "Enter"); err != nil {
+	if err := tc.SendKeys(paneID, "Enter"); err != nil {
 		return fmt.Errorf("failed to send Enter: %w", err)
 	}
 	return nil
@@ -1927,6 +1975,7 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 	status := sess.Status
 	paneID := sess.TmuxPaneID
 	agentKind := sess.AgentKind
+	snapshot := *sess
 	m.mu.RUnlock()
 
 	// The only statuses refused outright are the ones with no pane worth looking
@@ -1942,8 +1991,9 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 	if paneID == "" {
 		return BlockNone, fmt.Errorf("session has no tmux pane")
 	}
-	if m.tmuxClient == nil {
-		return BlockNone, fmt.Errorf("tmux client not available")
+	tc, err := m.runnerForSession(&snapshot)
+	if err != nil {
+		return BlockNone, err
 	}
 
 	// Unlike SendPrompt, a missing adapter is fatal here. SendPrompt falls
@@ -1957,12 +2007,15 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 			"what keys its prompts take; attach the session and answer it directly", agentKind)
 	}
 	respondCapability := CapabilitiesOf(ag).State(CapabilityRespond)
+	if snapshot.IsAdopted() {
+		respondCapability = snapshot.Capabilities.State(CapabilityRespond)
+	}
 	if respondCapability != CapabilitySupported {
 		return BlockNone, fmt.Errorf("agent kind %q has %s respond capability, so jin will not send keys; "+
 			"attach the session and answer it directly", agentKind, respondCapability.wireValue())
 	}
 
-	capture, err := m.tmuxClient.CapturePane(paneID, false)
+	capture, err := tc.CapturePane(paneID, false)
 	if err != nil {
 		return BlockNone, fmt.Errorf("capture-pane failed: %w", err)
 	}
@@ -2019,7 +2072,7 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 		// than something already on screen.
 		var beforeNorm string
 		if step.Verify {
-			before, err := m.tmuxClient.CapturePane(paneID, false)
+			before, err := tc.CapturePane(paneID, false)
 			if err != nil {
 				return kind, fmt.Errorf("capture-pane before %q failed: %w", step.Literal, err)
 			}
@@ -2028,11 +2081,11 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 
 		switch {
 		case step.Key != "":
-			if err := m.tmuxClient.SendKeys(paneID, step.Key); err != nil {
+			if err := tc.SendKeys(paneID, step.Key); err != nil {
 				return kind, fmt.Errorf("failed to send key %q: %w", step.Key, err)
 			}
 		default:
-			if err := m.tmuxClient.SendKeysLiteral(paneID, step.Literal); err != nil {
+			if err := tc.SendKeysLiteral(paneID, step.Literal); err != nil {
 				return kind, fmt.Errorf("failed to send %q: %w", step.Literal, err)
 			}
 		}
@@ -2046,7 +2099,7 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 		landed := false
 		for look := 0; look < respondVerifyLooks; look++ {
 			time.Sleep(respondClearPollDelay)
-			after, err := m.tmuxClient.CapturePane(paneID, false)
+			after, err := tc.CapturePane(paneID, false)
 			if err != nil {
 				return kind, fmt.Errorf("capture-pane after %q failed: %w", step.Literal, err)
 			}
@@ -2078,7 +2131,7 @@ func (m *Manager) RespondToBlock(id string, ans BlockAnswer) (BlockKind, error) 
 	// question drift, and this one decides whether jin reports success.
 	deadline := time.Now().Add(respondClearBudget)
 	for {
-		after, err := m.tmuxClient.CapturePane(paneID, false)
+		after, err := tc.CapturePane(paneID, false)
 		if err != nil {
 			return kind, fmt.Errorf("capture-pane after answering failed: %w", err)
 		}
@@ -2163,9 +2216,6 @@ func (m *Manager) PaneTarget(id string) (string, error) {
 // PanePopup opens a tmux popup running cmd for the session, anchored to its
 // pane and started in the session's working directory.
 func (m *Manager) PanePopup(id, cmd, title, width, height string) error {
-	if m.tmuxClient == nil {
-		return fmt.Errorf("tmux is not available")
-	}
 	m.mu.RLock()
 	sess, ok := m.sessions[id]
 	if !ok {
@@ -2174,11 +2224,19 @@ func (m *Manager) PanePopup(id, cmd, title, width, height string) error {
 	}
 	target, err := paneTargetLocked(sess)
 	workDir := sess.WorkDir
+	snapshot := *sess
 	m.mu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return m.tmuxClient.DisplayPopup(tmux.DisplayPopupOptions{
+	if snapshot.IsAdopted() {
+		return fmt.Errorf("popup is disabled for externally owned adopted panes")
+	}
+	tc, err := m.runnerForSession(&snapshot)
+	if err != nil {
+		return err
+	}
+	return tc.DisplayPopup(tmux.DisplayPopupOptions{
 		Target: target,
 		Cmd:    cmd,
 		Title:  title,
@@ -2200,9 +2258,6 @@ func (m *Manager) PanePopup(id, cmd, title, width, height string) error {
 // returned as-is (noop), respawned with opts.Cmd (respawn), or reported as an
 // error (error), per ifExists. The daemon handler validates name/ifExists/opts.
 func (m *Manager) PaneSplit(id, name, ifExists string, opts tmux.SplitOptions) (string, error) {
-	if m.tmuxClient == nil {
-		return "", fmt.Errorf("tmux is not available")
-	}
 	m.mu.RLock()
 	sess, ok := m.sessions[id]
 	if !ok {
@@ -2211,7 +2266,15 @@ func (m *Manager) PaneSplit(id, name, ifExists string, opts tmux.SplitOptions) (
 	}
 	target, err := paneTargetLocked(sess)
 	opts.Dir = sess.WorkDir
+	snapshot := *sess
 	m.mu.RUnlock()
+	if err != nil {
+		return "", err
+	}
+	if snapshot.IsAdopted() {
+		return "", fmt.Errorf("split is disabled for externally owned adopted panes")
+	}
+	tc, err := m.runnerForSession(&snapshot)
 	if err != nil {
 		return "", err
 	}
@@ -2228,15 +2291,12 @@ func (m *Manager) PaneSplit(id, name, ifExists string, opts tmux.SplitOptions) (
 		m.paneSlotMu.Lock()
 		defer m.paneSlotMu.Unlock()
 	}
-	return tmux.EnsureNamedPane(m.tmuxClient, target, name, ifExists, opts)
+	return tmux.EnsureNamedPane(tc, target, name, ifExists, opts)
 }
 
 // PaneClose kills the pane named name in the session's window. It refuses to
 // kill the session's agent pane even if that pane somehow carries the name.
 func (m *Manager) PaneClose(id, name string) error {
-	if m.tmuxClient == nil {
-		return fmt.Errorf("tmux is not available")
-	}
 	m.mu.RLock()
 	sess, ok := m.sessions[id]
 	if !ok {
@@ -2245,41 +2305,67 @@ func (m *Manager) PaneClose(id, name string) error {
 	}
 	target, err := paneTargetLocked(sess)
 	agentPane := sess.TmuxPaneID
+	snapshot := *sess
 	m.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	if snapshot.IsAdopted() {
+		return fmt.Errorf("close is disabled for externally owned adopted panes")
+	}
+	tc, err := m.runnerForSession(&snapshot)
 	if err != nil {
 		return err
 	}
 	m.paneSlotMu.Lock()
 	defer m.paneSlotMu.Unlock()
-	return tmux.CloseNamedPane(m.tmuxClient, target, name, agentPane)
+	return tmux.CloseNamedPane(tc, target, name, agentPane)
 }
 
 // PaneCapture returns the visible contents of the session's pane.
 func (m *Manager) PaneCapture(id string, ansi bool) (string, error) {
-	if m.tmuxClient == nil {
-		return "", fmt.Errorf("tmux is not available")
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return "", fmt.Errorf("session not found: %s", id)
 	}
-	target, err := m.PaneTarget(id)
+	target, err := paneTargetLocked(sess)
+	snapshot := *sess
+	m.mu.RUnlock()
 	if err != nil {
 		return "", err
 	}
-	return m.tmuxClient.CapturePane(target, ansi)
+	tc, err := m.runnerForSession(&snapshot)
+	if err != nil {
+		return "", err
+	}
+	return tc.CapturePane(target, ansi)
 }
 
 // PaneSendKeys sends keys to the session's pane. When literal is true the keys
 // are typed verbatim; otherwise they are interpreted as tmux key names.
 func (m *Manager) PaneSendKeys(id, keys string, literal bool) error {
-	if m.tmuxClient == nil {
-		return fmt.Errorf("tmux is not available")
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return fmt.Errorf("session not found: %s", id)
 	}
-	target, err := m.PaneTarget(id)
+	target, err := paneTargetLocked(sess)
+	snapshot := *sess
+	m.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	tc, err := m.runnerForSession(&snapshot)
 	if err != nil {
 		return err
 	}
 	if literal {
-		return m.tmuxClient.SendKeysLiteral(target, keys)
+		return tc.SendKeysLiteral(target, keys)
 	}
-	return m.tmuxClient.SendKeys(target, keys)
+	return tc.SendKeys(target, keys)
 }
 
 // MarkSeen acknowledges both independent inbox cursors. For NeedsAnswer this
@@ -2810,6 +2896,12 @@ func (m *Manager) StartBackground(id string) error {
 	if !ok {
 		return fmt.Errorf("session %s not found", id)
 	}
+	if session.IsAdopted() {
+		if isProcessRunning(session) {
+			return nil
+		}
+		return fmt.Errorf("adopted session cannot be restarted; preview and adopt the live pane again")
+	}
 
 	if isProcessRunning(session) {
 		return nil // Already running
@@ -3018,6 +3110,9 @@ func (m *Manager) buildAgentShellCmd(snap spawnSnapshot) (shellCmd string, resum
 
 // startSessionTmux starts a session in a tmux window.
 func (m *Manager) startSessionTmux(session *Session) error {
+	if session.IsAdopted() {
+		return fmt.Errorf("adopted session cannot be spawned or respawned")
+	}
 	// Resume in the last known cwd (e.g. worktree) when available, so the session
 	// lands where it was when it stopped. If it never moved out of WorkDir,
 	// CurrentWorkDir is empty and WorkDir is used. We do NOT silently fall back
@@ -3345,6 +3440,12 @@ func (m *Manager) pollPaneDeath(session *Session, target, sessionName string) (d
 func (m *Manager) captureOutputTmux(session *Session) {
 	ticker := time.NewTicker(paneMonitorInterval)
 	defer ticker.Stop()
+	tc, runnerErr := m.runnerForSession(session)
+	if runnerErr != nil {
+		m.stopAdoptedMonitor(session, fmt.Sprintf("cannot inspect adopted tmux pane: %v", runnerErr))
+		return
+	}
+	adopted := session.IsAdopted()
 
 	// Use pane ID (%N) when available (stable across join-pane reordering),
 	// else the window.pane index. paneTargetLocked only errors when both are
@@ -3366,16 +3467,36 @@ func (m *Manager) captureOutputTmux(session *Session) {
 		sessionName := session.Description
 		m.mu.RUnlock()
 
-		// Check if pane process has exited
-		if dead, stop := m.pollPaneDeath(session, target, sessionName); dead {
-			if stop {
+		var currentPath string
+		if adopted {
+			pane, err := tc.InspectPane(target)
+			switch {
+			case err != nil:
+				m.stopAdoptedMonitor(session, fmt.Sprintf("adopted tmux pane is missing: %v", err))
 				return
+			case !session.TmuxBinding.matches(pane):
+				m.stopAdoptedMonitor(session, "adopted tmux pane identity changed; detached without touching the foreign pane")
+				return
+			case pane.Dead:
+				m.stopAdoptedMonitor(session, "adopted tmux pane is dead")
+				return
+			default:
+				currentPath = pane.CurrentPath
 			}
-			continue
+		} else {
+			// Check if pane process has exited. Managed sessions may retry a
+			// quick failed resume; adopted panes never enter that path.
+			if dead, stop := m.pollPaneDeath(session, target, sessionName); dead {
+				if stop {
+					return
+				}
+				continue
+			}
+			currentPath, _ = tc.GetPaneCurrentPath(target)
 		}
 
 		// Track current working directory and git branch
-		if currentPath, err := m.tmuxClient.GetPaneCurrentPath(target); err == nil {
+		if currentPath != "" {
 			currentPath = strings.TrimSpace(currentPath)
 			if currentPath != "" {
 				// isPersistableWorkDir stats the filesystem, so settle it
@@ -3396,6 +3517,9 @@ func (m *Manager) captureOutputTmux(session *Session) {
 				m.updateGitBranch(session, currentPath, lastTrackedPath)
 				lastTrackedPath = currentPath
 			}
+		}
+		if adopted {
+			continue // hooks/idle inference were not installed for foreign panes
 		}
 
 		// Fallback: a session that has been "running" since a fresh start with no
@@ -3425,6 +3549,21 @@ func (m *Manager) captureOutputTmux(session *Session) {
 			}
 		}
 	}
+}
+
+func (m *Manager) stopAdoptedMonitor(session *Session, message string) {
+	m.mu.Lock()
+	live, exists := m.sessions[session.ID]
+	if !exists || live != session || live.Status == StatusDeleting {
+		m.mu.Unlock()
+		return
+	}
+	live.Status = StatusStopped
+	live.ErrorMessage = message
+	live.LastActiveAt = time.Now()
+	saved := *live
+	m.mu.Unlock()
+	_ = m.store.Save(saved)
 }
 
 // markIdleFallbackLocked applies captureOutputTmux's idle-fallback transition
@@ -3496,7 +3635,12 @@ func (m *Manager) HandleHookEvent(agentSessionID, jinSessionID, eventName, notif
 	m.mu.RLock()
 	kind := session.AgentKind
 	desc := session.Description
+	adopted := session.IsAdopted()
 	m.mu.RUnlock()
+	if adopted {
+		debugLog("[HOOK] Session %s is adopted; ignoring hook without injected ownership", desc)
+		return
+	}
 	if m.agentResolver == nil {
 		debugLog("[HOOK] Session %s: no agent resolver configured", desc)
 		return
@@ -3908,6 +4052,10 @@ func (m *Manager) Kill(id string) error {
 		m.mu.Unlock()
 		return nil
 	}
+	if session.IsAdopted() {
+		m.mu.Unlock()
+		return fmt.Errorf("adopted pane is externally owned; delete the jin record to detach without stopping it")
+	}
 	tc := m.tmuxClient
 	paneID := session.TmuxPaneID
 	windowName := session.TmuxWindowName
@@ -3985,6 +4133,9 @@ type DeleteRequest struct {
 	// there (not in PreCheckDelete) so a Kill/Start racing the pre-check
 	// window does not hand DeleteFinalize a stale name.
 	tmuxWindowName string
+	// deleteTmux is false for adopted records: deletion detaches jind-ai from
+	// the externally owned pane and must never kill its tmux session.
+	deleteTmux bool
 	// previousStatus is the Status the session held immediately before
 	// MarkDeleting flipped it to StatusDeleting. MarkDeletionFailed uses
 	// this to restore the pre-delete state on finalize failure — falling
@@ -4037,8 +4188,12 @@ func (m *Manager) PreCheckDelete(id string, removeWorktree, forceRemoveWorktree 
 	}
 	currentWorkDir := session.CurrentWorkDir
 	persistedWorkDir := session.WorkDir
+	adopted := session.IsAdopted()
 	m.mu.RUnlock()
 
+	if adopted && removeWorktree {
+		return DeleteRequest{}, fmt.Errorf("cannot remove a worktree through an adopted session; delete only detaches its jin record")
+	}
 	if !removeWorktree {
 		return req, nil
 	}
@@ -4109,6 +4264,7 @@ func (m *Manager) MarkDeleting(req *DeleteRequest) error {
 	}
 	req.previousStatus = session.Status
 	req.tmuxWindowName = session.TmuxWindowName
+	req.deleteTmux = !session.IsAdopted()
 	session.Status = StatusDeleting
 	saved := *session
 	m.mu.Unlock()
@@ -4162,7 +4318,7 @@ func (m *Manager) DeleteFinalize(req DeleteRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.tmuxClient != nil && req.tmuxWindowName != "" {
+	if req.deleteTmux && m.tmuxClient != nil && req.tmuxWindowName != "" {
 		_ = m.tmuxClient.KillSession(req.tmuxWindowName)
 	}
 

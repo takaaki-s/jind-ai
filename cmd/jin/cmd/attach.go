@@ -30,6 +30,9 @@ var attachCmd = &cobra.Command{
 
 		// Start stopped sessions (resume)
 		if sess.Status == session.StatusStopped {
+			if sess.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
+				return fmt.Errorf("adopted pane is no longer live; preview and adopt it again")
+			}
 			if err := client.Start(sess.ID); err != nil {
 				return fmt.Errorf("failed to start session: %w", err)
 			}
@@ -42,7 +45,12 @@ var attachCmd = &cobra.Command{
 			windowName = tmux.InnerSessionName(sess.ID)
 		}
 
-		tc, err := tmux.NewClient()
+		var tc *tmux.Client
+		if sess.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
+			tc, err = tmux.NewClientForServer(sess.TmuxBinding.Server)
+		} else {
+			tc, err = tmux.NewClient()
+		}
 		if err != nil {
 			return fmt.Errorf("tmux not available: %w", err)
 		}

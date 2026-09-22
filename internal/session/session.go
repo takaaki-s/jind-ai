@@ -133,6 +133,9 @@ type Session struct {
 	// tmux integration
 	TmuxWindowName string `json:"tmux_window_name,omitempty"` // tmux window name for this session
 	TmuxPaneID     string `json:"tmux_pane_id,omitempty"`     // CC pane ID (e.g., "%42") for capture-pane
+	// TmuxBinding is non-zero only for a pane adopted from outside jind-ai.
+	// Existing records and sessions spawned by jin remain implicitly managed.
+	TmuxBinding TmuxBinding `json:"tmux_binding,omitzero"`
 
 	// Runtime fields (not persisted)
 	LastOutputTime   time.Time         `json:"-"` // Last PTY output received (for idle stability detection)
@@ -182,8 +185,10 @@ type Info struct {
 	AgentKind         string            `json:"agent_kind,omitempty"`       // Adapter identifier ("claude" etc.)
 	AgentSessionID    string            `json:"agent_session_id,omitempty"` // Adapter-side persistent session id (transcript lookup, resume)
 	Model             string            `json:"model,omitempty"`            // Agent model in the CLI's own spelling (see Session.Model)
-	Capabilities      AgentCapabilities `json:"capabilities"`               // Live adapter support; zero/old peer means every state is unknown
+	Capabilities      AgentCapabilities `json:"capabilities"`               // Live effective support; zero/old peer means every state is unknown
 	TmuxWindowName    string            `json:"tmux_window_name,omitempty"` // tmux window name
+	TmuxPaneID        string            `json:"tmux_pane_id,omitempty"`     // exact pane target
+	TmuxBinding       TmuxBinding       `json:"tmux_binding,omitzero"`      // non-zero for externally owned adopted panes
 	Fleet             string            `json:"fleet"`                      // Fleet name for session grouping
 
 	// Attention projects the completion receipt with `unseen` derived. Omitted
@@ -247,6 +252,8 @@ func (s *Session) ToInfo() Info {
 		Model:             s.Model,
 		Capabilities:      s.Capabilities,
 		TmuxWindowName:    s.TmuxWindowName,
+		TmuxPaneID:        s.TmuxPaneID,
+		TmuxBinding:       s.TmuxBinding,
 		Fleet:             s.Fleet,
 		Attention:         attention.toInfo(),
 		NeedsAnswer:       s.NeedsAnswer.toInfo(s.Capabilities.State(CapabilityReliableNeedsAnswer)),

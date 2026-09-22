@@ -35,4 +35,6 @@ package daemon
 // explicit task-comment action.
 // v13: session.Info includes the adapter's versioned capability declaration.
 // v14: session.Info includes explicit tri-state needs-answer evidence.
-const ProtocolVersion = 14
+// v15: session.Info includes exact tmux pane/binding ownership metadata; add
+// the two-phase local tmux pane adoption action.
+const ProtocolVersion = 15

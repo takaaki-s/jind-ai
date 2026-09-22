@@ -36,10 +36,13 @@ type mockTmuxRunner struct {
 	// deadStatus is the exit status PaneDeath reports for a dead pane. Unset
 	// means 0, which classifyPaneDeath reads as a clean exit — a test driving
 	// the quick-fail retry has to name a non-zero one.
-	deadStatus map[string]int
-	paneIDs    map[string]string // session name -> pane ID (GetPaneID return value)
-	panePaths  map[string]string // target -> current path (GetPaneCurrentPath return value)
-	captured   map[string]string // target -> content (CapturePane return value)
+	deadStatus    map[string]int
+	paneIDs       map[string]string // session name -> pane ID (GetPaneID return value)
+	panePaths     map[string]string // target -> current path (GetPaneCurrentPath return value)
+	captured      map[string]string // target -> content (CapturePane return value)
+	paneInfos     map[string]tmux.PaneInfo
+	inspectErr    map[string]error
+	onInspectPane func(target string)
 
 	// splitPaneIDs overrides the pane ID SplitPane returns for a given
 	// target; unset targets get "%99". namedPanes maps a slot name to the
@@ -211,6 +214,8 @@ func newMockTmuxRunner() *mockTmuxRunner {
 		paneIDs:            make(map[string]string),
 		panePaths:          make(map[string]string),
 		captured:           make(map[string]string),
+		paneInfos:          make(map[string]tmux.PaneInfo),
+		inspectErr:         make(map[string]error),
 		splitPaneIDs:       make(map[string]string),
 		namedPanes:         make(map[string]string),
 		capturedSequence:   make(map[string][]string),
@@ -230,6 +235,19 @@ func newMockTmuxRunner() *mockTmuxRunner {
 		captureTimes:             make(map[string][]time.Time),
 		loadedBuffers:            make(map[string]string),
 	}
+}
+
+func (m *mockTmuxRunner) InspectPane(target string) (tmux.PaneInfo, error) {
+	m.mu.Lock()
+	m.record("InspectPane", target)
+	info := m.paneInfos[target]
+	err := m.inspectErr[target]
+	cb := takeHook(&m.onInspectPane)
+	m.mu.Unlock()
+	if cb != nil {
+		cb(target)
+	}
+	return info, err
 }
 
 // takeHook consumes a fire-once callback, clearing it so a later call does not

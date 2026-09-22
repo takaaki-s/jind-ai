@@ -49,7 +49,16 @@ func renderSessionInfoText(w io.Writer, info *session.Info) {
 	fmt.Fprintf(tw, "Description:\t%s\n", info.Description)
 	fmt.Fprintf(tw, "ID:\t%s\n", info.ID)
 	fmt.Fprintf(tw, "Status:\t%s\n", info.Status)
+	if info.AgentKind != "" {
+		fmt.Fprintf(tw, "Agent:\t%s\n", info.AgentKind)
+	}
 	fmt.Fprintf(tw, "WorkDir:\t%s\n", info.WorkDir)
+	if info.TmuxBinding.Ownership == session.TmuxOwnershipAdopted {
+		fmt.Fprintf(tw, "Ownership:\tadopted (external; delete detaches only)\n")
+		fmt.Fprintf(tw, "Tmux:\t%s %s / %s / %s (PID %d)\n",
+			info.TmuxBinding.Server.DisplayName(), info.TmuxBinding.SessionName,
+			info.TmuxBinding.WindowName, info.TmuxBinding.PaneID, info.TmuxBinding.PanePID)
+	}
 
 	if info.CurrentWorkDir != "" {
 		fmt.Fprintf(tw, "CurrentWorkDir:\t%s\n", info.CurrentWorkDir)

@@ -40,6 +40,13 @@ What works for every kind: `new`, `send`, `wait`, `kill`, `delete`, `list`,
 `info`, and status (`idle` / `thinking`; `permission` on claude and opencode
 only — see "Waiting on an approval" below).
 
+That list describes sessions jin spawned. A `session adopt` record deliberately
+has a narrower contract: jin did not inject hooks or establish conversation
+identity, so only liveness and explicit pane inspection are supported. `kill`
+and restart refuse; `delete` drops only the record and never touches the
+foreign pane. Check `session info --json` capabilities before automating an
+adopted session.
+
 When the result is empty, or the limits below say you cannot trust it, go to
 the artifacts:
 
