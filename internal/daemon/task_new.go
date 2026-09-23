@@ -32,13 +32,17 @@ type TaskNewRequest struct {
 	Title           string `json:"title,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	Issue           string `json:"issue,omitempty"`
-	Repo            string `json:"repo"`
+	Repo            string `json:"repo,omitempty"`
+	Target          string `json:"target,omitempty"`
+	Repository      string `json:"repository,omitempty"`
 	RelativeWorkDir string `json:"workdir,omitempty"`
 	RequestedBase   string `json:"requested_base,omitempty"`
 	AgentKind       string `json:"agent_kind,omitempty"`
 	Model           string `json:"model,omitempty"`
 	Fleet           string `json:"fleet,omitempty"`
 	NoHook          bool   `json:"no_hook,omitempty"`
+	remoteOrigin    *task.RemoteOrigin
+	sourceOverride  *task.Source
 }
 
 type TaskNewResponse struct {
@@ -85,6 +89,13 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 	if err := json.Unmarshal(data, &req); err != nil {
 		return Response{Success: false, Error: err.Error()}
 	}
+	if strings.TrimSpace(req.Target) != "" || strings.TrimSpace(req.Repository) != "" {
+		return s.handleRemoteTaskNew(req)
+	}
+	return s.startLocalTask(req)
+}
+
+func (s *Server) startLocalTask(req TaskNewRequest) Response {
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 	if req.IdempotencyKey == "" {
 		return Response{Success: false, Error: "idempotency_key is required"}
@@ -145,7 +156,9 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 		req.Title = filepath.Base(repo) + " task"
 	}
 	req.Repo = repo
-	if source.Kind == "" {
+	if req.sourceOverride != nil {
+		source = *req.sourceOverride
+	} else if source.Kind == "" {
 		source = task.Source{Kind: "prompt", Ref: "sha256:" + task.PromptDigest(req.Prompt)}
 	}
 
@@ -158,7 +171,7 @@ func (s *Server) handleTaskNew(data json.RawMessage) Response {
 		Fleet: req.Fleet, NoHook: req.NoHook, RequestedBase: req.RequestedBase,
 		BranchPrefix: s.configMgr.GetWorktreeConfig().BranchPrefix,
 		PromptSHA256: task.PromptDigest(req.Prompt), PromptBytes: len(req.Prompt),
-		Source: source,
+		Source: source, RemoteOrigin: req.remoteOrigin,
 	})
 	if err != nil {
 		s.createMu.Unlock()

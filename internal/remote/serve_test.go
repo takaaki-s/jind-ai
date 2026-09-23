@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
 type fakeBackend struct {
 	handshake HandshakeResponse
 	preflight PreflightResponse
+	start     StartResponse
+	inspect   InspectResponse
 	preErr    *WireError
 	seen      []string
 }
@@ -22,6 +28,81 @@ func (b *fakeBackend) Handshake(HandshakeRequest) (HandshakeResponse, *WireError
 func (b *fakeBackend) Preflight(controllerID string, _ PreflightRequest) (PreflightResponse, *WireError) {
 	b.seen = append(b.seen, controllerID)
 	return b.preflight, b.preErr
+}
+
+func (b *fakeBackend) StartExecution(string, StartRequest) (StartResponse, *WireError) {
+	b.seen = append(b.seen, "start")
+	return b.start, nil
+}
+
+func (b *fakeBackend) InspectExecution(string, InspectRequest) (InspectResponse, *WireError) {
+	b.seen = append(b.seen, "inspect")
+	return b.inspect, nil
+}
+
+func TestServeStartsAndInspectsBoundExecution(t *testing.T) {
+	prompt := "hello"
+	observed := time.Now().UTC().Truncate(time.Second)
+	summary := task.RemoteSummary{
+		Sequence: 1, ObservedAt: observed,
+		Execution: task.RemoteExecutionSummary{Phase: task.ExecutionSubmitted},
+		Session: &task.RemoteSessionSummary{
+			ID: "session-remote", Status: session.StatusIdle,
+			Attention: session.AttentionInfo{State: session.AttentionDone, Generation: 1, Unseen: true},
+		},
+	}
+	backend := &fakeBackend{
+		handshake: validHandshake(),
+		start:     StartResponse{RemoteTaskID: "task-remote", RemoteExecutionID: "exec-remote", Summary: summary},
+		inspect:   InspectResponse{RemoteTaskID: "task-remote", RemoteExecutionID: "exec-remote", Summary: summary},
+	}
+	backend.handshake.Capabilities = []string{CapabilityExecutionStart, CapabilityExecutionInspect, CapabilityStructuredSummary}
+	start := StartRequest{
+		ControllerExecutionID: "exec-controller", IdempotencyKey: "request-1", RepositoryID: "product",
+		ExpectedRepositoryIdentity: "sha256:" + strings.Repeat("a", 64), Title: "Remote task",
+		Source: task.Source{Kind: "prompt", Ref: "sha256:" + task.PromptDigest(prompt)}, AgentKind: "claude",
+		Prompt: PromptEnvelope{SHA256: task.PromptDigest(prompt), Bytes: len(prompt), Body: prompt},
+	}
+	responses := runServer(t, backend,
+		request(t, "req-handshake", "ctl-test", OperationHandshake, HandshakeRequest{
+			MinimumVersion: 1, MaximumVersion: 1, RequiredCapabilities: []string{CapabilityExecutionStart},
+		}),
+		request(t, "req-start", "ctl-test", OperationExecutionStart, start),
+		request(t, "req-inspect", "ctl-test", OperationExecutionInspect, InspectRequest{
+			ControllerExecutionID: start.ControllerExecutionID, RemoteExecutionID: "exec-remote",
+		}),
+	)
+	for i, response := range responses {
+		if response.Status != "ok" {
+			t.Fatalf("response %d = %+v", i, response)
+		}
+	}
+	if strings.Join(backend.seen, ",") != "handshake,start,inspect" {
+		t.Fatalf("backend calls = %#v", backend.seen)
+	}
+}
+
+func TestValidateSummaryRejectsInconsistentAttentionAndSequence(t *testing.T) {
+	valid := task.RemoteSummary{
+		Sequence: 1, ObservedAt: time.Now(), Execution: task.RemoteExecutionSummary{Phase: task.ExecutionSubmitted},
+		Session: &task.RemoteSessionSummary{ID: "session-1", Status: session.StatusIdle},
+	}
+	if wireErr := ValidateSummary(valid); wireErr != nil {
+		t.Fatalf("valid summary = %+v", wireErr)
+	}
+	invalid := valid
+	invalid.Session = &task.RemoteSessionSummary{
+		ID: "session-1", Status: session.StatusIdle,
+		Attention: session.AttentionInfo{State: session.AttentionDone, Generation: 1, Unseen: false},
+	}
+	if wireErr := ValidateSummary(invalid); wireErr == nil || wireErr.Code != "invalid_response" {
+		t.Fatalf("inconsistent attention = %+v", wireErr)
+	}
+	invalid = valid
+	invalid.Sequence = 0
+	if wireErr := ValidateSummary(invalid); wireErr == nil || wireErr.Code != "invalid_response" {
+		t.Fatalf("zero sequence = %+v", wireErr)
+	}
 }
 
 func validHandshake() HandshakeResponse {

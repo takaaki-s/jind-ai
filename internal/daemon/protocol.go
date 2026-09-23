@@ -39,4 +39,7 @@ package daemon
 // the two-phase local tmux pane adoption action.
 // v16: adoption previews and session.Info include agent detection candidates,
 // selection provenance, and the adoption-only generic fallback.
-const ProtocolVersion = 16
+// v17: task-new accepts an explicit remote target/repository pair, Task
+// projections include durable remote bindings, and add task-sync plus the
+// target-side execution start/inspect adapters.
+const ProtocolVersion = 17

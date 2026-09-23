@@ -28,8 +28,33 @@ func TestTaskCommandsAreRegistered(t *testing.T) {
 	if got, _, err := rootCmd.Find([]string{"task", "new"}); err != nil || got != taskNewCmd {
 		t.Fatal("task new command is not registered")
 	}
+	if got, _, err := rootCmd.Find([]string{"task", "sync"}); err != nil || got != taskSyncCmd {
+		t.Fatal("task sync command is not registered")
+	}
 	if got, _, err := rootCmd.Find([]string{"task", "comment"}); err != nil || got != taskCommentCmd {
 		t.Fatal("task comment command is not registered")
+	}
+}
+
+func TestTaskNewRequestMapsRemoteTarget(t *testing.T) {
+	got, err := taskNewRequest(newTaskNewFlagCommand(t,
+		"--prompt", "do it", "--target", "build", "--repository", "jind-ai", "--idempotency-key", "request-remote",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "build" || got.Repository != "jind-ai" || got.Repo != "" {
+		t.Fatalf("request = %+v", got)
+	}
+	for _, args := range [][]string{
+		{"--prompt", "x", "--target", "build"},
+		{"--prompt", "x", "--repository", "jind-ai"},
+		{"--prompt", "x", "--repo", "/repo", "--target", "build", "--repository", "jind-ai"},
+		{"--issue", "owner/repo#1", "--target", "build", "--repository", "jind-ai"},
+	} {
+		if _, err := taskNewRequest(newTaskNewFlagCommand(t, args...)); err == nil {
+			t.Fatalf("accepted invalid remote args: %v", args)
+		}
 	}
 }
 
@@ -123,6 +148,27 @@ func TestRenderTaskNewTextShowsRetryAndProgressIdentities(t *testing.T) {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("output %q does not contain %q", buf.String(), want)
 		}
+	}
+}
+
+func TestRenderTaskNewTextShowsRemoteBindingWithoutLocalSession(t *testing.T) {
+	result := &daemon.TaskNewResponse{
+		Task: task.Info{ID: "task-1", Title: "Remote"},
+		Execution: task.ExecutionInfo{Execution: task.Execution{
+			ID: "exec-1", Backend: task.ExecutionBackendRemote,
+			Remote: &task.RemoteLink{TargetID: "build", RepositoryLabel: "jind-ai", SyncState: task.RemoteSyncBound, RemoteExecutionID: "exec-r"},
+			Run:    &task.Run{Phase: task.ExecutionReserved, IdempotencyKey: "request-1"},
+		}},
+	}
+	var buf bytes.Buffer
+	renderTaskNewText(&buf, result)
+	for _, want := range []string{"build/jind-ai", "bound", "exec-r", "request-1"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("output %q does not contain %q", buf.String(), want)
+		}
+	}
+	if strings.Contains(buf.String(), "Session:") || strings.Contains(buf.String(), "Worktree:") {
+		t.Fatalf("remote output leaked local placeholders: %q", buf.String())
 	}
 }
 

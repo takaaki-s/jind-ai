@@ -8,10 +8,102 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
+
+func testRemoteRunOptions() RemoteRunOptions {
+	prompt := "Run this on the build host"
+	return RemoteRunOptions{
+		IdempotencyKey: "remote-request-1", Title: "Remote build", TargetID: "build",
+		TargetRevision: "sha256:target", RepositoryLabel: "jind-ai", RepositoryID: "product",
+		RelativeWorkDir: "internal", AgentKind: "claude", RequestedBase: "main",
+		PromptSHA256: PromptDigest(prompt), PromptBytes: len(prompt),
+	}
+}
+
+func TestManager_RemoteReservationPrecedesBindingAndSurvivesRestart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks")
+	sessions := &fakeSessions{infos: map[string]session.Info{}}
+	m, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.ReserveRemoteRun(testRemoteRunOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.Execution.Backend != ExecutionBackendRemote || first.Execution.SessionID != "" ||
+		first.Execution.Remote == nil || first.Execution.Remote.SyncState != RemoteSyncDispatching {
+		t.Fatalf("reservation = %+v", first)
+	}
+	bound, err := m.ApplyRemotePreflight(first.Task.ID, first.Execution.ID, "sha256:target", "srv-1", "boot-1",
+		[]string{"execution.start.v1"}, "sha256:repo")
+	if err != nil || bound.Executions[0].Remote.RepositoryIdentity != "sha256:repo" || len(bound.Executions[0].Remote.Capabilities) != 1 {
+		t.Fatalf("preflight = %+v, %v", bound, err)
+	}
+	summary := RemoteSummary{
+		Sequence: 1, ObservedAt: time.Date(2026, 9, 23, 1, 2, 3, 0, time.UTC),
+		Execution: RemoteExecutionSummary{Phase: ExecutionSubmitted},
+	}
+	bound, err = m.BindRemoteExecution(first.Task.ID, first.Execution.ID, "srv-1", "boot-2", "task-r", "exec-r", summary)
+	if err != nil || bound.Executions[0].Remote.SyncState != RemoteSyncBound {
+		t.Fatalf("binding = %+v, %v", bound, err)
+	}
+
+	restarted, err := NewManager(dir, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := restarted.ReserveRemoteRun(testRemoteRunOptions())
+	if err != nil || retry.Created || retry.Execution.Remote.RemoteExecutionID != "exec-r" {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+	changed := summary
+	changed.Execution.Phase = ExecutionFailed
+	if got, err := restarted.ApplyRemoteInspection(first.Task.ID, first.Execution.ID, "srv-1", "boot-2", "task-r", "exec-r", changed); err == nil ||
+		got.Executions[0].Remote.SyncState != RemoteSyncBlocked {
+		t.Fatalf("same-sequence mutation = %+v, %v", got, err)
+	}
+}
+
+func TestManager_RemoteOriginPreventsDuplicateTargetExecutions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks")
+	m, _ := NewManager(dir, &fakeSessions{infos: map[string]session.Info{}})
+	opts := testRunOptions()
+	opts.IdempotencyKey = "remote_derived"
+	opts.RemoteOrigin = &RemoteOrigin{ControllerID: "ctl-1", ControllerExecutionID: "exec-c", IdempotencyKey: "request-c"}
+	first, err := m.ReserveRun(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := m.ReserveRun(opts)
+	if err != nil || retry.Created || retry.Execution.ID != first.Execution.ID {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+	info, execution, err := m.FindRemoteExecution("ctl-1", "exec-c", first.Execution.ID)
+	if err != nil || info.ID != first.Task.ID || execution.ID != first.Execution.ID {
+		t.Fatalf("binding = %+v %+v, %v", info, execution, err)
+	}
+
+	now := time.Date(2026, 9, 23, 4, 5, 6, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	sequence, observedAt, err := m.RecordRemoteSummaryDigest(first.Task.ID, first.Execution.ID, "digest-a")
+	if err != nil || sequence != 1 || !observedAt.Equal(now) {
+		t.Fatalf("first summary = %d %s, %v", sequence, observedAt, err)
+	}
+	m.now = func() time.Time { return now.Add(time.Hour) }
+	sequence, observedAt, err = m.RecordRemoteSummaryDigest(first.Task.ID, first.Execution.ID, "digest-a")
+	if err != nil || sequence != 1 || !observedAt.Equal(now) {
+		t.Fatalf("stable summary = %d %s, %v", sequence, observedAt, err)
+	}
+	sequence, observedAt, err = m.RecordRemoteSummaryDigest(first.Task.ID, first.Execution.ID, "digest-b")
+	if err != nil || sequence != 2 || !observedAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("advanced summary = %d %s, %v", sequence, observedAt, err)
+	}
+}
 
 func testRunOptions() RunOptions {
 	prompt := "Implement the bounded change"

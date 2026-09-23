@@ -87,6 +87,28 @@ var taskInfoCmd = &cobra.Command{
 	},
 }
 
+var taskSyncCmd = &cobra.Command{
+	Use:   "sync <selector>",
+	Short: "Refresh a remote task execution's structured summary",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := daemon.NewClient(getSocketPath())
+		info, err := resolveTask(client, args[0])
+		if err != nil {
+			return err
+		}
+		updated, err := client.SyncTask(info.ID)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(os.Stdout, updated)
+		}
+		renderTaskInfoText(os.Stdout, updated)
+		return nil
+	},
+}
+
 var taskExecutionCmd = &cobra.Command{
 	Use:   "execution",
 	Short: "Manage a task's execution attempts",
@@ -191,10 +213,18 @@ func renderTaskTable(w io.Writer, infos []task.Info) error {
 	fmt.Fprintln(tw, "TITLE\tEXECUTIONS\tLATEST\tSOURCE\tUPDATED")
 	for _, info := range infos {
 		latest := "-"
+		if len(info.Executions) > 0 {
+			execution := info.Executions[len(info.Executions)-1]
+			if execution.Backend == task.ExecutionBackendRemote && execution.Remote != nil {
+				latest = "remote/" + string(execution.Remote.SyncState)
+			}
+		}
 		if info.LatestAttention != nil {
-			latest = string(info.LatestAttention.ReferenceState)
-			if info.LatestAttention.ReferenceState == task.ReferencePresent {
-				latest = string(info.LatestAttention.SessionStatus)
+			if info.LatestAttention.Backend != task.ExecutionBackendRemote {
+				latest = string(info.LatestAttention.ReferenceState)
+				if info.LatestAttention.ReferenceState == task.ReferencePresent {
+					latest = string(info.LatestAttention.SessionStatus)
+				}
 			}
 			if info.LatestAttention.Attention.Unseen {
 				latest = string(info.LatestAttention.Attention.State)
@@ -228,7 +258,22 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 		if execution.Attention.Unseen {
 			state += "/" + string(execution.Attention.State)
 		}
-		fmt.Fprintf(tw, "  #%d:\t%s  session=%s  %s\n", execution.Sequence, execution.ID, execution.SessionID, state)
+		if execution.Backend == task.ExecutionBackendRemote && execution.Remote != nil {
+			fmt.Fprintf(tw, "  #%d:\t%s  remote=%s/%s  %s\n", execution.Sequence, execution.ID,
+				execution.Remote.TargetID, execution.Remote.RepositoryLabel, execution.Remote.SyncState)
+			if execution.Remote.RemoteExecutionID != "" {
+				fmt.Fprintf(tw, "    Remote execution:\t%s\n", execution.Remote.RemoteExecutionID)
+			}
+			if execution.Remote.Summary != nil {
+				fmt.Fprintf(tw, "    Remote phase:\t%s  observed=%s\n", execution.Remote.Summary.Execution.Phase,
+					execution.Remote.Summary.ObservedAt.Format("2006-01-02 15:04:05"))
+			}
+			if execution.Remote.Error != "" {
+				fmt.Fprintf(tw, "    Remote error:\t%s\n", execution.Remote.Error)
+			}
+		} else {
+			fmt.Fprintf(tw, "  #%d:\t%s  session=%s  %s\n", execution.Sequence, execution.ID, execution.SessionID, state)
+		}
 		if execution.Run != nil {
 			fmt.Fprintf(tw, "    Run:\t%s  branch=%s  worktree=%s\n", execution.Run.Phase, execution.Run.WorktreeBranch, execution.Run.WorktreeName)
 			fmt.Fprintf(tw, "    Key:\t%s\n", execution.Run.IdempotencyKey)
@@ -259,7 +304,7 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 
 func init() {
 	rootCmd.AddCommand(taskCmd)
-	taskCmd.AddCommand(taskCreateCmd, taskListCmd, taskInfoCmd, taskExecutionCmd)
+	taskCmd.AddCommand(taskCreateCmd, taskListCmd, taskInfoCmd, taskSyncCmd, taskExecutionCmd)
 	taskExecutionCmd.AddCommand(taskExecutionAddCmd)
 	taskCreateCmd.Flags().String("title", "", "Task title (required)")
 	taskCreateCmd.Flags().String("source-kind", "manual", "Origin kind, such as manual or issue")

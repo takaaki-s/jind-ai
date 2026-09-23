@@ -46,6 +46,7 @@ per-action:
 | dial | 2s | every request |
 | request write | 5s | every request |
 | response wait (default) | 60s | every action without its own entry below |
+| response wait: remote `task-new` | 75s | repository preflight plus execution start over two 30s SSH budgets |
 | response wait: `hook` | 10s | the agent-facing path — a stalled hook blocks the agent process itself |
 | response wait: `stop` | 5s | the remedy for a wedged daemon, so it must not inherit the wedged-daemon bound |
 | response wait: `pane-popup` | none | the handler runs `tmux display-popup -E`, which blocks for the popup's user-controlled lifetime |
@@ -65,7 +66,9 @@ accepted connection on its own goroutine, so writing never waits on handler
 work. A blocked write means the daemon stopped reading, and it is reported that
 way rather than as a failure to respond.
 
-The 60s response wait is deliberately generous. With `pane-popup` out of its
+The 60s response wait is deliberately generous. A remote `task-new` uses 75s
+because it serially performs two SSH exchanges, each with a 30s total budget;
+local `task-new` remains on the default. With `pane-popup` out of its
 scope — and `hook` and `stop` on bounds of their own — what it covers is tmux
 subprocess calls and local file reads, plus one handler with a named cost:
 `send` waits for the prompt to appear in the pane before giving up, and that
@@ -147,11 +150,14 @@ it alone.
 | `task-new` | `TaskNewRequest` | Reserve a Task/Execution/worktree session from a prompt or read-only GitHub Issue and asynchronously submit it |
 | `task-list` | (none) | List tasks with live execution/attention projections |
 | `task-get` | `IDRequest` | Get one task with its ordered execution history |
+| `task-sync` | `TaskSyncRequest` | Explicitly inspect the latest remote execution and persist its structured summary |
 | `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
 | `task-comment` | `TaskCommentRequest` | Preview or explicitly create/reconcile one comment on a Task's source GitHub Issue |
 | `remote-preflight` | `RemoteTargetPreflightRequest` | Resolve one configured target/repository mapping and perform bounded SSH handshake plus repository preflight |
 | `remote-backend-handshake` | `remote.HandshakeRequest` | Internal adapter used by `jin remote serve --stdio` to negotiate against the target daemon |
 | `remote-backend-preflight` | controller ID + `remote.PreflightRequest` | Internal adapter used by the stdio server to resolve one allowlisted repository locally |
+| `remote-backend-start` | controller ID + `remote.StartRequest` | Internal adapter used by the stdio server to reserve/reconcile a target-owned Task execution |
+| `remote-backend-inspect` | controller ID + `remote.InspectRequest` | Internal adapter used by the stdio server to read a target-owned structured summary |
 | `send` | `SendRequest` | Send a prompt to a session (alias `prompt` on the CLI) |
 | `respond` | `RespondRequest` | Answer a prompt an agent is blocked on; returns `RespondResponse` |
 | `start` | `IDRequest` | Start session |
@@ -180,9 +186,11 @@ it alone.
 accepts `title`, `source {kind, ref, provider, repository, external_id, url,
 sync_token}`, optional `requested_base`, and optional
 `prompt_summary`; every string has a fixed size bound. It accepts no full
-prompt, transcript, secret, or provider body. An Execution stores only its own
-ID, sequence, referenced session ID, and creation time. Reads add
-`reference_state`, current session status, and current attention; if the
+prompt, transcript, secret, or provider body. A local Execution stores its own
+ID, sequence, backend, referenced session ID, and creation time. A remote
+Execution replaces the local session reference with a bounded identity/link
+and structured summary; it stores no remote path or pane identity. Reads add
+`reference_state`, current or cached session status, and attention. If a local
 session no longer exists, `reference_state` is `missing` and the durable
 execution remains intact.
 
@@ -211,6 +219,15 @@ POST and then `succeeded` or `unknown`. Comment text crosses IPC only for that
 request and is persisted only as SHA-256 plus byte count. Provider receipts are
 bounded to provider/comment ID/URL/actor. An unknown retry reconciles but never
 blindly repeats the POST.
+
+Protocol v17 extends `task-new` with the mutually exclusive remote
+`target`/`repository` pair, adds `backend` and the optional durable remote link
+to every Task execution projection, and adds `task-sync`. A remote execution
+has no local Session ID or local path. The controller records its execution ID
+before SSH; the target binds that ID and the idempotency key before any
+worktree/session side effect. The internal remote backend actions are reachable
+only through the framed stdio server, which validates the public protocol and
+delegates ownership to the target daemon.
 
 Protocol v13 adds the required `Info.capabilities` object to every session
 projection. Managed sessions describe adapter support rather than runtime
@@ -524,7 +541,9 @@ type TaskNewRequest struct {
     Title           string `json:"title,omitempty"`
     Prompt          string `json:"prompt,omitempty"`        // exactly one of Prompt/Issue; max 64 KiB
     Issue           string `json:"issue,omitempty"`         // URL, owner/repo#N, or N resolved from origin
-    Repo            string `json:"repo"`                    // git repository root
+    Repo            string `json:"repo,omitempty"`          // local git root; exclusive with Target/Repository
+    Target          string `json:"target,omitempty"`        // configured remote target
+    Repository      string `json:"repository,omitempty"`    // target mapping; required with Target
     RelativeWorkDir string `json:"workdir,omitempty"`       // contained in managed worktree
     RequestedBase   string `json:"requested_base,omitempty"` // branch name, without origin/
     AgentKind       string `json:"agent_kind,omitempty"`
@@ -795,13 +814,21 @@ object changes every `session.Info` projection. Its explicit `unknown` state is
 the compatibility result for older or untrusted evidence, while the strict
 wire-version check still requires client and daemon to run the same build.
 
+v17 follows it for remote Task execution: `task-sync` and the target-side
+backend actions are new, while `task-new` accepts a new input shape and every
+Task execution projection gains backend/remote-link fields. A matching daemon
+restart is therefore mandatory.
+
 `attention-seen` is deliberately **not** in `readOnlyActions`: it writes a
 session file, so a client that times out on it must be told the outcome is
 unknown. `Manager.MarkSeen` is idempotent, so the retry that wording invites is
 safe.
 
 `task-new` is also absent: its acknowledgement is idempotent, but it reserves
-local identities and dispatches worktree/session creation.
+local or controller-side identities and may dispatch worktree/session creation
+over SSH. `task-sync` is also absent because it persists the latest remote
+summary and endpoint boot identity even though the remote inspect itself is
+read-only.
 
 `task-comment` is absent too: dry-run is read-only, but the same action's
 confirm mode persists an audit and may create an external comment. A timeout is

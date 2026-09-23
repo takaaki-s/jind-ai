@@ -15,7 +15,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 const (
 	MaxTitleLength           = 200
@@ -117,14 +117,84 @@ type MutationResult struct {
 	Actor    string `json:"actor"`
 }
 
-// Execution is a stable link from one task attempt to one existing session.
-// It contains no prompt body or transcript data.
+// Execution is one stable local-or-remote attempt. A local attempt references
+// a local session; a remote attempt carries only opaque identities and a
+// bounded summary. Neither form contains prompt body or transcript data.
 type Execution struct {
-	ID        string    `json:"id"`
-	Sequence  uint64    `json:"sequence"`
-	SessionID string    `json:"session_id"`
-	CreatedAt time.Time `json:"created_at"`
-	Run       *Run      `json:"run,omitempty"`
+	ID        string           `json:"id"`
+	Sequence  uint64           `json:"sequence"`
+	Backend   ExecutionBackend `json:"backend"`
+	SessionID string           `json:"session_id,omitempty"`
+	Remote    *RemoteLink      `json:"remote,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	Run       *Run             `json:"run,omitempty"`
+}
+
+type ExecutionBackend string
+
+const (
+	ExecutionBackendLocal  ExecutionBackend = "local"
+	ExecutionBackendRemote ExecutionBackend = "remote"
+)
+
+type RemoteSyncState string
+
+const (
+	RemoteSyncDispatching RemoteSyncState = "dispatching"
+	RemoteSyncBound       RemoteSyncState = "bound"
+	RemoteSyncUnreachable RemoteSyncState = "unreachable"
+	RemoteSyncBlocked     RemoteSyncState = "blocked"
+)
+
+// RemoteLink is the controller-owned durable binding to a remote execution.
+// Every value is an opaque identity or bounded projection; paths, pane IDs,
+// transcript content, and credentials never cross this boundary.
+type RemoteLink struct {
+	TargetID              string          `json:"target_id"`
+	TargetRevision        string          `json:"target_revision"`
+	RepositoryLabel       string          `json:"repository_label"`
+	RepositoryID          string          `json:"repository_id"`
+	RepositoryIdentity    string          `json:"repository_identity,omitempty"`
+	ServerInstanceID      string          `json:"server_instance_id,omitempty"`
+	ServerBootID          string          `json:"server_boot_id,omitempty"`
+	Capabilities          []string        `json:"capabilities,omitempty"`
+	ControllerExecutionID string          `json:"controller_execution_id"`
+	RemoteTaskID          string          `json:"remote_task_id,omitempty"`
+	RemoteExecutionID     string          `json:"remote_execution_id,omitempty"`
+	SyncState             RemoteSyncState `json:"sync_state"`
+	Summary               *RemoteSummary  `json:"summary,omitempty"`
+	Error                 string          `json:"error,omitempty"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+type RemoteSummary struct {
+	Sequence   uint64                 `json:"sequence"`
+	ObservedAt time.Time              `json:"observed_at"`
+	Execution  RemoteExecutionSummary `json:"execution"`
+	Session    *RemoteSessionSummary  `json:"session,omitempty"`
+}
+
+type RemoteExecutionSummary struct {
+	Phase       ExecutionPhase `json:"phase"`
+	FailedPhase ExecutionPhase `json:"failed_phase,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Guidance    string         `json:"guidance,omitempty"`
+}
+
+type RemoteSessionSummary struct {
+	ID          string                  `json:"id"`
+	Status      session.Status          `json:"status"`
+	Attention   session.AttentionInfo   `json:"attention,omitzero"`
+	ReviewFacts session.ReviewFacts     `json:"review_facts,omitzero"`
+	CheckReport session.CheckReportInfo `json:"check_report,omitzero"`
+}
+
+// RemoteOrigin is persisted only by a target executing work for a controller.
+// It binds retries before any worktree or session side effect occurs.
+type RemoteOrigin struct {
+	ControllerID          string `json:"controller_id"`
+	ControllerExecutionID string `json:"controller_execution_id"`
+	IdempotencyKey        string `json:"idempotency_key"`
 }
 
 // ExecutionPhase is the durable orchestration state of a prompt-backed run.
@@ -152,23 +222,27 @@ type PromptMetadata struct {
 // Run is the bounded journal for a prompt-backed execution. It contains enough
 // identity to reconcile a retry, but no prompt body or captured environment.
 type Run struct {
-	IdempotencyKey  string         `json:"idempotency_key"`
-	Phase           ExecutionPhase `json:"phase"`
-	FailedPhase     ExecutionPhase `json:"failed_phase,omitempty"`
-	Repo            string         `json:"repo"`
-	RelativeWorkDir string         `json:"relative_work_dir,omitempty"`
-	AgentKind       string         `json:"agent_kind"`
-	Model           string         `json:"model,omitempty"`
-	Fleet           string         `json:"fleet,omitempty"`
-	NoHook          bool           `json:"no_hook,omitempty"`
-	RequestedBase   string         `json:"requested_base,omitempty"`
-	WorktreeName    string         `json:"worktree_name"`
-	WorktreeBranch  string         `json:"worktree_branch"`
-	Prompt          PromptMetadata `json:"prompt"`
-	Error           string         `json:"error,omitempty"`
-	Guidance        string         `json:"guidance,omitempty"`
-	Warning         string         `json:"warning,omitempty"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	IdempotencyKey    string         `json:"idempotency_key"`
+	Phase             ExecutionPhase `json:"phase"`
+	FailedPhase       ExecutionPhase `json:"failed_phase,omitempty"`
+	Repo              string         `json:"repo"`
+	RelativeWorkDir   string         `json:"relative_work_dir,omitempty"`
+	AgentKind         string         `json:"agent_kind"`
+	Model             string         `json:"model,omitempty"`
+	Fleet             string         `json:"fleet,omitempty"`
+	NoHook            bool           `json:"no_hook,omitempty"`
+	RequestedBase     string         `json:"requested_base,omitempty"`
+	WorktreeName      string         `json:"worktree_name"`
+	WorktreeBranch    string         `json:"worktree_branch"`
+	Prompt            PromptMetadata `json:"prompt"`
+	Error             string         `json:"error,omitempty"`
+	Guidance          string         `json:"guidance,omitempty"`
+	Warning           string         `json:"warning,omitempty"`
+	RemoteOrigin      *RemoteOrigin  `json:"remote_origin,omitempty"`
+	SummarySequence   uint64         `json:"summary_sequence,omitempty"`
+	SummaryDigest     string         `json:"summary_digest,omitempty"`
+	SummaryObservedAt time.Time      `json:"summary_observed_at,omitempty"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 type ReferenceState string
@@ -190,11 +264,13 @@ type ExecutionInfo struct {
 // LatestAttention makes the task's currently relevant completion receipt
 // available without requiring callers to traverse executions themselves.
 type LatestAttention struct {
-	ExecutionID    string                `json:"execution_id"`
-	SessionID      string                `json:"session_id"`
-	ReferenceState ReferenceState        `json:"reference_state"`
-	SessionStatus  session.Status        `json:"session_status,omitempty"`
-	Attention      session.AttentionInfo `json:"attention,omitzero"`
+	ExecutionID     string                `json:"execution_id"`
+	Backend         ExecutionBackend      `json:"backend"`
+	SessionID       string                `json:"session_id"`
+	RemoteSessionID string                `json:"remote_session_id,omitempty"`
+	ReferenceState  ReferenceState        `json:"reference_state"`
+	SessionStatus   session.Status        `json:"session_status,omitempty"`
+	Attention       session.AttentionInfo `json:"attention,omitzero"`
 }
 
 // Info is the read projection returned over IPC.
@@ -341,6 +417,9 @@ func normalize(t *Task) {
 	}
 	var next uint64 = 1
 	for i := range t.Executions {
+		if t.Executions[i].Backend == "" {
+			t.Executions[i].Backend = ExecutionBackendLocal
+		}
 		if t.Executions[i].Sequence == 0 {
 			t.Executions[i].Sequence = next
 		}
@@ -348,7 +427,7 @@ func normalize(t *Task) {
 			next = t.Executions[i].Sequence + 1
 		}
 		run := t.Executions[i].Run
-		if run != nil && runPhaseTransient(run.Phase) {
+		if run != nil && t.Executions[i].Backend == ExecutionBackendLocal && runPhaseTransient(run.Phase) {
 			run.FailedPhase = run.Phase
 			run.Phase = ExecutionInterrupted
 			run.Error = "daemon restarted while this execution was in progress"

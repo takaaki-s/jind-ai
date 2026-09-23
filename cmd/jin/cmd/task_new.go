@@ -12,17 +12,19 @@ import (
 
 var taskNewCmd = &cobra.Command{
 	Use:   "new",
-	Short: "Create a task and asynchronously start its isolated execution",
-	Long: `Reserve a durable task, an isolated git worktree, and an agent session,
-then submit the prompt once the session is ready. The command returns as soon as
-the stable task, execution, session, branch, and worktree identities exist.
+	Short: "Create a task and start an isolated local or remote execution",
+	Long: `Reserve a durable task and start an isolated execution. Local execution
+creates a git worktree and agent session asynchronously. Remote execution first
+persists the controller identity, then asks an explicitly configured target to
+own its worktree and session.
 
 Exactly one of --prompt, --prompt-file, and --issue is required. --issue reads
 GitHub through the authenticated gh CLI without mutating it, and frames its
 bounded content as untrusted prompt context. Prompt bodies cross IPC only for
 the live attempt; task state stores only a SHA-256 digest and byte count. If an
 outcome is uncertain, repeat the command with the printed --idempotency-key and
-the identical request.`,
+the identical request. Use either --repo for local execution, or --target with
+--repository for remote execution.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		req, err := taskNewRequest(cmd)
@@ -86,6 +88,19 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 	title, _ := cmd.Flags().GetString("title")
 	issue, _ := cmd.Flags().GetString("issue")
 	repo, _ := cmd.Flags().GetString("repo")
+	target, _ := cmd.Flags().GetString("target")
+	repository, _ := cmd.Flags().GetString("repository")
+	localSelected := repo != ""
+	remoteSelected := target != "" || repository != ""
+	if localSelected == remoteSelected {
+		return daemon.TaskNewRequest{}, fmt.Errorf("use either --repo, or both --target and --repository")
+	}
+	if remoteSelected && (target == "" || repository == "") {
+		return daemon.TaskNewRequest{}, fmt.Errorf("--target and --repository must be used together")
+	}
+	if remoteSelected && issueSet {
+		return daemon.TaskNewRequest{}, fmt.Errorf("remote task execution currently supports --prompt and --prompt-file only")
+	}
 	workdir, _ := cmd.Flags().GetString("workdir")
 	base, _ := cmd.Flags().GetString("base")
 	agentKind, _ := cmd.Flags().GetString("agent")
@@ -98,6 +113,8 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 		Prompt:          prompt,
 		Issue:           issue,
 		Repo:            repo,
+		Target:          target,
+		Repository:      repository,
 		RelativeWorkDir: workdir,
 		RequestedBase:   base,
 		AgentKind:       agentKind,
@@ -115,10 +132,23 @@ func renderTaskNewText(w io.Writer, result *daemon.TaskNewResponse) {
 		fmt.Fprintf(w, " (%s)", run.Phase)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Session: %s (%s)\n", result.Session.ID, result.Session.Status)
+	if result.Execution.Backend == task.ExecutionBackendRemote && result.Execution.Remote != nil {
+		link := result.Execution.Remote
+		fmt.Fprintf(w, "Remote: %s/%s (%s)\n", link.TargetID, link.RepositoryLabel, link.SyncState)
+		if link.RemoteExecutionID != "" {
+			fmt.Fprintf(w, "Remote execution: %s\n", link.RemoteExecutionID)
+		}
+		if link.Error != "" {
+			fmt.Fprintf(w, "Remote error: %s\n", link.Error)
+		}
+	} else {
+		fmt.Fprintf(w, "Session: %s (%s)\n", result.Session.ID, result.Session.Status)
+	}
 	if run != nil {
-		fmt.Fprintf(w, "Worktree: %s\nBranch: %s\nIdempotency key: %s\n",
-			run.WorktreeName, run.WorktreeBranch, run.IdempotencyKey)
+		if result.Execution.Backend != task.ExecutionBackendRemote {
+			fmt.Fprintf(w, "Worktree: %s\nBranch: %s\n", run.WorktreeName, run.WorktreeBranch)
+		}
+		fmt.Fprintf(w, "Idempotency key: %s\n", run.IdempotencyKey)
 	}
 	fmt.Fprintf(w, "\nFollow progress: jin task info %s\n", result.Task.ID)
 }
@@ -126,14 +156,15 @@ func renderTaskNewText(w io.Writer, result *daemon.TaskNewResponse) {
 func init() {
 	taskCmd.AddCommand(taskNewCmd)
 	addTaskNewFlags(taskNewCmd)
-	_ = taskNewCmd.MarkFlagRequired("repo")
 }
 
 func addTaskNewFlags(cmd *cobra.Command) {
 	cmd.Flags().String("prompt", "", "Prompt text (exclusive with --prompt-file and --issue)")
 	cmd.Flags().String("prompt-file", "", "Read prompt text from a file (exclusive with --prompt and --issue)")
 	cmd.Flags().String("issue", "", "Read a GitHub Issue URL, owner/repo#number, or number via gh")
-	cmd.Flags().String("repo", "", "Git repository root (required)")
+	cmd.Flags().String("repo", "", "Local git repository root (exclusive with --target)")
+	cmd.Flags().String("target", "", "Configured remote target (requires --repository)")
+	cmd.Flags().String("repository", "", "Repository mapping on the remote target")
 	cmd.Flags().String("title", "", "Task and session title (default: Issue title or <repository> task)")
 	cmd.Flags().String("workdir", "", "Initial directory relative to the managed worktree")
 	cmd.Flags().String("base", "", "Base branch name (default: repository default; do not prefix origin/)")

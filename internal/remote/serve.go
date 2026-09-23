@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
 func Serve(in io.Reader, out io.Writer, backend Backend) error {
@@ -73,6 +75,38 @@ func dispatch(req Request, backend Backend, negotiated bool, controllerID string
 			return ErrorResponse(req, NewWireError("invalid_request", "invalid repository id", false))
 		}
 		result, wireErr := backend.Preflight(req.ControllerID, payload)
+		if wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		return successOrInternal(req, result)
+	case OperationExecutionStart:
+		var payload StartRequest
+		if err := decodePayload(req.Payload, &payload); err != nil {
+			return ErrorResponse(req, NewWireError("invalid_request", err.Error(), false))
+		}
+		if wireErr := ValidateStartRequest(payload, task.MaxPromptBytes); wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		result, wireErr := backend.StartExecution(req.ControllerID, payload)
+		if wireErr == nil {
+			wireErr = ValidateStartResponse(payload, result)
+		}
+		if wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		return successOrInternal(req, result)
+	case OperationExecutionInspect:
+		var payload InspectRequest
+		if err := decodePayload(req.Payload, &payload); err != nil {
+			return ErrorResponse(req, NewWireError("invalid_request", err.Error(), false))
+		}
+		if wireErr := ValidateInspectRequest(payload); wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		result, wireErr := backend.InspectExecution(req.ControllerID, payload)
+		if wireErr == nil {
+			wireErr = ValidateInspectResponse(payload, result)
+		}
 		if wireErr != nil {
 			return ErrorResponse(req, wireErr)
 		}
