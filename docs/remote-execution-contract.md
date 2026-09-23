@@ -1,7 +1,9 @@
 # Remote Execution Contract
 
-Status: decision-complete design for a later MVP. Nothing described here is a
-user-facing remote execution feature yet.
+Status: implementation in progress. Target configuration, stable endpoint
+identities, bounded SSH transport, version/capability negotiation, repository
+preflight, and the stdio server are implemented. Starting, syncing, cancelling,
+and cleaning up a remote Task remain design-only until the next slice.
 
 ## Purpose
 
@@ -14,8 +16,8 @@ local state.
 
 This document fixes the transport, identity, ownership, retry, and wire
 boundaries needed by the first implementation. The executable fixtures under
-`test/remotecontract/` protect the framing and examples without registering a
-production remote command.
+`test/remotecontract/` protect the framing and examples; the implemented
+preflight path reuses the same production framing.
 
 ## Scope
 
@@ -74,17 +76,24 @@ the label-to-label repository map. The remote path is covered indirectly by a
 repository identity digest returned by preflight; changing that mapping blocks
 an existing binding until the operator starts a new Execution.
 
-The first CLI slice is:
+The currently implemented CLI boundary is:
 
 ```text
 jin remote preflight <target> --repository <label>
+jin remote serve --stdio
+```
+
+The Task-execution slice will add:
+
+```text
 jin task new --target <target> --repository <label> <existing prompt flags>
 jin task sync <task-selector>
 jin task cancel <task-selector> --confirm [--idempotency-key <key>]
 jin task cleanup <task-selector> --confirm [--idempotency-key <key>]
-jin remote serve --stdio
 ```
 
+Target and repository labels use lowercase ASCII letters, digits, `.`, `_`,
+and `-`, and begin with a letter or digit. For the future Task commands,
 `--target` and `--repository` are required together and mutually exclusive
 with local `--repo`. Existing `--workdir`, `--base`, `--agent`, `--model`,
 `--fleet`, and `--no-hook` are interpreted by the remote daemon; `--workdir`
@@ -131,8 +140,9 @@ Alternatives were rejected for the MVP:
 Each message is UTF-8 JSON preceded by one unsigned 32-bit big-endian byte
 length. A frame larger than 1 MiB is rejected before allocation. There is no
 compression. SSH stdout contains frames only; diagnostics use stderr and the
-controller reads at most 32 KiB before truncating. Raw stderr is shown for the
-live command but is not persisted in Task state.
+controller reads at most 32 KiB before truncating. Raw stderr is used only to
+classify transport failures; it is neither displayed nor persisted in Task
+state.
 
 Every request uses this envelope:
 
@@ -371,18 +381,26 @@ a 30-second remote command converged locally in 502 ms under a 500 ms context
 deadline. These numbers are evidence for the state model, not production
 defaults or performance guarantees.
 
-## Implementation slice and acceptance fixtures
+## Implementation slices and acceptance fixtures
 
-The next MVP is limited to:
+The MVP is limited to:
 
 1. target configuration with immutable revision calculation and logical
    repository mappings;
 2. persistent controller/server identities;
 3. a bounded SSH process runner with the exact safety options above;
-4. version 1 framing, handshake, capability checks, and the five operations;
+4. version 1 framing, handshake, capability checks, and the five versioned
+   operations;
 5. remote-link persistence and the sync/retry table above;
 6. a remote stdio server that delegates mutations to its local daemon; and
-7. CLI dry-run/preflight plus explicit start, inspect, cancel, and cleanup.
+7. CLI preflight plus explicit start, inspect, cancel, and cleanup.
+
+Items 1-3, the framing/handshake and repository-preflight portion of item 4,
+the preflight portion of items 6-7, and the stdio-to-daemon adapter are now
+implemented. The production server advertises only
+`repository.preflight.v1`; it must not advertise the Task capabilities until
+their durable remote journal and reconnect behavior exist. Items 4-7 complete
+in the Task-execution slice.
 
 Its tests must reuse the JSON examples and add deterministic peers for: partial
 frame reads, oversized lengths, malformed JSON, stderr floods, timeout before

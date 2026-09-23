@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/takaaki-s/jind-ai/internal/agent"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/debug"
@@ -21,6 +22,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/paths"
 	"github.com/takaaki-s/jind-ai/internal/plugin"
 	"github.com/takaaki-s/jind-ai/internal/provider"
+	"github.com/takaaki-s/jind-ai/internal/remote"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/task"
 	"github.com/takaaki-s/jind-ai/internal/tmux"
@@ -69,6 +71,8 @@ type Server struct {
 	configMgr          *config.Manager
 	stateMgr           *config.StateManager
 	pluginDisp         *plugin.EventDispatcher
+	remoteCaller       remote.Caller
+	remoteBootID       string
 	createMu           sync.Mutex // Mutual exclusion for session creation
 
 	// Shutdown state, written by Stop and read by Start's accept loop from
@@ -200,6 +204,8 @@ func NewServer(socketPath, sessionsDir, configDir, stateDir string) (*Server, er
 		configMgr:          configMgr,
 		stateMgr:           stateMgr,
 		pluginDisp:         pluginDisp,
+		remoteCaller:       remote.NewSSHClient(),
+		remoteBootID:       "boot-" + uuid.NewString(),
 	}, nil
 }
 
@@ -345,6 +351,12 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleTaskExecutionAdd(req.Data)
 	case "task-comment":
 		return s.handleTaskComment(req.Data)
+	case "remote-preflight":
+		return s.handleRemoteTargetPreflight(req.Data)
+	case "remote-backend-handshake":
+		return s.handleRemoteBackendHandshake(req.Data)
+	case "remote-backend-preflight":
+		return s.handleRemoteBackendPreflight(req.Data)
 	case "send":
 		return s.handleSend(req.Data)
 	case "start":

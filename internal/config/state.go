@@ -1,12 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,7 +23,35 @@ type DirHistoryEntry struct {
 
 // State represents the application state (persistent state, not configuration)
 type State struct {
-	DirHistory []DirHistoryEntry `yaml:"dir_history,omitempty"`
+	DirHistory             []DirHistoryEntry `yaml:"dir_history,omitempty"`
+	RemoteControllerID     string            `yaml:"remote_controller_id,omitempty"`
+	RemoteServerInstanceID string            `yaml:"remote_server_instance_id,omitempty"`
+}
+
+func (m *StateManager) EnsureRemoteControllerID() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state.RemoteControllerID == "" {
+		m.state.RemoteControllerID = "ctl-" + uuid.NewString()
+		if err := m.saveLocked(); err != nil {
+			m.state.RemoteControllerID = ""
+			return "", fmt.Errorf("persist remote controller identity: %w", err)
+		}
+	}
+	return m.state.RemoteControllerID, nil
+}
+
+func (m *StateManager) EnsureRemoteServerInstanceID() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state.RemoteServerInstanceID == "" {
+		m.state.RemoteServerInstanceID = "srv-" + uuid.NewString()
+		if err := m.saveLocked(); err != nil {
+			m.state.RemoteServerInstanceID = ""
+			return "", fmt.Errorf("persist remote server identity: %w", err)
+		}
+	}
+	return m.state.RemoteServerInstanceID, nil
 }
 
 // StateManager manages reading and writing state files

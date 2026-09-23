@@ -45,6 +45,41 @@ func TestStateManager_SaveAndReload(t *testing.T) {
 	}
 }
 
+func TestStateManagerRemoteIdentitiesAreStableAndDistinct(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewStateManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerID, err := manager.EnsureRemoteControllerID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverID, err := manager.EnsureRemoteServerInstanceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controllerID == serverID || controllerID[:4] != "ctl-" || serverID[:4] != "srv-" {
+		t.Fatalf("identities = %q, %q", controllerID, serverID)
+	}
+
+	reloaded, err := NewStateManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotController, err := reloaded.EnsureRemoteControllerID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotServer, err := reloaded.EnsureRemoteServerInstanceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotController != controllerID || gotServer != serverID {
+		t.Fatalf("reloaded identities = %q, %q; want %q, %q", gotController, gotServer, controllerID, serverID)
+	}
+}
+
 func TestStateManager_CreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "state")
 	sm, err := NewStateManager(dir)

@@ -734,6 +734,47 @@ popups:
     # my-notifier:  { width: 40, height: 20 }
 ```
 
+### Remote target preflight (experimental)
+
+You can verify a deliberately configured remote execution target before any
+Task is created. On the controller, map a local repository label to an opaque
+label understood by the target:
+
+```yaml
+remote:
+  targets:
+    buildbox:
+      ssh_host: buildbox                 # OpenSSH config alias
+      jin_path: /home/worker/.local/bin/jin
+      repositories:
+        jind-ai: jind-ai
+```
+
+On the target host, opt in and resolve that opaque label locally. The remote
+path is never returned to the controller:
+
+```yaml
+remote:
+  serve:
+    enabled: true
+    repositories:
+      jind-ai: /srv/src/jind-ai
+```
+
+Start the target's daemon, then run this on the controller:
+
+```bash
+jin remote preflight buildbox --repository jind-ai
+```
+
+The command uses non-interactive SSH with forwarding disabled, negotiates the
+remote protocol and capabilities, and reports stable server/repository
+identities, the default branch, and available agent kinds. Labels must begin
+with a lowercase letter or digit and may contain lowercase letters, digits,
+`.`, `_`, and `-`. This experimental slice is preflight only; creating and
+controlling remote Tasks is not enabled yet. See
+[the remote execution contract](docs/remote-execution-contract.md).
+
 ### Worktree placement
 
 By default, `jin session new --worktree` creates worktrees under `$XDG_STATE_HOME/jind-ai/worktrees/{name}` (typically `~/.local/state/jind-ai/worktrees/`). Override this with `worktree.base_dir` in `config.yaml`:

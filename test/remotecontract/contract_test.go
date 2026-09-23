@@ -14,12 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-const (
-	protocolName = "jind-ai.remote"
-	protocolV1   = 1
-	maxFrame     = 1 << 20
+	"github.com/takaaki-s/jind-ai/internal/remote"
 )
 
 type envelope struct {
@@ -81,7 +77,7 @@ func TestCanonicalFixtures(t *testing.T) {
 			data := readFixture(t, name)
 			var got envelope
 			decodeStrict(t, data, &got)
-			if got.Protocol != protocolName || got.ProtocolVersion != protocolV1 {
+			if got.Protocol != remote.ProtocolName || got.ProtocolVersion != remote.ProtocolVersion {
 				t.Fatalf("protocol = %q v%d", got.Protocol, got.ProtocolVersion)
 			}
 			if got.RequestID == "" || got.Operation != want.operation || len(got.Payload) == 0 {
@@ -138,55 +134,32 @@ func TestFixturesDoNotCrossForbiddenAuthorityBoundaries(t *testing.T) {
 func TestLengthPrefixedFixtureRoundTrip(t *testing.T) {
 	want := readFixture(t, "inspect-response.json")
 	var framed bytes.Buffer
-	if err := writeFrame(&framed, want); err != nil {
+	if err := remote.WriteFrame(&framed, json.RawMessage(want)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFrame(bufio.NewReader(&framed))
-	if err != nil {
+	var got json.RawMessage
+	if err := remote.ReadFrame(bufio.NewReader(&framed), &got); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
+	var compactWant bytes.Buffer
+	if err := json.Compact(&compactWant, want); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, compactWant.Bytes()) {
 		t.Fatal("framed payload changed")
 	}
 }
 
 func TestLengthPrefixRejectsOversizeBeforeReadingBody(t *testing.T) {
 	var framed bytes.Buffer
-	if err := binary.Write(&framed, binary.BigEndian, uint32(maxFrame+1)); err != nil {
+	if err := binary.Write(&framed, binary.BigEndian, uint32(remote.MaxFrameBytes+1)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFrame(&framed)
-	if !errors.Is(err, errFrameTooLarge) || got != nil {
-		t.Fatalf("readFrame = %q, %v", got, err)
+	var got json.RawMessage
+	err := remote.ReadFrame(&framed, &got)
+	if !errors.Is(err, remote.ErrFrameTooLarge) || got != nil {
+		t.Fatalf("ReadFrame = %q, %v", got, err)
 	}
-}
-
-var errFrameTooLarge = errors.New("remote contract frame exceeds 1 MiB")
-
-func writeFrame(w io.Writer, payload []byte) error {
-	if len(payload) > maxFrame {
-		return errFrameTooLarge
-	}
-	if err := binary.Write(w, binary.BigEndian, uint32(len(payload))); err != nil {
-		return err
-	}
-	_, err := w.Write(payload)
-	return err
-}
-
-func readFrame(r io.Reader) ([]byte, error) {
-	var size uint32
-	if err := binary.Read(r, binary.BigEndian, &size); err != nil {
-		return nil, err
-	}
-	if size > maxFrame {
-		return nil, errFrameTooLarge
-	}
-	payload := make([]byte, size)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
 }
 
 func readFixture(t *testing.T, name string) []byte {
