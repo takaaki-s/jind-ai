@@ -50,6 +50,22 @@ exec "$JIN_REMOTE_TEST_BINARY" -test.run '^TestSSHClientHelperProcess$'
 	}
 }
 
+func TestSSHClientBlocksServerIdentityChangeBeforeOperation(t *testing.T) {
+	script := writeExecutable(t, "#!/bin/sh\nexec \"$JIN_REMOTE_TEST_BINARY\" -test.run '^TestSSHClientHelperProcess$'\n")
+	t.Setenv("JIN_REMOTE_HELPER", "1")
+	t.Setenv("JIN_REMOTE_TEST_BINARY", os.Args[0])
+	client := &SSHClient{Command: script, Timeout: 5 * time.Second}
+	target := validTarget()
+	target.ExpectedServerInstanceID = "srv-other"
+	var got PreflightResponse
+	_, err := client.Call(context.Background(), target, "ctl-test",
+		OperationRepositoryPreflight, PreflightRequest{RepositoryID: "jind-ai"}, &got)
+	var callErr *CallError
+	if !errors.As(err, &callErr) || callErr.Code != "server_identity_mismatch" {
+		t.Fatalf("Call error = %#v", err)
+	}
+}
+
 func TestSSHClientClassifiesAuthenticationWithoutLeakingDiagnostics(t *testing.T) {
 	script := writeExecutable(t, "#!/bin/sh\necho 'Permission denied for secret-user@example' >&2\nexit 255\n")
 	client := &SSHClient{Command: script, Timeout: time.Second}

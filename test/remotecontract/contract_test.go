@@ -111,6 +111,38 @@ func TestStartFixtureBindsPromptEvidence(t *testing.T) {
 	}
 }
 
+func TestStartAndInspectFixturesMatchProductionTypes(t *testing.T) {
+	var startEnvelope envelope
+	decodeStrict(t, readFixture(t, "start-request.json"), &startEnvelope)
+	var startRequest remote.StartRequest
+	decodeStrict(t, startEnvelope.Payload, &startRequest)
+	if wireErr := remote.ValidateStartRequest(startRequest, 64*1024); wireErr != nil {
+		t.Fatalf("start request: %+v", wireErr)
+	}
+	var startResponseEnvelope envelope
+	decodeStrict(t, readFixture(t, "start-response.json"), &startResponseEnvelope)
+	var startResponse remote.StartResponse
+	decodeStrict(t, startResponseEnvelope.Payload, &startResponse)
+	if wireErr := remote.ValidateStartResponse(startRequest, startResponse); wireErr != nil {
+		t.Fatalf("start response: %+v", wireErr)
+	}
+
+	var inspectEnvelope envelope
+	decodeStrict(t, readFixture(t, "inspect-request.json"), &inspectEnvelope)
+	var inspectRequest remote.InspectRequest
+	decodeStrict(t, inspectEnvelope.Payload, &inspectRequest)
+	if wireErr := remote.ValidateInspectRequest(inspectRequest); wireErr != nil {
+		t.Fatalf("inspect request: %+v", wireErr)
+	}
+	var inspectResponseEnvelope envelope
+	decodeStrict(t, readFixture(t, "inspect-response.json"), &inspectResponseEnvelope)
+	var inspectResponse remote.InspectResponse
+	decodeStrict(t, inspectResponseEnvelope.Payload, &inspectResponse)
+	if wireErr := remote.ValidateInspectResponse(inspectRequest, inspectResponse); wireErr != nil {
+		t.Fatalf("inspect response: %+v", wireErr)
+	}
+}
+
 func TestFixturesDoNotCrossForbiddenAuthorityBoundaries(t *testing.T) {
 	for _, name := range []string{
 		"handshake-request.json", "handshake-response.json", "preflight-request.json", "preflight-response.json",

@@ -2,8 +2,9 @@
 
 Status: implementation in progress. Target configuration, stable endpoint
 identities, bounded SSH transport, version/capability negotiation, repository
-preflight, and the stdio server are implemented. Starting, syncing, cancelling,
-and cleaning up a remote Task remain design-only until the next slice.
+preflight, Task start/retry, structured inspection/sync, and the stdio server
+are implemented. Explicit cancellation and remote-owned cleanup remain for the
+next slice.
 
 ## Purpose
 
@@ -81,19 +82,19 @@ The currently implemented CLI boundary is:
 ```text
 jin remote preflight <target> --repository <label>
 jin remote serve --stdio
-```
-
-The Task-execution slice will add:
-
-```text
 jin task new --target <target> --repository <label> <existing prompt flags>
 jin task sync <task-selector>
+```
+
+The remaining mutation slice will add:
+
+```text
 jin task cancel <task-selector> --confirm [--idempotency-key <key>]
 jin task cleanup <task-selector> --confirm [--idempotency-key <key>]
 ```
 
 Target and repository labels use lowercase ASCII letters, digits, `.`, `_`,
-and `-`, and begin with a letter or digit. For the future Task commands,
+and `-`, and begin with a letter or digit. For Task commands,
 `--target` and `--repository` are required together and mutually exclusive
 with local `--repo`. Existing `--workdir`, `--base`, `--agent`, `--model`,
 `--fleet`, and `--no-hook` are interpreted by the remote daemon; `--workdir`
@@ -395,12 +396,12 @@ The MVP is limited to:
 6. a remote stdio server that delegates mutations to its local daemon; and
 7. CLI preflight plus explicit start, inspect, cancel, and cleanup.
 
-Items 1-3, the framing/handshake and repository-preflight portion of item 4,
-the preflight portion of items 6-7, and the stdio-to-daemon adapter are now
-implemented. The production server advertises only
-`repository.preflight.v1`; it must not advertise the Task capabilities until
-their durable remote journal and reconnect behavior exist. Items 4-7 complete
-in the Task-execution slice.
+Items 1-3, start/inspect and structured-summary portions of item 4, the durable
+remote link and retry/sync behavior in item 5, and their stdio/CLI paths in
+items 6-7 are implemented. The production server advertises repository
+preflight, execution start/inspect, and structured summary capabilities.
+Cancel/cleanup capabilities are intentionally not advertised until their
+receipt journals and ownership checks are implemented.
 
 Its tests must reuse the JSON examples and add deterministic peers for: partial
 frame reads, oversized lengths, malformed JSON, stderr floods, timeout before

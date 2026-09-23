@@ -670,7 +670,7 @@ popups:
     # my-notifier:  { width: 40, height: 20 }
 ```
 
-### リモートターゲットの事前検証（実験的）
+### リモート Task 実行（実験的）
 
 Task を作る前に、明示的に設定したリモート実行先を検証できます。controller 側では、
 ローカルのリポジトリラベルを target が理解する不透明なラベルへ対応付けます:
@@ -696,17 +696,32 @@ remote:
       jind-ai: /srv/src/jind-ai
 ```
 
-target 側の daemon を起動してから、controller 側で実行します:
+target 側の daemon を起動します。状態を作成する前に境界を検証できます:
 
 ```bash
 jin remote preflight buildbox --repository jind-ai
 ```
 
-このコマンドは forwarding を無効にした非対話 SSH を使い、プロトコルと capability
-を交渉したうえで、安定した server/repository identity、default branch、利用可能な
-agent kind を表示します。ラベルは英小文字または数字で始め、英小文字・数字・
-`.`・`_`・`-` が使用できます。この実験的な段階で利用できるのは preflight のみで、リモート Task
-の作成・操作はまだ有効ではありません。詳細は
+次に、controller に Task を保持したまま、隔離 worktree と agent session を target
+側の所有物として起動します:
+
+```bash
+jin task new --target buildbox --repository jind-ai \
+  --prompt "変更を実装し、関連するテストを実行してください"
+jin task info <task-selector>   # キャッシュのみ。通信しない
+jin task sync <task-selector>   # 明示的に SSH で再取得
+```
+
+controller は SSH を開く前に Task/Execution を永続化します。接続が切れた場合は、表示された
+同じ idempotency key と同一 prompt で `task new` を再実行すると、target は重複実行を作らず
+元の remote identity を返します。`task sync` が取得するのは phase、status、attention、
+review facts、check report の構造化された有限の要約だけで、path、transcript、pane 出力、
+credential は取得しません。target revision または server instance が変わった場合は
+自動再接続せず blocked になります。remote cancel/cleanup はまだ有効ではありません。
+
+通信には forwarding を無効にした非対話 SSH を使い、交渉した capability と安定した
+server/repository identity を記録します。ラベルは英小文字または数字で始め、英小文字・数字・
+`.`・`_`・`-` が使用できます。詳細は
 [remote execution contract](docs/remote-execution-contract.md) を参照してください。
 
 ### Worktree の作成先

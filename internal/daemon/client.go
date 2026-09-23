@@ -56,6 +56,12 @@ const (
 	// "send" needs its own prompt-derived bound rather than a bigger constant.
 	defaultRequestTimeout = 60 * time.Second
 
+	// A remote task reservation performs repository preflight and execution
+	// start over two independently bounded SSH channels. Each channel owns a
+	// 30-second budget, so the local IPC caller must leave room for both plus
+	// durable journal writes.
+	remoteTaskRequestTimeout = 75 * time.Second
+
 	// task-comment performs three bounded provider stages synchronously: Issue
 	// identity read, actor/reconciliation inspection, then an optional POST.
 	// Each subprocess has a 20s context plus process-group teardown headroom.
@@ -115,7 +121,14 @@ type Client struct {
 // provisioning and submission finish.
 func (c *Client) NewTask(req TaskNewRequest) (*TaskNewResponse, error) {
 	data, _ := json.Marshal(req)
-	resp, err := c.send(Request{Action: "task-new", Data: data})
+	request := Request{Action: "task-new", Data: data}
+	var resp *Response
+	var err error
+	if req.Target != "" {
+		resp, err = c.sendWithTimeout(request, remoteTaskRequestTimeout)
+	} else {
+		resp, err = c.send(request)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +140,22 @@ func (c *Client) NewTask(req TaskNewRequest) (*TaskNewResponse, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *Client) SyncTask(taskID string) (*task.Info, error) {
+	data, _ := json.Marshal(TaskSyncRequest{TaskID: taskID})
+	resp, err := c.send(Request{Action: "task-sync", Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var info task.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
 }
 
 func (c *Client) PreflightRemoteTarget(req RemoteTargetPreflightRequest) (*remote.TargetPreflight, error) {
@@ -145,7 +174,8 @@ func (c *Client) PreflightRemoteTarget(req RemoteTargetPreflightRequest) (*remot
 	return &result, nil
 }
 
-// Handshake and Preflight satisfy remote.Backend for `jin remote serve`.
+// Handshake, Preflight, StartExecution, and InspectExecution satisfy remote.Backend for
+// `jin remote serve`.
 // The machine endpoint remains a thin framed adapter over the local daemon.
 func (c *Client) Handshake(req remote.HandshakeRequest) (remote.HandshakeResponse, *remote.WireError) {
 	data, _ := json.Marshal(req)
@@ -175,6 +205,38 @@ func (c *Client) Preflight(controllerID string, req remote.PreflightRequest) (re
 	var result remoteBackendPreflightResult
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return remote.PreflightResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid preflight", false)
+	}
+	return result.Value, result.Error
+}
+
+func (c *Client) StartExecution(controllerID string, req remote.StartRequest) (remote.StartResponse, *remote.WireError) {
+	data, _ := json.Marshal(remoteBackendStartRequest{ControllerID: controllerID, Request: req})
+	resp, err := c.send(Request{Action: "remote-backend-start", Data: data})
+	if err != nil {
+		return remote.StartResponse{}, remote.NewWireError("internal", "remote daemon is unavailable", true)
+	}
+	if !resp.Success {
+		return remote.StartResponse{}, remote.NewWireError("internal", "remote daemon rejected execution start", false)
+	}
+	var result remoteBackendStartResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return remote.StartResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid execution start", false)
+	}
+	return result.Value, result.Error
+}
+
+func (c *Client) InspectExecution(controllerID string, req remote.InspectRequest) (remote.InspectResponse, *remote.WireError) {
+	data, _ := json.Marshal(remoteBackendInspectRequest{ControllerID: controllerID, Request: req})
+	resp, err := c.send(Request{Action: "remote-backend-inspect", Data: data})
+	if err != nil {
+		return remote.InspectResponse{}, remote.NewWireError("internal", "remote daemon is unavailable", true)
+	}
+	if !resp.Success {
+		return remote.InspectResponse{}, remote.NewWireError("internal", "remote daemon rejected execution inspection", false)
+	}
+	var result remoteBackendInspectResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return remote.InspectResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid execution inspection", false)
 	}
 	return result.Value, result.Error
 }

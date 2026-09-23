@@ -6,9 +6,14 @@ package remote
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
+
+	"github.com/takaaki-s/jind-ai/internal/session"
+	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
 const (
@@ -24,6 +29,8 @@ type Operation string
 const (
 	OperationHandshake           Operation = "handshake"
 	OperationRepositoryPreflight Operation = "repository.preflight"
+	OperationExecutionStart      Operation = "execution.start"
+	OperationExecutionInspect    Operation = "execution.inspect"
 )
 
 const (
@@ -145,11 +152,51 @@ type PreflightResponse struct {
 	AvailableAgentKinds []string `json:"available_agent_kinds"`
 }
 
+type StartRequest struct {
+	ControllerExecutionID      string         `json:"controller_execution_id"`
+	IdempotencyKey             string         `json:"idempotency_key"`
+	RepositoryID               string         `json:"repository_id"`
+	ExpectedRepositoryIdentity string         `json:"expected_repository_identity"`
+	Title                      string         `json:"title"`
+	Source                     task.Source    `json:"source"`
+	RequestedBase              string         `json:"requested_base,omitempty"`
+	RelativeWorkDir            string         `json:"relative_work_dir,omitempty"`
+	AgentKind                  string         `json:"agent_kind"`
+	Model                      string         `json:"model,omitempty"`
+	Fleet                      string         `json:"fleet,omitempty"`
+	NoHook                     bool           `json:"no_hook,omitempty"`
+	Prompt                     PromptEnvelope `json:"prompt"`
+}
+
+type PromptEnvelope struct {
+	SHA256 string `json:"sha256"`
+	Bytes  int    `json:"bytes"`
+	Body   string `json:"body"`
+}
+
+type StartResponse struct {
+	RemoteTaskID      string             `json:"remote_task_id"`
+	RemoteExecutionID string             `json:"remote_execution_id"`
+	Summary           task.RemoteSummary `json:"summary"`
+}
+
+type InspectRequest struct {
+	ControllerExecutionID string `json:"controller_execution_id"`
+	RemoteExecutionID     string `json:"remote_execution_id"`
+}
+
+type InspectResponse struct {
+	RemoteTaskID      string             `json:"remote_task_id"`
+	RemoteExecutionID string             `json:"remote_execution_id"`
+	Summary           task.RemoteSummary `json:"summary"`
+}
+
 type Target struct {
-	ID       string
-	Revision string
-	SSHHost  string
-	JinPath  string
+	ID                       string
+	Revision                 string
+	SSHHost                  string
+	JinPath                  string
+	ExpectedServerInstanceID string
 }
 
 type TargetPreflight struct {
@@ -163,6 +210,8 @@ type TargetPreflight struct {
 type Backend interface {
 	Handshake(HandshakeRequest) (HandshakeResponse, *WireError)
 	Preflight(string, PreflightRequest) (PreflightResponse, *WireError)
+	StartExecution(string, StartRequest) (StartResponse, *WireError)
+	InspectExecution(string, InspectRequest) (InspectResponse, *WireError)
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
@@ -233,4 +282,157 @@ func ValidatePreflight(request PreflightRequest, response PreflightResponse) *Wi
 		}
 	}
 	return nil
+}
+
+func ValidateStartRequest(request StartRequest, maxPromptBytes int) *WireError {
+	if ValidateIdentifier("controller execution id", request.ControllerExecutionID) != nil ||
+		ValidateIdentifier("idempotency key", request.IdempotencyKey) != nil ||
+		len(request.IdempotencyKey) > task.MaxIdempotencyKeyLength ||
+		ValidateIdentifier("repository id", request.RepositoryID) != nil {
+		return NewWireError("invalid_request", "invalid remote execution identity", false)
+	}
+	if !repositoryIdentityPattern.MatchString(request.ExpectedRepositoryIdentity) {
+		return NewWireError("invalid_request", "invalid expected repository identity", false)
+	}
+	if err := task.ValidateCreateOptions(task.CreateOptions{
+		Title: request.Title, Source: request.Source, RequestedBase: request.RequestedBase,
+	}); err != nil {
+		return NewWireError("invalid_request", "invalid task metadata", false)
+	}
+	if request.Source.Kind == "" || !safeWireText(request.Title, task.MaxTitleLength) ||
+		!safeWireText(request.Source.Kind, task.MaxSourceKindLength) || !safeWireText(request.Source.Ref, task.MaxSourceRefLength) ||
+		!safeWireText(request.Source.Provider, task.MaxProviderLength) || !safeWireText(request.Source.Repository, task.MaxRepositoryLength) ||
+		!safeWireText(request.Source.ExternalID, task.MaxExternalIDLength) || !safeWireText(request.Source.URL, task.MaxSourceURLLength) ||
+		!safeWireText(request.Source.SyncToken, task.MaxSyncTokenLength) || !safeWireText(request.RequestedBase, task.MaxRequestedBaseLength) {
+		return NewWireError("invalid_request", "unsafe task metadata", false)
+	}
+	if request.RelativeWorkDir != "" && (filepath.IsAbs(request.RelativeWorkDir) ||
+		filepath.Clean(request.RelativeWorkDir) == ".." || strings.HasPrefix(filepath.Clean(request.RelativeWorkDir), ".."+string(filepath.Separator))) {
+		return NewWireError("invalid_request", "invalid relative work directory", false)
+	}
+	if !safeWireText(request.RelativeWorkDir, task.MaxRelativeWorkDirLength) {
+		return NewWireError("invalid_request", "unsafe relative work directory", false)
+	}
+	if (request.AgentKind != "" && ValidateIdentifier("agent kind", request.AgentKind) != nil) ||
+		len(request.AgentKind) > task.MaxAgentKindLength ||
+		!safeWireText(request.Model, task.MaxModelLength) || !safeWireText(request.Fleet, task.MaxFleetLength) {
+		return NewWireError("invalid_request", "invalid agent selection", false)
+	}
+	if maxPromptBytes <= 0 || maxPromptBytes > task.MaxPromptBytes {
+		maxPromptBytes = task.MaxPromptBytes
+	}
+	if request.Prompt.Bytes <= 0 || request.Prompt.Bytes > maxPromptBytes ||
+		request.Prompt.Bytes != len([]byte(request.Prompt.Body)) || request.Prompt.SHA256 != task.PromptDigest(request.Prompt.Body) {
+		return NewWireError("invalid_request", "prompt evidence does not match body", false)
+	}
+	if !session.PromptVerifiable(request.Prompt.Body) {
+		return NewWireError("invalid_request", "prompt has no verifiable content", false)
+	}
+	return nil
+}
+
+func ValidateStartResponse(request StartRequest, response StartResponse) *WireError {
+	if ValidateIdentifier("remote task id", response.RemoteTaskID) != nil ||
+		ValidateIdentifier("remote execution id", response.RemoteExecutionID) != nil {
+		return NewWireError("invalid_response", "remote returned invalid execution identities", false)
+	}
+	return ValidateSummary(response.Summary)
+}
+
+func ValidateInspectRequest(request InspectRequest) *WireError {
+	if ValidateIdentifier("controller execution id", request.ControllerExecutionID) != nil ||
+		ValidateIdentifier("remote execution id", request.RemoteExecutionID) != nil {
+		return NewWireError("invalid_request", "invalid remote execution identity", false)
+	}
+	return nil
+}
+
+func ValidateInspectResponse(request InspectRequest, response InspectResponse) *WireError {
+	if ValidateIdentifier("remote task id", response.RemoteTaskID) != nil || response.RemoteExecutionID != request.RemoteExecutionID {
+		return NewWireError("invalid_response", "remote returned different execution identities", false)
+	}
+	return ValidateSummary(response.Summary)
+}
+
+func ValidateSummary(summary task.RemoteSummary) *WireError {
+	if summary.Sequence == 0 || summary.ObservedAt.IsZero() || summary.ObservedAt.After(time.Now().Add(24*time.Hour)) {
+		return NewWireError("invalid_response", "remote returned invalid summary metadata", false)
+	}
+	if !validExecutionPhase(summary.Execution.Phase) ||
+		(summary.Execution.FailedPhase != "" && !validExecutionPhase(summary.Execution.FailedPhase)) ||
+		!safeSummaryText(summary.Execution.Error) || !safeSummaryText(summary.Execution.Guidance) {
+		return NewWireError("invalid_response", "remote returned invalid execution summary", false)
+	}
+	if summary.Session == nil {
+		return nil
+	}
+	if ValidateIdentifier("remote session id", summary.Session.ID) != nil || !validSessionStatus(summary.Session.Status) {
+		return NewWireError("invalid_response", "remote returned invalid session summary", false)
+	}
+	attention := summary.Session.Attention
+	validAttentionState := attention.State == session.AttentionNone || attention.State == session.AttentionDone ||
+		attention.State == session.AttentionReadyForReview || attention.State == session.AttentionChecksFailed
+	expectedUnseen := attention.State != session.AttentionNone && attention.Generation > attention.SeenGeneration
+	if !validAttentionState || attention.SeenGeneration > attention.Generation || attention.Unseen != expectedUnseen ||
+		(attention.State == session.AttentionNone && attention.Generation != 0) {
+		return NewWireError("invalid_response", "remote returned invalid attention summary", false)
+	}
+	if !validReviewFacts(summary.Session.ReviewFacts) || !validCheckReport(summary.Session.CheckReport) {
+		return NewWireError("invalid_response", "remote returned invalid review summary", false)
+	}
+	return nil
+}
+
+func validReviewFacts(facts session.ReviewFacts) bool {
+	if facts.IsZero() {
+		return true
+	}
+	if facts.Status != session.ReviewFactsPending && facts.Status != session.ReviewFactsAvailable && facts.Status != session.ReviewFactsUnavailable {
+		return false
+	}
+	if !safeWireText(facts.UnavailableReason, 128) || !safeWireText(facts.BaseCommit, 128) ||
+		!safeWireText(facts.HeadCommit, 128) || !safeWireText(facts.Branch, task.MaxWorktreeBranchLength) ||
+		!safeWireText(facts.WorkspaceFingerprint, 256) || facts.ChangedFiles < 0 || facts.Additions < 0 ||
+		facts.Deletions < 0 || facts.BinaryFiles < 0 || facts.UntrackedFiles < 0 || facts.CommitCount < 0 {
+		return false
+	}
+	return facts.ObservedAt.IsZero() || !facts.ObservedAt.After(time.Now().Add(24*time.Hour))
+}
+
+func validCheckReport(report session.CheckReportInfo) bool {
+	if report.IsZero() {
+		return true
+	}
+	return report.Source == session.CheckSourceReported &&
+		(report.Status == session.CheckStatusPassed || report.Status == session.CheckStatusFailed) &&
+		safeWireText(report.WorkspaceFingerprint, 256) && report.WorkspaceFingerprint != "" &&
+		!report.ReportedAt.IsZero() && !report.ReportedAt.After(time.Now().Add(24*time.Hour))
+}
+
+func validExecutionPhase(phase task.ExecutionPhase) bool {
+	switch phase {
+	case task.ExecutionReserved, task.ExecutionProvisioning, task.ExecutionConfiguring, task.ExecutionStarting,
+		task.ExecutionWaiting, task.ExecutionSubmitting, task.ExecutionSubmitted, task.ExecutionFailed, task.ExecutionInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func validSessionStatus(status session.Status) bool {
+	switch status {
+	case session.StatusCreating, session.StatusStopped, session.StatusRunning, session.StatusIdle,
+		session.StatusThinking, session.StatusPermission, session.StatusDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
+func safeSummaryText(value string) bool {
+	return len(value) <= task.MaxRunMessageLength && !strings.ContainsAny(value, "\x00\r\n\x1b")
+}
+
+func safeWireText(value string, maxBytes int) bool {
+	return len(value) <= maxBytes && !strings.ContainsAny(value, "\x00\r\n\x1b")
 }

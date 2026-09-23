@@ -349,6 +349,19 @@ transient phases become `interrupted`. Retrying the identical request with the
 same idempotency key can reuse a reserved or started session, but never
 automatically repeats an uncertain submission.
 
+With `--target` and `--repository`, the controller reserves a remote-backed
+Task/Execution before network I/O and leaves `SessionID` empty. It records the
+target revision, negotiated server/repository identities, capabilities, and a
+controller execution ID, then sends the bounded prompt over SSH. The target
+atomically binds controller ID + execution ID + idempotency key to one local
+Task/Execution before provisioning its own worktree/session. Repeating the
+identical `task new` request therefore reconciles an unknown SSH outcome rather
+than duplicating work. `task sync` performs a new handshake, verifies the
+stored server instance before inspection, and applies only a monotonic
+structured summary. A target/config identity change is persisted as
+`blocked`; transport loss is `unreachable` and does not rewrite the cached
+remote execution phase.
+
 ### Task inbox end-to-end contract
 
 The build-tagged daemon E2E suite protects the user-visible vertical path, not

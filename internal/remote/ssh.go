@@ -63,6 +63,9 @@ func ValidateTarget(target Target) error {
 	if target.Revision == "" {
 		return fmt.Errorf("target revision is required")
 	}
+	if target.ExpectedServerInstanceID != "" && ValidateIdentifier("expected server instance id", target.ExpectedServerInstanceID) != nil {
+		return fmt.Errorf("invalid expected server instance id")
+	}
 	if !sshHostPattern.MatchString(target.SSHHost) {
 		return fmt.Errorf("invalid SSH host alias")
 	}
@@ -79,7 +82,7 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 	if err := ValidateIdentifier("controller id", controllerID); err != nil {
 		return HandshakeResponse{}, &CallError{Kind: ErrorProtocol, Code: "invalid_controller", Message: err.Error()}
 	}
-	capability, ok := operationCapability(operation)
+	capabilities, ok := operationCapabilities(operation)
 	if !ok {
 		return HandshakeResponse{}, &CallError{Kind: ErrorProtocol, Code: "unsupported_operation", Message: "unsupported remote operation"}
 	}
@@ -136,7 +139,7 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 
 	handshakeRequest := HandshakeRequest{
 		MinimumVersion: ProtocolVersion, MaximumVersion: ProtocolVersion,
-		RequiredCapabilities: []string{capability},
+		RequiredCapabilities: capabilities,
 	}
 	var handshakeResponse HandshakeResponse
 	if err := exchange(stdin, stdout, controllerID, OperationHandshake, handshakeRequest, &handshakeResponse); err != nil {
@@ -145,10 +148,16 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 	if wireErr := ValidateHandshake(handshakeRequest, handshakeResponse); wireErr != nil {
 		return HandshakeResponse{}, callErrorFromWire(wireErr)
 	}
+	if target.ExpectedServerInstanceID != "" && handshakeResponse.Server.InstanceID != target.ExpectedServerInstanceID {
+		return HandshakeResponse{}, finishFailedExchange(&CallError{
+			Kind: ErrorProtocol, Code: "server_identity_mismatch", Message: "remote server instance changed",
+		})
+	}
 	if err := exchange(stdin, stdout, controllerID, operation, payload, result); err != nil {
 		return handshakeResponse, finishFailedExchange(err)
 	}
-	if operation == OperationRepositoryPreflight {
+	switch operation {
+	case OperationRepositoryPreflight:
 		request, requestOK := payload.(PreflightRequest)
 		response, responseOK := result.(*PreflightResponse)
 		if !requestOK || !responseOK {
@@ -157,6 +166,28 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 			})
 		}
 		if wireErr := ValidatePreflight(request, *response); wireErr != nil {
+			return handshakeResponse, finishFailedExchange(callErrorFromWire(wireErr))
+		}
+	case OperationExecutionStart:
+		request, requestOK := payload.(StartRequest)
+		response, responseOK := result.(*StartResponse)
+		if !requestOK || !responseOK {
+			return handshakeResponse, finishFailedExchange(&CallError{
+				Kind: ErrorProtocol, Code: "invalid_response", Message: "invalid execution start result target",
+			})
+		}
+		if wireErr := ValidateStartResponse(request, *response); wireErr != nil {
+			return handshakeResponse, finishFailedExchange(callErrorFromWire(wireErr))
+		}
+	case OperationExecutionInspect:
+		request, requestOK := payload.(InspectRequest)
+		response, responseOK := result.(*InspectResponse)
+		if !requestOK || !responseOK {
+			return handshakeResponse, finishFailedExchange(&CallError{
+				Kind: ErrorProtocol, Code: "invalid_response", Message: "invalid execution inspect result target",
+			})
+		}
+		if wireErr := ValidateInspectResponse(request, *response); wireErr != nil {
 			return handshakeResponse, finishFailedExchange(callErrorFromWire(wireErr))
 		}
 	}
@@ -170,12 +201,16 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 	return handshakeResponse, nil
 }
 
-func operationCapability(operation Operation) (string, bool) {
+func operationCapabilities(operation Operation) ([]string, bool) {
 	switch operation {
 	case OperationRepositoryPreflight:
-		return CapabilityRepositoryPreflight, true
+		return []string{CapabilityRepositoryPreflight}, true
+	case OperationExecutionStart:
+		return []string{CapabilityExecutionStart, CapabilityStructuredSummary}, true
+	case OperationExecutionInspect:
+		return []string{CapabilityExecutionInspect, CapabilityStructuredSummary}, true
 	default:
-		return "", false
+		return nil, false
 	}
 }
 

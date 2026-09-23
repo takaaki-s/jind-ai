@@ -347,6 +347,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleTaskList()
 	case "task-get":
 		return s.handleTaskGet(req.Data)
+	case "task-sync":
+		return s.handleTaskSync(req.Data)
 	case "task-execution-add":
 		return s.handleTaskExecutionAdd(req.Data)
 	case "task-comment":
@@ -357,6 +359,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleRemoteBackendHandshake(req.Data)
 	case "remote-backend-preflight":
 		return s.handleRemoteBackendPreflight(req.Data)
+	case "remote-backend-start":
+		return s.handleRemoteBackendStart(req.Data)
+	case "remote-backend-inspect":
+		return s.handleRemoteBackendInspect(req.Data)
 	case "send":
 		return s.handleSend(req.Data)
 	case "start":

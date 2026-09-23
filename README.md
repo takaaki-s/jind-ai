@@ -734,7 +734,7 @@ popups:
     # my-notifier:  { width: 40, height: 20 }
 ```
 
-### Remote target preflight (experimental)
+### Remote Task execution (experimental)
 
 You can verify a deliberately configured remote execution target before any
 Task is created. On the controller, map a local repository label to an opaque
@@ -761,18 +761,34 @@ remote:
       jind-ai: /srv/src/jind-ai
 ```
 
-Start the target's daemon, then run this on the controller:
+Start the target's daemon. You can verify the boundary before creating state:
 
 ```bash
 jin remote preflight buildbox --repository jind-ai
 ```
 
-The command uses non-interactive SSH with forwarding disabled, negotiates the
-remote protocol and capabilities, and reports stable server/repository
-identities, the default branch, and available agent kinds. Labels must begin
-with a lowercase letter or digit and may contain lowercase letters, digits,
-`.`, `_`, and `-`. This experimental slice is preflight only; creating and
-controlling remote Tasks is not enabled yet. See
+Then create a Task on the controller while its isolated worktree and agent
+session are owned by the target:
+
+```bash
+jin task new --target buildbox --repository jind-ai \
+  --prompt "Implement the change and run the relevant tests"
+jin task info <task-selector>   # cached; no network access
+jin task sync <task-selector>   # explicit SSH inspection
+```
+
+The controller persists its Task/Execution before opening SSH. If the
+connection drops, repeat `task new` with the same printed idempotency key and
+identical prompt; the target returns the original remote identities rather
+than starting duplicate work. `task sync` refreshes only bounded structured
+phase, status, attention, review-fact, and check-report data—never paths,
+transcripts, pane output, or credentials. A changed target revision or server
+instance blocks reattachment. Remote cancel and cleanup are not enabled yet.
+
+The transport uses non-interactive SSH with forwarding disabled and records
+the negotiated capabilities plus stable server/repository identities. Labels
+must begin with a lowercase letter or digit and may contain lowercase letters,
+digits, `.`, `_`, and `-`. See
 [the remote execution contract](docs/remote-execution-contract.md).
 
 ### Worktree placement

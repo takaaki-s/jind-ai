@@ -347,7 +347,9 @@ capabilities: every adopted kind still receives the same liveness-only mask.
 `internal/task/` owns durable intent separately from `internal/session/`'s
 interactive process lifecycle. A Task has a stable ID, bounded source/base/
 prompt-summary metadata, and an append-only ordered list of Executions. Each
-Execution has its own stable ID and references exactly one session ID.
+Execution has its own stable ID and selects a `local` or `remote` backend. A
+local Execution references one local session ID. A remote Execution instead
+holds an opaque remote binding and never overloads the local session field.
 
 The storage boundary is intentionally one-way. GitHub Issue ingestion adds a
 separate read-only input adapter before reservation:
@@ -389,13 +391,19 @@ deliberately not retried because delivery may already have occurred. Background
 Issue synchronization, remote scheduling, automatic review, and merge remain
 outside this action.
 
-Remote execution is designed as a separate backend rather than an extension of
-local paths or tmux ownership. Its implementation boundary, SSH stdio protocol,
+Remote execution is a separate backend rather than an extension of local paths
+or tmux ownership. `task new --target ... --repository ...` persists the
+controller Task/Execution before SSH, then preflights and starts an atomically
+deduplicated target-side Task. `task sync` explicitly refreshes a monotonic,
+bounded structured projection; ordinary list/info reads stay local. Target
+revision, server instance, repository identity, negotiated capabilities, and
+both execution IDs are durable, while target paths, panes, prompts, and
+transcripts remain outside controller storage. Its SSH stdio protocol,
 identity model, and disconnect semantics are fixed in
 [remote-execution-contract.md](remote-execution-contract.md). That document is
-also the executable-fixture target. The bounded transport and repository
-preflight CLI are available; remote Task start/sync/cancel/cleanup remain the
-next implementation slice.
+also the executable-fixture target. Start, same-key reconnect, inspect, and
+sync are available; explicit cancel and remote-owned cleanup remain the next
+implementation slice.
 
 Provider mutation is a separate capability and command path:
 

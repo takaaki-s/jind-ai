@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/takaaki-s/jind-ai/internal/remote"
+	"github.com/takaaki-s/jind-ai/internal/task"
 )
 
 type recordingRemoteCaller struct {
@@ -130,7 +132,10 @@ remote:
 	}
 	if handshake.Error != nil || handshake.Value.Server.InstanceID == "" ||
 		handshake.Value.Server.BootID != server.remoteBootID ||
-		len(handshake.Value.Capabilities) != 1 || handshake.Value.Capabilities[0] != remote.CapabilityRepositoryPreflight {
+		len(handshake.Value.Capabilities) != 4 || handshake.Value.Capabilities[0] != remote.CapabilityRepositoryPreflight ||
+		handshake.Value.Capabilities[1] != remote.CapabilityExecutionStart ||
+		handshake.Value.Capabilities[2] != remote.CapabilityExecutionInspect ||
+		handshake.Value.Capabilities[3] != remote.CapabilityStructuredSummary {
 		t.Fatalf("handshake = %+v", handshake)
 	}
 
@@ -173,6 +178,13 @@ func TestRemoteBackendPreflightUsesRepositoryAllowlist(t *testing.T) {
 	}
 	if got.Error == nil || got.Error.Code != "repository_not_found" {
 		t.Fatalf("preflight = %+v", got)
+	}
+}
+
+func TestSafeRemoteSummaryTextRemovesTerminalControlsAndBoundsUTF8(t *testing.T) {
+	got := safeRemoteSummaryText("failed\nsecret\x1b[2J " + strings.Repeat("界", task.MaxRunMessageLength))
+	if strings.ContainsAny(got, "\r\n\x1b") || len(got) > task.MaxRunMessageLength || !utf8.ValidString(got) {
+		t.Fatalf("unsafe summary text: %q", got)
 	}
 }
 
