@@ -362,6 +362,14 @@ structured summary. A target/config identity change is persisted as
 `blocked`; transport loss is `unreachable` and does not rewrite the cached
 remote execution phase.
 
+Remote cancellation and cleanup are explicit, separate operations. Each
+persists its own idempotency key before SSH and keeps an unknown outcome for
+same-key reconciliation. Cancellation stops only the target-owned Session.
+Cleanup additionally requires that Session to be stopped with no active pane,
+then verifies the target-side repository/worktree/branch ownership and clean
+worktree before removing the Session, worktree, and local branch. The
+controller never receives or acts on those paths.
+
 ### Task inbox end-to-end contract
 
 The build-tagged daemon E2E suite protects the user-visible vertical path, not

@@ -111,6 +111,28 @@ func dispatch(req Request, backend Backend, negotiated bool, controllerID string
 			return ErrorResponse(req, wireErr)
 		}
 		return successOrInternal(req, result)
+	case OperationExecutionCancel, OperationExecutionCleanup:
+		var payload ExecutionOperationRequest
+		if err := decodePayload(req.Payload, &payload); err != nil {
+			return ErrorResponse(req, NewWireError("invalid_request", err.Error(), false))
+		}
+		if wireErr := ValidateExecutionOperationRequest(payload); wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		var result ExecutionOperationResponse
+		var wireErr *WireError
+		if req.Operation == OperationExecutionCancel {
+			result, wireErr = backend.CancelExecution(req.ControllerID, payload)
+		} else {
+			result, wireErr = backend.CleanupExecution(req.ControllerID, payload)
+		}
+		if wireErr == nil {
+			wireErr = ValidateExecutionOperationResponseFor(req.Operation, payload, result)
+		}
+		if wireErr != nil {
+			return ErrorResponse(req, wireErr)
+		}
+		return successOrInternal(req, result)
 	default:
 		return ErrorResponse(req, NewWireError("unsupported_operation", "remote operation is not supported", false))
 	}

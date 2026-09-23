@@ -158,6 +158,30 @@ func (c *Client) SyncTask(taskID string) (*task.Info, error) {
 	return &info, nil
 }
 
+func (c *Client) CancelTask(req TaskRemoteOperationRequest) (*task.Info, error) {
+	return c.taskRemoteOperation("task-cancel", req)
+}
+
+func (c *Client) CleanupTask(req TaskRemoteOperationRequest) (*task.Info, error) {
+	return c.taskRemoteOperation("task-cleanup", req)
+}
+
+func (c *Client) taskRemoteOperation(action string, req TaskRemoteOperationRequest) (*task.Info, error) {
+	data, _ := json.Marshal(req)
+	resp, err := c.send(Request{Action: action, Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, errors.New(resp.Error)
+	}
+	var info task.Info
+	if err := json.Unmarshal(resp.Data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 func (c *Client) PreflightRemoteTarget(req RemoteTargetPreflightRequest) (*remote.TargetPreflight, error) {
 	data, _ := json.Marshal(req)
 	resp, err := c.send(Request{Action: "remote-preflight", Data: data})
@@ -174,7 +198,7 @@ func (c *Client) PreflightRemoteTarget(req RemoteTargetPreflightRequest) (*remot
 	return &result, nil
 }
 
-// Handshake, Preflight, StartExecution, and InspectExecution satisfy remote.Backend for
+// Handshake, Preflight, and execution operations satisfy remote.Backend for
 // `jin remote serve`.
 // The machine endpoint remains a thin framed adapter over the local daemon.
 func (c *Client) Handshake(req remote.HandshakeRequest) (remote.HandshakeResponse, *remote.WireError) {
@@ -237,6 +261,30 @@ func (c *Client) InspectExecution(controllerID string, req remote.InspectRequest
 	var result remoteBackendInspectResult
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return remote.InspectResponse{}, remote.NewWireError("internal", "remote daemon returned an invalid execution inspection", false)
+	}
+	return result.Value, result.Error
+}
+
+func (c *Client) CancelExecution(controllerID string, req remote.ExecutionOperationRequest) (remote.ExecutionOperationResponse, *remote.WireError) {
+	return c.executionOperation("remote-backend-cancel", "cancellation", controllerID, req)
+}
+
+func (c *Client) CleanupExecution(controllerID string, req remote.ExecutionOperationRequest) (remote.ExecutionOperationResponse, *remote.WireError) {
+	return c.executionOperation("remote-backend-cleanup", "cleanup", controllerID, req)
+}
+
+func (c *Client) executionOperation(action, label, controllerID string, req remote.ExecutionOperationRequest) (remote.ExecutionOperationResponse, *remote.WireError) {
+	data, _ := json.Marshal(remoteBackendOperationRequest{ControllerID: controllerID, Request: req})
+	resp, err := c.send(Request{Action: action, Data: data})
+	if err != nil {
+		return remote.ExecutionOperationResponse{}, remote.NewWireError("internal", "remote daemon is unavailable", true)
+	}
+	if !resp.Success {
+		return remote.ExecutionOperationResponse{}, remote.NewWireError("internal", "remote daemon rejected execution "+label, false)
+	}
+	var result remoteBackendOperationResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return remote.ExecutionOperationResponse{}, remote.NewWireError("internal", "remote daemon returned invalid execution "+label, false)
 	}
 	return result.Value, result.Error
 }

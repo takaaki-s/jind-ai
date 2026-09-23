@@ -710,6 +710,8 @@ jin task new --target buildbox --repository jind-ai \
   --prompt "変更を実装し、関連するテストを実行してください"
 jin task info <task-selector>   # キャッシュのみ。通信しない
 jin task sync <task-selector>   # 明示的に SSH で再取得
+jin task cancel <task-selector> --confirm
+jin task cleanup <task-selector> --confirm
 ```
 
 controller は SSH を開く前に Task/Execution を永続化します。接続が切れた場合は、表示された
@@ -717,7 +719,12 @@ controller は SSH を開く前に Task/Execution を永続化します。接続
 元の remote identity を返します。`task sync` が取得するのは phase、status、attention、
 review facts、check report の構造化された有限の要約だけで、path、transcript、pane 出力、
 credential は取得しません。target revision または server instance が変わった場合は
-自動再接続せず blocked になります。remote cancel/cleanup はまだ有効ではありません。
+自動再接続せず blocked になります。`task cancel` は key を永続化してから、target 所有の
+agent Session を停止します。`task cleanup` は別操作で、target が Session の停止を確認できた
+場合だけ、target の journal に記録された Session、worktree、local branch を削除します。
+どちらもリモート通信より先に key を表示します。結果が `unknown` なら同じ
+`--idempotency-key` で再試行し、不確実性が残る間は異なる key を拒否します。明確な
+`failed` receipt の場合は blocker を解消してから、新しい key で再実行できます。
 
 通信には forwarding を無効にした非対話 SSH を使い、交渉した capability と安定した
 server/repository identity を記録します。ラベルは英小文字または数字で始め、英小文字・数字・

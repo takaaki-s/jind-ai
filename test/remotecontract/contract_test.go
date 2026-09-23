@@ -143,6 +143,32 @@ func TestStartAndInspectFixturesMatchProductionTypes(t *testing.T) {
 	}
 }
 
+func TestCancelAndCleanupFixturesMatchProductionTypes(t *testing.T) {
+	for _, fixture := range []struct {
+		request   string
+		response  string
+		operation remote.Operation
+	}{
+		{"cancel-request.json", "cancel-response.json", remote.OperationExecutionCancel},
+		{"cleanup-request.json", "cleanup-response.json", remote.OperationExecutionCleanup},
+	} {
+		var requestEnvelope envelope
+		decodeStrict(t, readFixture(t, fixture.request), &requestEnvelope)
+		var request remote.ExecutionOperationRequest
+		decodeStrict(t, requestEnvelope.Payload, &request)
+		if wireErr := remote.ValidateExecutionOperationRequest(request); wireErr != nil {
+			t.Fatalf("%s: %+v", fixture.request, wireErr)
+		}
+		var responseEnvelope envelope
+		decodeStrict(t, readFixture(t, fixture.response), &responseEnvelope)
+		var response remote.ExecutionOperationResponse
+		decodeStrict(t, responseEnvelope.Payload, &response)
+		if wireErr := remote.ValidateExecutionOperationResponseFor(fixture.operation, request, response); wireErr != nil {
+			t.Fatalf("%s: %+v", fixture.response, wireErr)
+		}
+	}
+}
+
 func TestFixturesDoNotCrossForbiddenAuthorityBoundaries(t *testing.T) {
 	for _, name := range []string{
 		"handshake-request.json", "handshake-response.json", "preflight-request.json", "preflight-response.json",

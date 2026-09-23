@@ -109,6 +109,52 @@ var taskSyncCmd = &cobra.Command{
 	},
 }
 
+var taskCancelCmd = newTaskRemoteOperationCommand("cancel", "Stop the target-owned session", func(client *daemon.Client, req daemon.TaskRemoteOperationRequest) (*task.Info, error) {
+	return client.CancelTask(req)
+})
+
+var taskCleanupCmd = newTaskRemoteOperationCommand("cleanup", "Remove target-owned session, worktree, and branch", func(client *daemon.Client, req daemon.TaskRemoteOperationRequest) (*task.Info, error) {
+	return client.CleanupTask(req)
+})
+
+func newTaskRemoteOperationCommand(use, short string, call func(*daemon.Client, daemon.TaskRemoteOperationRequest) (*task.Info, error)) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   use + " <selector>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			confirm, _ := cmd.Flags().GetBool("confirm")
+			if !confirm {
+				return fmt.Errorf("--confirm is required for remote %s", use)
+			}
+			client := daemon.NewClient(getSocketPath())
+			info, err := resolveTask(client, args[0])
+			if err != nil {
+				return err
+			}
+			key, _ := cmd.Flags().GetString("idempotency-key")
+			if key == "" {
+				key = daemon.NewTaskIdempotencyKey()
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Idempotency key: %s\n", key)
+			updated, err := call(client, daemon.TaskRemoteOperationRequest{
+				TaskID: info.ID, Confirm: true, IdempotencyKey: key,
+			})
+			if err != nil {
+				return fmt.Errorf("task %s %s (%s): %w", info.ID, use, key, err)
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), updated)
+			}
+			renderTaskInfoText(cmd.OutOrStdout(), updated)
+			return nil
+		},
+	}
+	cmd.Flags().Bool("confirm", false, "Explicitly execute this remote side effect")
+	cmd.Flags().String("idempotency-key", "", "Reuse this key only to retry the identical operation")
+	return cmd
+}
+
 var taskExecutionCmd = &cobra.Command{
 	Use:   "execution",
 	Short: "Manage a task's execution attempts",
@@ -271,6 +317,18 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 			if execution.Remote.Error != "" {
 				fmt.Fprintf(tw, "    Remote error:\t%s\n", execution.Remote.Error)
 			}
+			for _, operation := range []struct {
+				name    string
+				receipt *task.RemoteOperationReceipt
+			}{{"Cancel", execution.Remote.Cancel}, {"Cleanup", execution.Remote.Cleanup}} {
+				if operation.receipt == nil {
+					continue
+				}
+				fmt.Fprintf(tw, "    %s:\t%s  key=%s\n", operation.name, operation.receipt.Status, operation.receipt.IdempotencyKey)
+				if operation.receipt.Error != "" {
+					fmt.Fprintf(tw, "      Error:\t%s\n", operation.receipt.Error)
+				}
+			}
 		} else {
 			fmt.Fprintf(tw, "  #%d:\t%s  session=%s  %s\n", execution.Sequence, execution.ID, execution.SessionID, state)
 		}
@@ -304,7 +362,7 @@ func renderTaskInfoText(w io.Writer, info *task.Info) {
 
 func init() {
 	rootCmd.AddCommand(taskCmd)
-	taskCmd.AddCommand(taskCreateCmd, taskListCmd, taskInfoCmd, taskSyncCmd, taskExecutionCmd)
+	taskCmd.AddCommand(taskCreateCmd, taskListCmd, taskInfoCmd, taskSyncCmd, taskCancelCmd, taskCleanupCmd, taskExecutionCmd)
 	taskExecutionCmd.AddCommand(taskExecutionAddCmd)
 	taskCreateCmd.Flags().String("title", "", "Task title (required)")
 	taskCreateCmd.Flags().String("source-kind", "manual", "Origin kind, such as manual or issue")

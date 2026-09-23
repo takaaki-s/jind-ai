@@ -190,6 +190,17 @@ func (c *SSHClient) Call(parent context.Context, target Target, controllerID str
 		if wireErr := ValidateInspectResponse(request, *response); wireErr != nil {
 			return handshakeResponse, finishFailedExchange(callErrorFromWire(wireErr))
 		}
+	case OperationExecutionCancel, OperationExecutionCleanup:
+		request, requestOK := payload.(ExecutionOperationRequest)
+		response, responseOK := result.(*ExecutionOperationResponse)
+		if !requestOK || !responseOK {
+			return handshakeResponse, finishFailedExchange(&CallError{
+				Kind: ErrorProtocol, Code: "invalid_response", Message: "invalid execution operation result target",
+			})
+		}
+		if wireErr := ValidateExecutionOperationResponseFor(operation, request, *response); wireErr != nil {
+			return handshakeResponse, finishFailedExchange(callErrorFromWire(wireErr))
+		}
 	}
 	if err := stdin.Close(); err != nil {
 		return handshakeResponse, transportError(ctx, diagnostics.Bytes(), err)
@@ -209,6 +220,10 @@ func operationCapabilities(operation Operation) ([]string, bool) {
 		return []string{CapabilityExecutionStart, CapabilityStructuredSummary}, true
 	case OperationExecutionInspect:
 		return []string{CapabilityExecutionInspect, CapabilityStructuredSummary}, true
+	case OperationExecutionCancel:
+		return []string{CapabilityExecutionCancel, CapabilityStructuredSummary}, true
+	case OperationExecutionCleanup:
+		return []string{CapabilityExecutionCleanup, CapabilityStructuredSummary}, true
 	default:
 		return nil, false
 	}

@@ -105,6 +105,60 @@ func TestManager_RemoteOriginPreventsDuplicateTargetExecutions(t *testing.T) {
 	}
 }
 
+func TestManager_RemoteOperationReceiptsAreDurableAndKeyBound(t *testing.T) {
+	t.Run("controller", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tasks")
+		sessions := &fakeSessions{infos: map[string]session.Info{}}
+		m, _ := NewManager(dir, sessions)
+		reservation, _ := m.ReserveRemoteRun(testRemoteRunOptions())
+		summary := RemoteSummary{Sequence: 1, ObservedAt: time.Now(), Execution: RemoteExecutionSummary{Phase: ExecutionSubmitted}}
+		_, _ = m.ApplyRemotePreflight(reservation.Task.ID, reservation.Execution.ID, "sha256:target", "srv-1", "boot-1", []string{"execution.cancel.v1"}, "sha256:repo")
+		_, _ = m.BindRemoteExecution(reservation.Task.ID, reservation.Execution.ID, "srv-1", "boot-1", "task-r", "exec-r", summary)
+		_, receipt, shouldCall, err := m.ReserveRemoteOperation(reservation.Task.ID, reservation.Execution.ID, RemoteOperationCancel, "cancel-key")
+		if err != nil || !shouldCall || receipt.Status != RemoteOperationRunning {
+			t.Fatalf("reserve = %+v, %t, %v", receipt, shouldCall, err)
+		}
+		restarted, err := NewManager(dir, sessions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, ok := restarted.Get(reservation.Task.ID)
+		if !ok || info.Executions[0].Remote.Cancel.Status != RemoteOperationUnknown {
+			t.Fatalf("restart receipt = %+v", info.Executions[0].Remote.Cancel)
+		}
+		if _, _, _, err := restarted.ReserveRemoteOperation(reservation.Task.ID, reservation.Execution.ID, RemoteOperationCancel, "another-key"); err == nil {
+			t.Fatal("different controller operation key was accepted")
+		}
+		unchanged, _ := restarted.Get(reservation.Task.ID)
+		if unchanged.Executions[0].Remote.SyncState != RemoteSyncBound {
+			t.Fatalf("operation conflict changed sync state: %+v", unchanged.Executions[0].Remote)
+		}
+	})
+
+	t.Run("target", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tasks")
+		m, _ := NewManager(dir, &fakeSessions{infos: map[string]session.Info{}})
+		opts := testRunOptions()
+		opts.IdempotencyKey = "remote-derived"
+		opts.RemoteOrigin = &RemoteOrigin{ControllerID: "ctl-1", ControllerExecutionID: "exec-c", IdempotencyKey: "start-key"}
+		reservation, _ := m.ReserveRun(opts)
+		_, receipt, shouldRun, err := m.ReserveTargetRemoteOperation(reservation.Task.ID, reservation.Execution.ID, RemoteOperationCleanup, "cleanup-key")
+		if err != nil || !shouldRun || receipt.Status != RemoteOperationRunning {
+			t.Fatalf("reserve = %+v, %t, %v", receipt, shouldRun, err)
+		}
+		receipt.Status = RemoteOperationSucceeded
+		receipt.Removed = RemoteRemovedResources{Session: true, Worktree: true, Branch: true}
+		info, err := m.FinishTargetRemoteOperation(reservation.Task.ID, reservation.Execution.ID, RemoteOperationCleanup, receipt)
+		if err != nil || info.Executions[0].Run.RemoteCleanup.Status != RemoteOperationSucceeded {
+			t.Fatalf("finish = %+v, %v", info, err)
+		}
+		_, same, shouldRun, err := m.ReserveTargetRemoteOperation(reservation.Task.ID, reservation.Execution.ID, RemoteOperationCleanup, "cleanup-key")
+		if err != nil || shouldRun || same.Status != RemoteOperationSucceeded {
+			t.Fatalf("retry = %+v, %t, %v", same, shouldRun, err)
+		}
+	})
+}
+
 func testRunOptions() RunOptions {
 	prompt := "Implement the bounded change"
 	return RunOptions{
