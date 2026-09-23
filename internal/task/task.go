@@ -15,7 +15,7 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/session"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 const (
 	MaxTitleLength           = 200
@@ -150,22 +150,53 @@ const (
 // Every value is an opaque identity or bounded projection; paths, pane IDs,
 // transcript content, and credentials never cross this boundary.
 type RemoteLink struct {
-	TargetID              string          `json:"target_id"`
-	TargetRevision        string          `json:"target_revision"`
-	RepositoryLabel       string          `json:"repository_label"`
-	RepositoryID          string          `json:"repository_id"`
-	RepositoryIdentity    string          `json:"repository_identity,omitempty"`
-	ServerInstanceID      string          `json:"server_instance_id,omitempty"`
-	ServerBootID          string          `json:"server_boot_id,omitempty"`
-	Capabilities          []string        `json:"capabilities,omitempty"`
-	ControllerExecutionID string          `json:"controller_execution_id"`
-	RemoteTaskID          string          `json:"remote_task_id,omitempty"`
-	RemoteExecutionID     string          `json:"remote_execution_id,omitempty"`
-	SyncState             RemoteSyncState `json:"sync_state"`
-	Summary               *RemoteSummary  `json:"summary,omitempty"`
-	Error                 string          `json:"error,omitempty"`
-	UpdatedAt             time.Time       `json:"updated_at"`
+	TargetID              string                  `json:"target_id"`
+	TargetRevision        string                  `json:"target_revision"`
+	RepositoryLabel       string                  `json:"repository_label"`
+	RepositoryID          string                  `json:"repository_id"`
+	RepositoryIdentity    string                  `json:"repository_identity,omitempty"`
+	ServerInstanceID      string                  `json:"server_instance_id,omitempty"`
+	ServerBootID          string                  `json:"server_boot_id,omitempty"`
+	Capabilities          []string                `json:"capabilities,omitempty"`
+	ControllerExecutionID string                  `json:"controller_execution_id"`
+	RemoteTaskID          string                  `json:"remote_task_id,omitempty"`
+	RemoteExecutionID     string                  `json:"remote_execution_id,omitempty"`
+	SyncState             RemoteSyncState         `json:"sync_state"`
+	Summary               *RemoteSummary          `json:"summary,omitempty"`
+	Cancel                *RemoteOperationReceipt `json:"cancel,omitempty"`
+	Cleanup               *RemoteOperationReceipt `json:"cleanup,omitempty"`
+	Error                 string                  `json:"error,omitempty"`
+	UpdatedAt             time.Time               `json:"updated_at"`
 }
+
+type RemoteOperationStatus string
+
+const (
+	RemoteOperationRunning   RemoteOperationStatus = "running"
+	RemoteOperationSucceeded RemoteOperationStatus = "succeeded"
+	RemoteOperationFailed    RemoteOperationStatus = "failed"
+	RemoteOperationUnknown   RemoteOperationStatus = "unknown"
+)
+
+// RemoteOperationReceipt is the durable result of one explicit remote side
+// effect. Running exists only in local journals; wire responses expose a
+// terminal or unknown receipt.
+type RemoteOperationReceipt struct {
+	IdempotencyKey string                 `json:"idempotency_key"`
+	Status         RemoteOperationStatus  `json:"status"`
+	Removed        RemoteRemovedResources `json:"removed,omitzero"`
+	Error          string                 `json:"error,omitempty"`
+	Guidance       string                 `json:"guidance,omitempty"`
+	UpdatedAt      time.Time              `json:"updated_at,omitempty"`
+}
+
+type RemoteRemovedResources struct {
+	Session  bool `json:"session,omitempty"`
+	Worktree bool `json:"worktree,omitempty"`
+	Branch   bool `json:"branch,omitempty"`
+}
+
+func (r RemoteRemovedResources) IsZero() bool { return r == RemoteRemovedResources{} }
 
 type RemoteSummary struct {
 	Sequence   uint64                 `json:"sequence"`
@@ -222,27 +253,29 @@ type PromptMetadata struct {
 // Run is the bounded journal for a prompt-backed execution. It contains enough
 // identity to reconcile a retry, but no prompt body or captured environment.
 type Run struct {
-	IdempotencyKey    string         `json:"idempotency_key"`
-	Phase             ExecutionPhase `json:"phase"`
-	FailedPhase       ExecutionPhase `json:"failed_phase,omitempty"`
-	Repo              string         `json:"repo"`
-	RelativeWorkDir   string         `json:"relative_work_dir,omitempty"`
-	AgentKind         string         `json:"agent_kind"`
-	Model             string         `json:"model,omitempty"`
-	Fleet             string         `json:"fleet,omitempty"`
-	NoHook            bool           `json:"no_hook,omitempty"`
-	RequestedBase     string         `json:"requested_base,omitempty"`
-	WorktreeName      string         `json:"worktree_name"`
-	WorktreeBranch    string         `json:"worktree_branch"`
-	Prompt            PromptMetadata `json:"prompt"`
-	Error             string         `json:"error,omitempty"`
-	Guidance          string         `json:"guidance,omitempty"`
-	Warning           string         `json:"warning,omitempty"`
-	RemoteOrigin      *RemoteOrigin  `json:"remote_origin,omitempty"`
-	SummarySequence   uint64         `json:"summary_sequence,omitempty"`
-	SummaryDigest     string         `json:"summary_digest,omitempty"`
-	SummaryObservedAt time.Time      `json:"summary_observed_at,omitempty"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	IdempotencyKey    string                  `json:"idempotency_key"`
+	Phase             ExecutionPhase          `json:"phase"`
+	FailedPhase       ExecutionPhase          `json:"failed_phase,omitempty"`
+	Repo              string                  `json:"repo"`
+	RelativeWorkDir   string                  `json:"relative_work_dir,omitempty"`
+	AgentKind         string                  `json:"agent_kind"`
+	Model             string                  `json:"model,omitempty"`
+	Fleet             string                  `json:"fleet,omitempty"`
+	NoHook            bool                    `json:"no_hook,omitempty"`
+	RequestedBase     string                  `json:"requested_base,omitempty"`
+	WorktreeName      string                  `json:"worktree_name"`
+	WorktreeBranch    string                  `json:"worktree_branch"`
+	Prompt            PromptMetadata          `json:"prompt"`
+	Error             string                  `json:"error,omitempty"`
+	Guidance          string                  `json:"guidance,omitempty"`
+	Warning           string                  `json:"warning,omitempty"`
+	RemoteOrigin      *RemoteOrigin           `json:"remote_origin,omitempty"`
+	RemoteCancel      *RemoteOperationReceipt `json:"remote_cancel,omitempty"`
+	RemoteCleanup     *RemoteOperationReceipt `json:"remote_cleanup,omitempty"`
+	SummarySequence   uint64                  `json:"summary_sequence,omitempty"`
+	SummaryDigest     string                  `json:"summary_digest,omitempty"`
+	SummaryObservedAt time.Time               `json:"summary_observed_at,omitempty"`
+	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
 type ReferenceState string
@@ -433,6 +466,14 @@ func normalize(t *Task) {
 			run.Error = "daemon restarted while this execution was in progress"
 			run.Guidance = "retry `jin task new` with the same idempotency key and input; jind-ai will reuse recorded identities"
 		}
+		if t.Executions[i].Remote != nil {
+			normalizeRemoteOperation(t.Executions[i].Remote.Cancel)
+			normalizeRemoteOperation(t.Executions[i].Remote.Cleanup)
+		}
+		if run != nil {
+			normalizeRemoteOperation(run.RemoteCancel)
+			normalizeRemoteOperation(run.RemoteCleanup)
+		}
 	}
 	for i := range t.Mutations {
 		if t.Mutations[i].Sequence == 0 {
@@ -443,6 +484,14 @@ func normalize(t *Task) {
 			t.Mutations[i].Error = "daemon restarted while the provider mutation was running"
 			t.Mutations[i].Guidance = "retry with the same idempotency key to reconcile; jind-ai will not submit the mutation again unless success is proven"
 		}
+	}
+}
+
+func normalizeRemoteOperation(receipt *RemoteOperationReceipt) {
+	if receipt != nil && receipt.Status == RemoteOperationRunning {
+		receipt.Status = RemoteOperationUnknown
+		receipt.Error = "daemon restarted while the remote operation was running"
+		receipt.Guidance = "retry the same operation with the same idempotency key to reconcile"
 	}
 }
 

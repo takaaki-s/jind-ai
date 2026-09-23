@@ -132,10 +132,12 @@ remote:
 	}
 	if handshake.Error != nil || handshake.Value.Server.InstanceID == "" ||
 		handshake.Value.Server.BootID != server.remoteBootID ||
-		len(handshake.Value.Capabilities) != 4 || handshake.Value.Capabilities[0] != remote.CapabilityRepositoryPreflight ||
+		len(handshake.Value.Capabilities) != 6 || handshake.Value.Capabilities[0] != remote.CapabilityRepositoryPreflight ||
 		handshake.Value.Capabilities[1] != remote.CapabilityExecutionStart ||
 		handshake.Value.Capabilities[2] != remote.CapabilityExecutionInspect ||
-		handshake.Value.Capabilities[3] != remote.CapabilityStructuredSummary {
+		handshake.Value.Capabilities[3] != remote.CapabilityExecutionCancel ||
+		handshake.Value.Capabilities[4] != remote.CapabilityExecutionCleanup ||
+		handshake.Value.Capabilities[5] != remote.CapabilityStructuredSummary {
 		t.Fatalf("handshake = %+v", handshake)
 	}
 

@@ -349,6 +349,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleTaskGet(req.Data)
 	case "task-sync":
 		return s.handleTaskSync(req.Data)
+	case "task-cancel":
+		return s.handleTaskCancel(req.Data)
+	case "task-cleanup":
+		return s.handleTaskCleanup(req.Data)
 	case "task-execution-add":
 		return s.handleTaskExecutionAdd(req.Data)
 	case "task-comment":
@@ -363,6 +367,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleRemoteBackendStart(req.Data)
 	case "remote-backend-inspect":
 		return s.handleRemoteBackendInspect(req.Data)
+	case "remote-backend-cancel":
+		return s.handleRemoteBackendCancel(req.Data)
+	case "remote-backend-cleanup":
+		return s.handleRemoteBackendCleanup(req.Data)
 	case "send":
 		return s.handleSend(req.Data)
 	case "start":

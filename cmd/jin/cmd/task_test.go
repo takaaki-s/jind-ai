@@ -31,8 +31,23 @@ func TestTaskCommandsAreRegistered(t *testing.T) {
 	if got, _, err := rootCmd.Find([]string{"task", "sync"}); err != nil || got != taskSyncCmd {
 		t.Fatal("task sync command is not registered")
 	}
+	if got, _, err := rootCmd.Find([]string{"task", "cancel"}); err != nil || got != taskCancelCmd {
+		t.Fatal("task cancel command is not registered")
+	}
+	if got, _, err := rootCmd.Find([]string{"task", "cleanup"}); err != nil || got != taskCleanupCmd {
+		t.Fatal("task cleanup command is not registered")
+	}
 	if got, _, err := rootCmd.Find([]string{"task", "comment"}); err != nil || got != taskCommentCmd {
 		t.Fatal("task comment command is not registered")
+	}
+}
+
+func TestTaskRemoteOperationsRequireConfirmation(t *testing.T) {
+	for _, cmd := range []*cobra.Command{taskCancelCmd, taskCleanupCmd} {
+		_ = cmd.Flags().Set("confirm", "false")
+		if err := cmd.RunE(cmd, []string{"task"}); err == nil || !strings.Contains(err.Error(), "--confirm") {
+			t.Fatalf("%s accepted without confirmation: %v", cmd.Name(), err)
+		}
 	}
 }
 

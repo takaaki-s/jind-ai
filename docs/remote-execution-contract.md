@@ -1,10 +1,9 @@
 # Remote Execution Contract
 
-Status: implementation in progress. Target configuration, stable endpoint
+Status: implemented for the bounded MVP. Target configuration, stable endpoint
 identities, bounded SSH transport, version/capability negotiation, repository
-preflight, Task start/retry, structured inspection/sync, and the stdio server
-are implemented. Explicit cancellation and remote-owned cleanup remain for the
-next slice.
+preflight, Task start/retry, structured inspection/sync, explicit cancellation,
+remote-owned cleanup, and the stdio server are implemented.
 
 ## Purpose
 
@@ -396,12 +395,11 @@ The MVP is limited to:
 6. a remote stdio server that delegates mutations to its local daemon; and
 7. CLI preflight plus explicit start, inspect, cancel, and cleanup.
 
-Items 1-3, start/inspect and structured-summary portions of item 4, the durable
-remote link and retry/sync behavior in item 5, and their stdio/CLI paths in
-items 6-7 are implemented. The production server advertises repository
-preflight, execution start/inspect, and structured summary capabilities.
-Cancel/cleanup capabilities are intentionally not advertised until their
-receipt journals and ownership checks are implemented.
+Items 1-7 are implemented. The production server advertises repository
+preflight, execution start/inspect/cancel/cleanup, and structured-summary
+capabilities. Cancel and cleanup use separate durable receipts. Cleanup accepts
+no path from the controller and removes only the inactive Session, worktree,
+and branch proven from the target's own Task and Session journals.
 
 Its tests must reuse the JSON examples and add deterministic peers for: partial
 frame reads, oversized lengths, malformed JSON, stderr floods, timeout before

@@ -775,6 +775,8 @@ jin task new --target buildbox --repository jind-ai \
   --prompt "Implement the change and run the relevant tests"
 jin task info <task-selector>   # cached; no network access
 jin task sync <task-selector>   # explicit SSH inspection
+jin task cancel <task-selector> --confirm
+jin task cleanup <task-selector> --confirm
 ```
 
 The controller persists its Task/Execution before opening SSH. If the
@@ -783,7 +785,14 @@ identical prompt; the target returns the original remote identities rather
 than starting duplicate work. `task sync` refreshes only bounded structured
 phase, status, attention, review-fact, and check-report data—never paths,
 transcripts, pane output, or credentials. A changed target revision or server
-instance blocks reattachment. Remote cancel and cleanup are not enabled yet.
+instance blocks reattachment. `task cancel` durably records its key before the
+target stops the owned agent Session. `task cleanup` is separate and succeeds
+only after the target proves that Session is inactive; it removes only the
+target-journaled Session, worktree, and local branch. Both commands print their
+key before remote I/O. If an outcome is unknown, retry with that same
+`--idempotency-key`; a different key is rejected while uncertainty remains.
+After a definite `failed` receipt, resolve the blocker and start a new attempt
+with a new key.
 
 The transport uses non-interactive SSH with forwarding disabled and records
 the negotiated capabilities plus stable server/repository identities. Labels

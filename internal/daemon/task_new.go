@@ -62,6 +62,11 @@ type taskExecutionDriver interface {
 	SetCreationWarning(string, string)
 }
 
+type remoteExecutionLifecycleDriver interface {
+	Kill(string) error
+	CleanupRemoteOwned(session.RemoteCleanupOwnership) (session.RemoteCleanupResult, error)
+}
+
 type sessionTaskDriver struct{ manager *session.Manager }
 
 func (d sessionTaskDriver) Reserve(opts session.CreateOptions) (session.Info, error) {
@@ -82,6 +87,10 @@ func (d sessionTaskDriver) MarkCreationFailed(id string, err error) {
 }
 func (d sessionTaskDriver) SetCreationWarning(id, warning string) {
 	d.manager.SetCreationWarning(id, warning)
+}
+func (d sessionTaskDriver) Kill(id string) error { return d.manager.Kill(id) }
+func (d sessionTaskDriver) CleanupRemoteOwned(ownership session.RemoteCleanupOwnership) (session.RemoteCleanupResult, error) {
+	return d.manager.CleanupRemoteOwned(ownership)
 }
 
 func (s *Server) handleTaskNew(data json.RawMessage) Response {

@@ -151,6 +151,8 @@ it alone.
 | `task-list` | (none) | List tasks with live execution/attention projections |
 | `task-get` | `IDRequest` | Get one task with its ordered execution history |
 | `task-sync` | `TaskSyncRequest` | Explicitly inspect the latest remote execution and persist its structured summary |
+| `task-cancel` | `TaskRemoteOperationRequest` | Explicitly stop the latest bound remote execution with a durable idempotency key |
+| `task-cleanup` | `TaskRemoteOperationRequest` | Explicitly request target-owned cleanup after the remote Session is proven inactive |
 | `task-execution-add` | `TaskExecutionAddRequest` (`task_id`, `session_id`) | Append an existing session as a new execution |
 | `task-comment` | `TaskCommentRequest` | Preview or explicitly create/reconcile one comment on a Task's source GitHub Issue |
 | `remote-preflight` | `RemoteTargetPreflightRequest` | Resolve one configured target/repository mapping and perform bounded SSH handshake plus repository preflight |
@@ -158,6 +160,8 @@ it alone.
 | `remote-backend-preflight` | controller ID + `remote.PreflightRequest` | Internal adapter used by the stdio server to resolve one allowlisted repository locally |
 | `remote-backend-start` | controller ID + `remote.StartRequest` | Internal adapter used by the stdio server to reserve/reconcile a target-owned Task execution |
 | `remote-backend-inspect` | controller ID + `remote.InspectRequest` | Internal adapter used by the stdio server to read a target-owned structured summary |
+| `remote-backend-cancel` | controller ID + `remote.ExecutionOperationRequest` | Internal adapter used by the stdio server to reconcile an idempotent target-owned stop |
+| `remote-backend-cleanup` | controller ID + `remote.ExecutionOperationRequest` | Internal adapter used by the stdio server to reconcile target-owned Session/worktree/branch cleanup |
 | `send` | `SendRequest` | Send a prompt to a session (alias `prompt` on the CLI) |
 | `respond` | `RespondRequest` | Answer a prompt an agent is blocked on; returns `RespondResponse` |
 | `start` | `IDRequest` | Start session |
@@ -228,6 +232,12 @@ before SSH; the target binds that ID and the idempotency key before any
 worktree/session side effect. The internal remote backend actions are reachable
 only through the framed stdio server, which validates the public protocol and
 delegates ownership to the target daemon.
+
+Protocol v18 adds explicit `task-cancel` and `task-cleanup` actions plus the
+target-side cancel/cleanup adapters. The controller persists an operation key
+before SSH and stores `succeeded`, `failed`, or `unknown`. Cleanup carries no
+path over IPC or SSH; the target resolves and verifies its own ownership
+journals before deleting anything.
 
 Protocol v13 adds the required `Info.capabilities` object to every session
 projection. Managed sessions describe adapter support rather than runtime

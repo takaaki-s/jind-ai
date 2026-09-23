@@ -31,6 +31,8 @@ const (
 	OperationRepositoryPreflight Operation = "repository.preflight"
 	OperationExecutionStart      Operation = "execution.start"
 	OperationExecutionInspect    Operation = "execution.inspect"
+	OperationExecutionCancel     Operation = "execution.cancel"
+	OperationExecutionCleanup    Operation = "execution.cleanup"
 )
 
 const (
@@ -191,6 +193,19 @@ type InspectResponse struct {
 	Summary           task.RemoteSummary `json:"summary"`
 }
 
+type ExecutionOperationRequest struct {
+	ControllerExecutionID string `json:"controller_execution_id"`
+	RemoteExecutionID     string `json:"remote_execution_id"`
+	IdempotencyKey        string `json:"idempotency_key"`
+}
+
+type ExecutionOperationResponse struct {
+	RemoteTaskID      string                      `json:"remote_task_id"`
+	RemoteExecutionID string                      `json:"remote_execution_id"`
+	Receipt           task.RemoteOperationReceipt `json:"receipt"`
+	Summary           task.RemoteSummary          `json:"summary"`
+}
+
 type Target struct {
 	ID                       string
 	Revision                 string
@@ -212,6 +227,8 @@ type Backend interface {
 	Preflight(string, PreflightRequest) (PreflightResponse, *WireError)
 	StartExecution(string, StartRequest) (StartResponse, *WireError)
 	InspectExecution(string, InspectRequest) (InspectResponse, *WireError)
+	CancelExecution(string, ExecutionOperationRequest) (ExecutionOperationResponse, *WireError)
+	CleanupExecution(string, ExecutionOperationRequest) (ExecutionOperationResponse, *WireError)
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
@@ -352,6 +369,53 @@ func ValidateInspectResponse(request InspectRequest, response InspectResponse) *
 		return NewWireError("invalid_response", "remote returned different execution identities", false)
 	}
 	return ValidateSummary(response.Summary)
+}
+
+func ValidateExecutionOperationRequest(request ExecutionOperationRequest) *WireError {
+	if ValidateIdentifier("controller execution id", request.ControllerExecutionID) != nil ||
+		ValidateIdentifier("remote execution id", request.RemoteExecutionID) != nil ||
+		ValidateIdentifier("idempotency key", request.IdempotencyKey) != nil ||
+		len(request.IdempotencyKey) > task.MaxIdempotencyKeyLength {
+		return NewWireError("invalid_request", "invalid remote operation identity", false)
+	}
+	return nil
+}
+
+func ValidateExecutionOperationResponse(request ExecutionOperationRequest, response ExecutionOperationResponse) *WireError {
+	if ValidateIdentifier("remote task id", response.RemoteTaskID) != nil || response.RemoteExecutionID != request.RemoteExecutionID ||
+		response.Receipt.IdempotencyKey != request.IdempotencyKey {
+		return NewWireError("invalid_response", "remote returned different operation identities", false)
+	}
+	switch response.Receipt.Status {
+	case task.RemoteOperationSucceeded, task.RemoteOperationFailed, task.RemoteOperationUnknown:
+	default:
+		return NewWireError("invalid_response", "remote returned invalid operation status", false)
+	}
+	return ValidateSummary(response.Summary)
+}
+
+func ValidateExecutionOperationResponseFor(operation Operation, request ExecutionOperationRequest, response ExecutionOperationResponse) *WireError {
+	if wireErr := ValidateExecutionOperationResponse(request, response); wireErr != nil {
+		return wireErr
+	}
+	if response.Receipt.Status != task.RemoteOperationSucceeded {
+		return nil
+	}
+	switch operation {
+	case OperationExecutionCancel:
+		if response.Receipt.Removed != (task.RemoteRemovedResources{}) || response.Summary.Session == nil ||
+			response.Summary.Session.Status != session.StatusStopped {
+			return NewWireError("invalid_response", "remote cancellation success has no stopped session evidence", false)
+		}
+	case OperationExecutionCleanup:
+		want := task.RemoteRemovedResources{Session: true, Worktree: true, Branch: true}
+		if response.Receipt.Removed != want || response.Summary.Session != nil {
+			return NewWireError("invalid_response", "remote cleanup success has incomplete removal evidence", false)
+		}
+	default:
+		return NewWireError("invalid_response", "invalid remote execution operation", false)
+	}
+	return nil
 }
 
 func ValidateSummary(summary task.RemoteSummary) *WireError {

@@ -540,6 +540,8 @@ func cloneRemoteLink(link *RemoteLink) *RemoteLink {
 	}
 	clone := *link
 	clone.Capabilities = append([]string(nil), link.Capabilities...)
+	clone.Cancel = cloneRemoteOperationReceipt(link.Cancel)
+	clone.Cleanup = cloneRemoteOperationReceipt(link.Cleanup)
 	if link.Summary != nil {
 		summary := *link.Summary
 		if link.Summary.Session != nil {
@@ -548,6 +550,14 @@ func cloneRemoteLink(link *RemoteLink) *RemoteLink {
 		}
 		clone.Summary = &summary
 	}
+	return &clone
+}
+
+func cloneRemoteOperationReceipt(receipt *RemoteOperationReceipt) *RemoteOperationReceipt {
+	if receipt == nil {
+		return nil
+	}
+	clone := *receipt
 	return &clone
 }
 
@@ -821,6 +831,8 @@ func (m *Manager) project(value Task) Info {
 		if execution.Run != nil {
 			run := *execution.Run
 			run.RemoteOrigin = cloneRemoteOrigin(run.RemoteOrigin)
+			run.RemoteCancel = cloneRemoteOperationReceipt(run.RemoteCancel)
+			run.RemoteCleanup = cloneRemoteOperationReceipt(run.RemoteCleanup)
 			execution.Run = &run
 		}
 		execution.Remote = cloneRemoteLink(execution.Remote)

@@ -16,6 +16,8 @@ type fakeBackend struct {
 	preflight PreflightResponse
 	start     StartResponse
 	inspect   InspectResponse
+	cancel    ExecutionOperationResponse
+	cleanup   ExecutionOperationResponse
 	preErr    *WireError
 	seen      []string
 }
@@ -38,6 +40,53 @@ func (b *fakeBackend) StartExecution(string, StartRequest) (StartResponse, *Wire
 func (b *fakeBackend) InspectExecution(string, InspectRequest) (InspectResponse, *WireError) {
 	b.seen = append(b.seen, "inspect")
 	return b.inspect, nil
+}
+
+func (b *fakeBackend) CancelExecution(string, ExecutionOperationRequest) (ExecutionOperationResponse, *WireError) {
+	b.seen = append(b.seen, "cancel")
+	return b.cancel, nil
+}
+
+func (b *fakeBackend) CleanupExecution(string, ExecutionOperationRequest) (ExecutionOperationResponse, *WireError) {
+	b.seen = append(b.seen, "cleanup")
+	return b.cleanup, nil
+}
+
+func TestServeCancelsAndCleansUpWithReceipts(t *testing.T) {
+	observed := time.Now().UTC().Truncate(time.Second)
+	stopped := task.RemoteSummary{
+		Sequence: 2, ObservedAt: observed, Execution: task.RemoteExecutionSummary{Phase: task.ExecutionSubmitted},
+		Session: &task.RemoteSessionSummary{ID: "session-remote", Status: session.StatusStopped},
+	}
+	cleaned := task.RemoteSummary{Sequence: 3, ObservedAt: observed.Add(time.Second), Execution: task.RemoteExecutionSummary{Phase: task.ExecutionSubmitted}}
+	backend := &fakeBackend{
+		handshake: validHandshake(),
+		cancel: ExecutionOperationResponse{RemoteTaskID: "task-remote", RemoteExecutionID: "exec-remote",
+			Receipt: task.RemoteOperationReceipt{IdempotencyKey: "cancel-key", Status: task.RemoteOperationSucceeded}, Summary: stopped},
+		cleanup: ExecutionOperationResponse{RemoteTaskID: "task-remote", RemoteExecutionID: "exec-remote",
+			Receipt: task.RemoteOperationReceipt{IdempotencyKey: "cleanup-key", Status: task.RemoteOperationSucceeded,
+				Removed: task.RemoteRemovedResources{Session: true, Worktree: true, Branch: true}}, Summary: cleaned},
+	}
+	backend.handshake.Capabilities = []string{CapabilityExecutionCancel, CapabilityExecutionCleanup, CapabilityStructuredSummary}
+	responses := runServer(t, backend,
+		request(t, "req-handshake", "ctl-test", OperationHandshake, HandshakeRequest{
+			MinimumVersion: 1, MaximumVersion: 1, RequiredCapabilities: []string{CapabilityExecutionCancel, CapabilityExecutionCleanup},
+		}),
+		request(t, "req-cancel", "ctl-test", OperationExecutionCancel, ExecutionOperationRequest{
+			ControllerExecutionID: "exec-controller", RemoteExecutionID: "exec-remote", IdempotencyKey: "cancel-key",
+		}),
+		request(t, "req-cleanup", "ctl-test", OperationExecutionCleanup, ExecutionOperationRequest{
+			ControllerExecutionID: "exec-controller", RemoteExecutionID: "exec-remote", IdempotencyKey: "cleanup-key",
+		}),
+	)
+	for i, response := range responses {
+		if response.Status != "ok" {
+			t.Fatalf("response %d = %+v", i, response)
+		}
+	}
+	if strings.Join(backend.seen, ",") != "handshake,cancel,cleanup" {
+		t.Fatalf("backend calls = %#v", backend.seen)
+	}
 }
 
 func TestServeStartsAndInspectsBoundExecution(t *testing.T) {

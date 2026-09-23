@@ -18,6 +18,12 @@ type TaskSyncRequest struct {
 	TaskID string `json:"task_id"`
 }
 
+type TaskRemoteOperationRequest struct {
+	TaskID         string `json:"task_id"`
+	Confirm        bool   `json:"confirm"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 func (s *Server) handleRemoteTaskNew(req TaskNewRequest) Response {
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
 	if req.IdempotencyKey == "" {
@@ -123,6 +129,81 @@ func (s *Server) handleTaskSync(data json.RawMessage) Response {
 		return taskSyncSuccess(updated)
 	}
 	updated := s.syncRemoteExecution(info, execution, targetConfig, remoteRepository, revision)
+	return taskSyncSuccess(updated)
+}
+
+func (s *Server) handleTaskCancel(data json.RawMessage) Response {
+	return s.handleTaskRemoteOperation(data, task.RemoteOperationCancel)
+}
+
+func (s *Server) handleTaskCleanup(data json.RawMessage) Response {
+	return s.handleTaskRemoteOperation(data, task.RemoteOperationCleanup)
+}
+
+func (s *Server) handleTaskRemoteOperation(data json.RawMessage, kind task.RemoteOperationKind) Response {
+	var req TaskRemoteOperationRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if !req.Confirm || strings.TrimSpace(req.IdempotencyKey) == "" {
+		return Response{Success: false, Error: fmt.Sprintf("remote %s requires --confirm and an idempotency key", kind)}
+	}
+	info, ok := s.taskManager.Get(req.TaskID)
+	if !ok {
+		return Response{Success: false, Error: fmt.Sprintf("task not found: %s", req.TaskID)}
+	}
+	execution, err := latestRemoteExecution(info)
+	if err != nil || execution.Remote.RemoteExecutionID == "" {
+		return Response{Success: false, Error: fmt.Sprintf("remote %s requires a bound remote execution", kind)}
+	}
+	link := execution.Remote
+	targetConfig, remoteRepository, revision, err := s.configMgr.ResolveRemoteTarget(link.TargetID, link.RepositoryLabel)
+	if err != nil || revision != link.TargetRevision || remoteRepository != link.RepositoryID {
+		return Response{Success: false, Error: "remote target configuration changed"}
+	}
+	updated, receipt, shouldCall, err := s.taskManager.ReserveRemoteOperation(info.ID, execution.ID, kind, req.IdempotencyKey)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+	if !shouldCall {
+		return taskSyncSuccess(updated)
+	}
+	controllerID, err := s.stateMgr.EnsureRemoteControllerID()
+	if err != nil {
+		return Response{Success: false, Error: "remote controller identity is unavailable"}
+	}
+	request := remote.ExecutionOperationRequest{
+		ControllerExecutionID: link.ControllerExecutionID, RemoteExecutionID: link.RemoteExecutionID,
+		IdempotencyKey: req.IdempotencyKey,
+	}
+	target := remoteTarget(link.TargetID, revision, targetConfig)
+	target.ExpectedServerInstanceID = link.ServerInstanceID
+	var result remote.ExecutionOperationResponse
+	operation := remote.OperationExecutionCancel
+	if kind == task.RemoteOperationCleanup {
+		operation = remote.OperationExecutionCleanup
+	}
+	handshake, callErr := s.remoteCaller.Call(context.Background(), target, controllerID, operation, request, &result)
+	if callErr != nil {
+		receipt.Status = task.RemoteOperationUnknown
+		receipt.Error = "remote operation outcome is unknown"
+		receipt.Guidance = "retry the same operation with the same idempotency key"
+		if _, applyErr := s.taskManager.ApplyRemoteOperation(info.ID, execution.ID, kind, receipt); applyErr != nil {
+			return Response{Success: false, Error: "remote operation outcome could not be persisted"}
+		}
+		updated = s.recordRemoteCallFailure(info.ID, execution.ID, callErr)
+		return taskSyncSuccess(updated)
+	}
+	updated, err = s.taskManager.ApplyRemoteInspection(info.ID, execution.ID,
+		handshake.Server.InstanceID, handshake.Server.BootID,
+		result.RemoteTaskID, result.RemoteExecutionID, result.Summary)
+	if err != nil {
+		return taskSyncSuccess(updated)
+	}
+	updated, err = s.taskManager.ApplyRemoteOperation(info.ID, execution.ID, kind, result.Receipt)
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
 	return taskSyncSuccess(updated)
 }
 

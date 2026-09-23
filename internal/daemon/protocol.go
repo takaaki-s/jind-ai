@@ -42,4 +42,6 @@ package daemon
 // v17: task-new accepts an explicit remote target/repository pair, Task
 // projections include durable remote bindings, and add task-sync plus the
 // target-side execution start/inspect adapters.
-const ProtocolVersion = 17
+// v18: add explicit idempotent remote execution cancel and target-owned
+// cleanup actions and their durable receipts.
+const ProtocolVersion = 18

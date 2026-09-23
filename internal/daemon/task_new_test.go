@@ -50,6 +50,11 @@ type fakeTaskExecutionDriver struct {
 	startErr       error
 	startStatus    session.Status
 	submitErr      error
+	killCalls      int
+	killErr        error
+	cleanupCalls   int
+	cleanupErr     error
+	cleanupResult  session.RemoteCleanupResult
 }
 
 func newFakeTaskExecutionDriver() *fakeTaskExecutionDriver {
@@ -142,6 +147,34 @@ func (f *fakeTaskExecutionDriver) MarkCreationFailed(id string, err error) {
 }
 
 func (f *fakeTaskExecutionDriver) SetCreationWarning(string, string) {}
+
+func (f *fakeTaskExecutionDriver) Kill(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.killCalls++
+	if f.killErr != nil {
+		return f.killErr
+	}
+	info := f.sessions[id]
+	info.Status = session.StatusStopped
+	f.sessions[id] = info
+	return nil
+}
+
+func (f *fakeTaskExecutionDriver) CleanupRemoteOwned(ownership session.RemoteCleanupOwnership) (session.RemoteCleanupResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleanupCalls++
+	if f.cleanupErr != nil {
+		return f.cleanupResult, f.cleanupErr
+	}
+	delete(f.sessions, ownership.SessionID)
+	result := f.cleanupResult
+	if result == (session.RemoteCleanupResult{}) {
+		result = session.RemoteCleanupResult{Session: true, Worktree: true, Branch: true}
+	}
+	return result, nil
+}
 
 func newTaskNewTestServer(t *testing.T) (*Server, *fakeTaskExecutionDriver, string) {
 	t.Helper()
