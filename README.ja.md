@@ -161,11 +161,34 @@ opencode は起動して**何も言わない**。
 
 ## クイックスタート
 
-### 1. デーモンを起動
+### 1. 事前確認してセットアップ
 
 ```bash
-jin daemon start
+jin onboard --skill            # 計画表示のみ。ファイル作成もプロセス起動もしない
+jin onboard --skill --confirm  # 再確認してから同じ計画を適用
 ```
+
+`jin onboard` は git、tmux、選択した agent と明示 capability、daemon の
+socket/protocol、worktree の配置先、repository hook の信頼状態をまとめて確認します。
+既定は read-only で、default config の作成、opt-in skill の配置、daemon 起動、Task 作成の
+どれにも `--confirm` が必要です。既存の config や skill は上書きしません。
+
+`--skill` は opt-in です。最初の隔離 Task まで一度に進める場合は prompt を追加します。
+`--repo` を省略すると現在の git repository root を使います。
+
+```bash
+jin onboard --prompt "最小の有用な変更を実装してテストして"
+# 表示された書き込みを確認してから:
+jin onboard --prompt "最小の有用な変更を実装してテストして" --confirm
+```
+
+step journal は `$XDG_STATE_HOME/jind-ai/onboarding.json` に保存されます。prompt 本文や
+credential は保存せず、digest と idempotency key だけを記録するため、中断後に同じコマンドを
+実行しても最初の Task を重複作成しません。repository hook は既に allow 済みか、表示された
+内容を `--trust-hook` で明示的に受け入れない限り信頼しません。
+
+従来の config と skill だけのセットアップには `jin init` も引き続き使えます。
+既存ファイルを上書きするのは `--force` を明示した場合だけです。
 
 ### 2. TUI を起動
 

@@ -167,36 +167,45 @@ is no config default and no TUI picker for it.
 
 ## Quick Start
 
-### 1. Set up
+### 1. Preflight and set up
 
 ```bash
-jin init
+jin onboard --skill            # plan only; writes and process starts are listed
+jin onboard --skill --confirm  # re-check, then apply the same plan
 ```
 
-Writes a default `config.yaml`, then offers to install the **jin skill** for
-whichever agents it finds on your `PATH` (`claude`, `codex`, `opencode`). The
-skill is a short document that teaches an agent to drive jin by reading
-`jin docs`.
+`jin onboard` checks git, tmux, the selected agent and its declared
+capabilities, daemon socket/protocol health, worktree placement, and hook trust.
+Its default mode is read-only. `--confirm` is required before it creates the
+default config, installs an opted-in skill, starts the daemon, or creates a
+Task. Existing config and skill files are never replaced.
 
-Installing it is opt-in: the full text and every destination are printed
-before you are asked, the prompt defaults to no, existing files are never
-replaced without `--force`, and nothing is written when stdin is not a
-terminal. Use `--dry-run` to see what it would do, `--no-skill` to skip it, or
-`--skill-dir` to choose the location yourself.
-
-### 2. Start the daemon
+`--skill` is opt-in and installs the short document that teaches agents to read
+`jin docs`. Add a prompt to continue through the first isolated Task in the
+same command (the repository defaults to the current git root):
 
 ```bash
-jin daemon start
+jin onboard --prompt "Implement the smallest useful change and run tests"
+# review every planned write, then:
+jin onboard --prompt "Implement the smallest useful change and run tests" --confirm
 ```
 
-### 3. Launch the TUI
+The step journal at `$XDG_STATE_HOME/jind-ai/onboarding.json` stores a prompt
+digest and idempotency key, never the prompt body or credentials. Re-running an
+interrupted command therefore reconciles the same first Task instead of making
+a duplicate. A repository hook remains untrusted unless it was already allowed
+or its displayed content is explicitly accepted with `--trust-hook`.
+
+For the older config-and-skill-only flow, `jin init` remains available. It can
+overwrite only when `--force` is explicitly supplied.
+
+### 2. Launch the TUI
 
 ```bash
 jin ui
 ```
 
-### 4. Create and attach to a session
+### 3. Create and attach to a session
 
 Press `n` in the TUI to create a session, then `Enter` to attach.
 

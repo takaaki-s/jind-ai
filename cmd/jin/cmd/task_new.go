@@ -44,6 +44,10 @@ the identical request. Use either --repo for local execution, or --target with
 }
 
 func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
+	return taskNewRequestWithDefaultRepo(cmd, "")
+}
+
+func taskNewRequestWithDefaultRepo(cmd *cobra.Command, defaultRepo string) (daemon.TaskNewRequest, error) {
 	promptSet := cmd.Flags().Changed("prompt")
 	promptFileSet := cmd.Flags().Changed("prompt-file")
 	issueSet := cmd.Flags().Changed("issue")
@@ -90,6 +94,9 @@ func taskNewRequest(cmd *cobra.Command) (daemon.TaskNewRequest, error) {
 	repo, _ := cmd.Flags().GetString("repo")
 	target, _ := cmd.Flags().GetString("target")
 	repository, _ := cmd.Flags().GetString("repository")
+	if repo == "" && target == "" && repository == "" {
+		repo = defaultRepo
+	}
 	localSelected := repo != ""
 	remoteSelected := target != "" || repository != ""
 	if localSelected == remoteSelected {
