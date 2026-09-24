@@ -413,7 +413,7 @@ func (c *Client) sendWithTimeout(req Request, timeout time.Duration) (*Response,
 		// stopped daemon is the failure an orchestrating agent hits first, and
 		// the context injected into every child session points at `jin docs`,
 		// so this is where the two have to meet.
-		return nil, fmt.Errorf("daemon not running. Start with: jin daemon start (details: jin docs show gotchas)")
+		return nil, fmt.Errorf("daemon not running at socket %q. Start with: jin daemon start (details: jin docs show gotchas)", c.socketPath)
 	}
 	defer conn.Close()
 

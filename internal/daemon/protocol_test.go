@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -517,7 +518,8 @@ func TestWrapDeadline_WarnsOnlyForMutatingActions(t *testing.T) {
 // different remedies. The not-running wording is load-bearing for users and
 // must not drift.
 func TestClientSend_DistinguishesNotRunningFromUnresponsive(t *testing.T) {
-	notRunning := NewClient(filepath.Join(t.TempDir(), "daemon.sock"))
+	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	notRunning := NewClient(socketPath)
 	_, notRunningErr := notRunning.send(Request{Action: "list"})
 	if notRunningErr == nil {
 		t.Fatal("expected an error when nothing is listening, got nil")
@@ -526,8 +528,9 @@ func TestClientSend_DistinguishesNotRunningFromUnresponsive(t *testing.T) {
 	// the subcommand help, and tui.go already spells out `jin daemon start` —
 	// and points at the docs, because this is the failure an orchestrating
 	// agent hits first.
-	if notRunningErr.Error() != "daemon not running. Start with: jin daemon start (details: jin docs show gotchas)" {
-		t.Errorf("error = %q, want the unchanged not-running wording", notRunningErr.Error())
+	wantNotRunning := fmt.Sprintf("daemon not running at socket %q. Start with: jin daemon start (details: jin docs show gotchas)", socketPath)
+	if notRunningErr.Error() != wantNotRunning {
+		t.Errorf("error = %q, want %q", notRunningErr.Error(), wantNotRunning)
 	}
 
 	unresponsive := NewClient(hangingServer(t))
