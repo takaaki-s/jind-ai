@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
@@ -90,6 +91,11 @@ func newSessionOptions(cmd *cobra.Command) (daemon.NewOptions, error) {
 			return daemon.NewOptions{}, fmt.Errorf("failed to get current directory: %w", err)
 		}
 	}
+	resolvedWorkDir, err := filepath.Abs(workDir)
+	if err != nil {
+		return daemon.NewOptions{}, fmt.Errorf("failed to resolve work directory %q: %w", workDir, err)
+	}
+	workDir = resolvedWorkDir
 
 	if info, err := os.Stat(workDir); err != nil {
 		return daemon.NewOptions{}, fmt.Errorf("work directory does not exist: %s", workDir)
