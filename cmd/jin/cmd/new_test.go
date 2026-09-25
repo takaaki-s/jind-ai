@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -189,5 +191,52 @@ func TestNewSessionOptions_CarriesEveryFlagToTheDaemon(t *testing.T) {
 	}
 	if opts != want {
 		t.Errorf("newSessionOptions() = %+v\nwant %+v", opts, want)
+	}
+}
+
+func TestNewSessionOptions_ResolvesRelativeWorkDirAgainstCaller(t *testing.T) {
+	callerDir := t.TempDir()
+	wantWorkDir := filepath.Join(callerDir, "repo")
+	if err := os.Mkdir(wantWorkDir, 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	t.Chdir(callerDir)
+
+	flags := newCmd.Flags()
+	t.Cleanup(func() {
+		_ = flags.Set("workdir", flags.Lookup("workdir").DefValue)
+		_ = flags.Set("worktree", flags.Lookup("worktree").DefValue)
+	})
+
+	for _, tc := range []struct {
+		name         string
+		worktreeFlag string
+		wantWorktree bool
+	}{
+		{name: "ordinary session", worktreeFlag: "false"},
+		{name: "managed worktree", worktreeFlag: "true", wantWorktree: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := flags.Set("workdir", "repo"); err != nil {
+				t.Fatalf("Set(workdir): %v", err)
+			}
+			if err := flags.Set("worktree", tc.worktreeFlag); err != nil {
+				t.Fatalf("Set(worktree): %v", err)
+			}
+
+			opts, err := newSessionOptions(newCmd)
+			if err != nil {
+				t.Fatalf("newSessionOptions: %v", err)
+			}
+			if opts.WorkDir != wantWorkDir {
+				t.Errorf("WorkDir = %q, want caller-relative path resolved to %q", opts.WorkDir, wantWorkDir)
+			}
+			if !filepath.IsAbs(opts.WorkDir) {
+				t.Errorf("WorkDir = %q, want an absolute path before daemon IPC", opts.WorkDir)
+			}
+			if opts.Worktree != tc.wantWorktree {
+				t.Errorf("Worktree = %v, want %v", opts.Worktree, tc.wantWorktree)
+			}
+		})
 	}
 }
