@@ -301,6 +301,9 @@ jin task list --json
 jin task info <task-selector> --json
 ```
 
+Relative `--repo` paths are resolved against the caller's current directory
+before the request is sent to the daemon.
+
 An execution is an append-only link to an existing session. Its ID and order
 remain stable across daemon restarts. Session status and completion attention
 are projected at read time, so a deleted session appears as

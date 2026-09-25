@@ -103,6 +103,28 @@ func TestTaskNewRequestMapsEveryFlag(t *testing.T) {
 	}
 }
 
+func TestTaskNewRequestResolvesRelativeRepoAgainstCaller(t *testing.T) {
+	callerDir := t.TempDir()
+	wantRepo := filepath.Join(callerDir, "repo")
+	if err := os.Mkdir(wantRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(callerDir)
+
+	got, err := taskNewRequest(newTaskNewFlagCommand(t,
+		"--prompt", "do it", "--repo", "repo",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != wantRepo {
+		t.Fatalf("Repo = %q, want caller-relative path resolved to %q", got.Repo, wantRepo)
+	}
+	if !filepath.IsAbs(got.Repo) {
+		t.Fatalf("Repo = %q, want an absolute path before daemon IPC", got.Repo)
+	}
+}
+
 func TestTaskNewRequestReadsBoundedPromptFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prompt.txt")
 	if err := os.WriteFile(path, []byte("from file"), 0600); err != nil {
