@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +53,8 @@ func TestTaskRemoteOperationsRequireConfirmation(t *testing.T) {
 }
 
 func TestTaskNewRequestMapsRemoteTarget(t *testing.T) {
+	t.Chdir(t.TempDir())
+
 	got, err := taskNewRequest(newTaskNewFlagCommand(t,
 		"--prompt", "do it", "--target", "build", "--repository", "jind-ai", "--idempotency-key", "request-remote",
 	))
@@ -122,6 +125,30 @@ func TestTaskNewRequestResolvesRelativeRepoAgainstCaller(t *testing.T) {
 	}
 	if !filepath.IsAbs(got.Repo) {
 		t.Fatalf("Repo = %q, want an absolute path before daemon IPC", got.Repo)
+	}
+}
+
+func TestTaskNewRequestDefaultsToCallerGitRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	gitInit := exec.Command("git", "init", "-q", repo)
+	if out, err := gitInit.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	nested := filepath.Join(repo, "services", "api")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+
+	got, err := taskNewRequest(newTaskNewFlagCommand(t, "--prompt", "do it"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != repo {
+		t.Fatalf("Repo = %q, want current git root %q", got.Repo, repo)
 	}
 }
 

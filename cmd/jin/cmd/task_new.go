@@ -24,8 +24,9 @@ GitHub through the authenticated gh CLI without mutating it, and frames its
 bounded content as untrusted prompt context. Prompt bodies cross IPC only for
 the live attempt; task state stores only a SHA-256 digest and byte count. If an
 outcome is uncertain, repeat the command with the printed --idempotency-key and
-the identical request. Use either --repo for local execution, or --target with
---repository for remote execution.`,
+the identical request. Local execution defaults to the current git root; use
+--repo to select another local repository, or --target with --repository for
+remote execution.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		req, err := taskNewRequest(cmd)
@@ -95,7 +96,17 @@ func taskNewRequestWithDefaultRepo(cmd *cobra.Command, defaultRepo string) (daem
 	repo, _ := cmd.Flags().GetString("repo")
 	target, _ := cmd.Flags().GetString("target")
 	repository, _ := cmd.Flags().GetString("repository")
-	if repo == "" && target == "" && repository == "" {
+	if repo == "" && target == "" && repository == "" && !cmd.Flags().Changed("repo") {
+		if defaultRepo == "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return daemon.TaskNewRequest{}, fmt.Errorf("get current directory: %w", err)
+			}
+			defaultRepo, err = resolveLocalRepoRoot(cwd)
+			if err != nil {
+				return daemon.TaskNewRequest{}, fmt.Errorf("resolve default repository (use --repo or --target with --repository): %w", err)
+			}
+		}
 		repo = defaultRepo
 	}
 	localSelected := repo != ""
@@ -177,7 +188,7 @@ func addTaskNewFlags(cmd *cobra.Command) {
 	cmd.Flags().String("prompt", "", "Prompt text (exclusive with --prompt-file and --issue)")
 	cmd.Flags().String("prompt-file", "", "Read prompt text from a file (exclusive with --prompt and --issue)")
 	cmd.Flags().String("issue", "", "Read a GitHub Issue URL, owner/repo#number, or number via gh")
-	cmd.Flags().String("repo", "", "Local git repository root; relative paths use the caller's current directory (exclusive with --target)")
+	cmd.Flags().String("repo", "", "Local git repository root (default: current git root; exclusive with --target)")
 	cmd.Flags().String("target", "", "Configured remote target (requires --repository)")
 	cmd.Flags().String("repository", "", "Repository mapping on the remote target")
 	cmd.Flags().String("title", "", "Task and session title (default: Issue title or <repository> task)")
