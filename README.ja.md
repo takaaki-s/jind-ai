@@ -22,24 +22,36 @@ tmux の上で動くので、既存の設定はそのまま。SSH 越しでも�
 
 ## インストール
 
-### GitHub Releases からダウンロード
+### インストーラー（推奨）
 
-[Releases ページ](https://github.com/takaaki-s/jind-ai/releases)からお使いの OS/アーキテクチャに合ったバイナリをダウンロードしてください。
+Linux / macOS と amd64 / arm64 を自動判定し、最新リリースをダウンロードして、
+公開済み SHA-256 checksum と照合してから `~/.local/bin` に `jin` を配置します。
 
 ```bash
-# 例: Linux amd64
-curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.7.0_linux_amd64.tar.gz
-tar xzf jind-ai.tar.gz
-sudo mv jin /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/takaaki-s/jind-ai/main/install.sh | sh
 ```
 
+リリースを固定する場合は `JIND_AI_VERSION`、配置先を変える場合は
+`JIND_AI_INSTALL_DIR` を指定できます。設定ファイルの変更やdaemonなどの常駐プロセスの
+起動は行いません。インストール後に `jin onboard --skill` を実行してください。
+
+### GitHub Releases からダウンロード
+
+手動でインストールする場合は、[Releases ページ](https://github.com/takaaki-s/jind-ai/releases)から
+OS / アーキテクチャに合うアーカイブと `checksums.txt` をダウンロードし、SHA-256
+チェックサムを検証してから `jin` を `PATH` 上へ配置してください。
+
 ### Go install
+
+Go 1.26 以上が必要です。
 
 ```bash
 go install github.com/takaaki-s/jind-ai/cmd/jin@latest
 ```
 
 ### ソースからビルド
+
+Go 1.26 以上が必要です。
 
 ```bash
 git clone https://github.com/takaaki-s/jind-ai.git
@@ -973,7 +985,6 @@ tail -f ~/.local/state/jind-ai/daemon-debug.log
 
 ## 必要要件
 
-- Go 1.26+
 - tmux 3.5+（3.3a はセッションに再アタッチできません。3.6a と 3.7a にはそれぞれ表示バグがあります — 詳細は [docs/gotchas.md](docs/gotchas.md) を参照）
 - [対応エージェント](#対応エージェント) CLI（Claude Code / Codex / opencode）のいずれか
 

@@ -23,24 +23,38 @@ same screen.
 
 ## Installation
 
-### Download from GitHub Releases
+### Installer (recommended)
 
-Download the binary for your OS/architecture from the [Releases page](https://github.com/takaaki-s/jind-ai/releases).
+The installer detects Linux/macOS and amd64/arm64, downloads the latest
+release, verifies it against the published SHA-256 checksums, and installs
+`jin` to `~/.local/bin`:
 
 ```bash
-# Example: Linux amd64
-curl -Lo jind-ai.tar.gz https://github.com/takaaki-s/jind-ai/releases/latest/download/jind-ai_0.7.0_linux_amd64.tar.gz
-tar xzf jind-ai.tar.gz
-sudo mv jin /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/takaaki-s/jind-ai/main/install.sh | sh
 ```
 
+Use `JIND_AI_VERSION` to pin a release or `JIND_AI_INSTALL_DIR` to choose a
+different destination. The script changes no configuration and starts no
+background services; run `jin onboard --skill` after installation.
+
+### Download from GitHub Releases
+
+For a manual installation, download the archive and `checksums.txt` for your
+OS/architecture from the
+[Releases page](https://github.com/takaaki-s/jind-ai/releases), verify the
+SHA-256 checksum, then place `jin` on `PATH`.
+
 ### Go install
+
+Requires Go 1.26 or later.
 
 ```bash
 go install github.com/takaaki-s/jind-ai/cmd/jin@latest
 ```
 
 ### Build from source
+
+Requires Go 1.26 or later.
 
 ```bash
 git clone https://github.com/takaaki-s/jind-ai.git
@@ -1053,7 +1067,6 @@ tail -f ~/.local/state/jind-ai/daemon-debug.log
 
 ## Requirements
 
-- Go 1.26+
 - tmux 3.5+ (3.3a cannot re-attach to a session; 3.6a and 3.7a each have a display bug — see docs/gotchas.md)
 - At least one [supported agent](#supported-agents) CLI: Claude Code, Codex, or opencode
 
