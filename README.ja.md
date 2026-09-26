@@ -288,6 +288,9 @@ jin task list --json
 jin task info <task-selector> --json
 ```
 
+相対 `--repo` は、daemon に要求を送る前に、呼び出したシェルのカレントディレクトリを
+基準として解決されます。
+
 Execution は既存 session への追記専用リンクです。ID と順序は daemon 再起動後も維持されます。
 session の状態と完了 attention は読み取り時に投影するため、session が削除されても履歴は壊れず
 `reference_state: "missing"` と表示されます。保存できるのはサイズ制限付きメタデータだけで、

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
@@ -108,6 +109,13 @@ func taskNewRequestWithDefaultRepo(cmd *cobra.Command, defaultRepo string) (daem
 	if remoteSelected && issueSet {
 		return daemon.TaskNewRequest{}, fmt.Errorf("remote task execution currently supports --prompt and --prompt-file only")
 	}
+	if localSelected {
+		resolvedRepo, err := filepath.Abs(repo)
+		if err != nil {
+			return daemon.TaskNewRequest{}, fmt.Errorf("failed to resolve repository %q: %w", repo, err)
+		}
+		repo = resolvedRepo
+	}
 	workdir, _ := cmd.Flags().GetString("workdir")
 	base, _ := cmd.Flags().GetString("base")
 	agentKind, _ := cmd.Flags().GetString("agent")
@@ -169,7 +177,7 @@ func addTaskNewFlags(cmd *cobra.Command) {
 	cmd.Flags().String("prompt", "", "Prompt text (exclusive with --prompt-file and --issue)")
 	cmd.Flags().String("prompt-file", "", "Read prompt text from a file (exclusive with --prompt and --issue)")
 	cmd.Flags().String("issue", "", "Read a GitHub Issue URL, owner/repo#number, or number via gh")
-	cmd.Flags().String("repo", "", "Local git repository root (exclusive with --target)")
+	cmd.Flags().String("repo", "", "Local git repository root; relative paths use the caller's current directory (exclusive with --target)")
 	cmd.Flags().String("target", "", "Configured remote target (requires --repository)")
 	cmd.Flags().String("repository", "", "Repository mapping on the remote target")
 	cmd.Flags().String("title", "", "Task and session title (default: Issue title or <repository> task)")
