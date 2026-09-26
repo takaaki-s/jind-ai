@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"github.com/takaaki-s/jind-ai/internal/atomicfile"
 	"github.com/takaaki-s/jind-ai/internal/config"
 	"github.com/takaaki-s/jind-ai/internal/daemon"
-	"github.com/takaaki-s/jind-ai/internal/procgroup"
 	"github.com/takaaki-s/jind-ai/internal/session"
 	"github.com/takaaki-s/jind-ai/internal/worktreehook"
 )
@@ -339,7 +337,7 @@ func buildOnboardingPlan(opts onboardingOptions) (onboardingPlan, onboardingJour
 		if _, err := onboardingLookPath("gh"); opts.Task.Issue != "" && err != nil {
 			plan.block("github", "gh executable not found on PATH for --issue")
 		}
-		repo, rootErr := resolveOnboardingRepo(opts.Task.Repo)
+		repo, rootErr := resolveLocalRepoRoot(opts.Task.Repo)
 		if rootErr != nil {
 			plan.block("repository", rootErr.Error())
 		} else {
@@ -448,29 +446,6 @@ func probeOnboardingDaemon() (string, error) {
 		return "unhealthy", fmt.Errorf("daemon socket %s accepts connections but failed protocol/liveness check: %w", getSocketPath(), err)
 	}
 	return "running", nil
-}
-
-func resolveOnboardingRepo(raw string) (string, error) {
-	abs, err := filepath.Abs(raw)
-	if err != nil {
-		return "", fmt.Errorf("resolve repository: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	gitCmd := procgroup.CommandContext(ctx, "git", "-C", abs, "rev-parse", "--show-toplevel")
-	gitCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat")
-	out, err := gitCmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return "", fmt.Errorf("inspect repository: %w", ctx.Err())
-	}
-	if err != nil {
-		return "", fmt.Errorf("not a git repository: %s (%s)", abs, strings.TrimSpace(string(out)))
-	}
-	root := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(root) {
-		return "", fmt.Errorf("git returned a non-absolute repository root %q", root)
-	}
-	return filepath.Clean(root), nil
 }
 
 func inspectOnboardingHook(repo, stateDir string, cfg config.WorktreeConfig, opts onboardingOptions) onboardingHookPlan {

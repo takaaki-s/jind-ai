@@ -274,17 +274,17 @@ jin task create --title "Fix flaky build" \
   --requested-base origin/main \
   --prompt-summary "Investigate the bounded failure symptom"
 
-# Start one isolated execution and return its stable IDs immediately
-jin task new --repo ~/repos/myapp \
+# From anywhere inside a repository, start one isolated execution immediately
+jin task new \
   --title "Fix flaky build" \
   --prompt "Reproduce the flaky test, fix its cause, and run the focused tests."
 
-# A prompt file and a repository-relative starting directory are also supported
+# Use --repo to target a different repository; --workdir stays repository-relative
 jin task new --repo ~/repos/monorepo --workdir services/api \
   --prompt-file ./tasks/fix-api.md
 
 # Or read a GitHub Issue without changing it; a bare number uses origin
-jin task new --repo ~/repos/myapp --issue 42
+jin task new --issue 42
 jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
 
 # External writes are a separate preview/confirm flow
@@ -301,8 +301,9 @@ jin task list --json
 jin task info <task-selector> --json
 ```
 
-Relative `--repo` paths are resolved against the caller's current directory
-before the request is sent to the daemon.
+When `--repo` is omitted, `task new` uses the git root containing the caller's
+current directory. Relative `--repo` paths are resolved against that current
+directory before the request is sent to the daemon.
 
 An execution is an append-only link to an existing session. Its ID and order
 remain stable across daemon restarts. Session status and completion attention

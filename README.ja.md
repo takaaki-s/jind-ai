@@ -261,17 +261,17 @@ jin task create --title "不安定な build を直す" \
   --requested-base origin/main \
   --prompt-summary "失敗条件を絞って調査する"
 
-# 独立した実行を開始し、固定された各 ID をすぐ受け取る
-jin task new --repo ~/repos/myapp \
+# repository 内のどこからでも、独立した実行を開始して固定された各 ID をすぐ受け取る
+jin task new \
   --title "不安定な build を直す" \
   --prompt "不安定なテストを再現し、原因を修正して関連テストを実行してください。"
 
-# prompt file と repository 内の相対開始ディレクトリも指定できる
+# 別 repository は --repo で選び、--workdir はその repository 内の相対位置を指定する
 jin task new --repo ~/repos/monorepo --workdir services/api \
   --prompt-file ./tasks/fix-api.md
 
 # GitHub Issue を変更せずに読み込む。番号だけなら origin から repository を解決する
-jin task new --repo ~/repos/myapp --issue 42
+jin task new --issue 42
 jin task new --repo ~/repos/myapp --issue https://github.com/acme/myapp/issues/42
 
 # 外部への書き込みは独立した preview/confirm フローで行う
@@ -288,8 +288,8 @@ jin task list --json
 jin task info <task-selector> --json
 ```
 
-相対 `--repo` は、daemon に要求を送る前に、呼び出したシェルのカレントディレクトリを
-基準として解決されます。
+`--repo` を省略すると、呼び出したシェルのカレントディレクトリを含む git root を使います。
+相対 `--repo` は、そのカレントディレクトリを基準として解決してからdaemonへ要求を送ります。
 
 Execution は既存 session への追記専用リンクです。ID と順序は daemon 再起動後も維持されます。
 session の状態と完了 attention は読み取り時に投影するため、session が削除されても履歴は壊れず
