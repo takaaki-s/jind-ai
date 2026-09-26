@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,50 @@ func TestMergeReviewFacts_PrefersGenerationThenObservation(t *testing.T) {
 	newer := ReviewFacts{Status: ReviewFactsAvailable, AttentionGeneration: 2, ObservedAt: newTime, ChangedFiles: 3}
 	if got := mergeReviewFacts(older, newer); got != newer {
 		t.Fatalf("observation merge = %+v, want %+v", got, newer)
+	}
+}
+
+func TestReviewReadyInvalidationSurvivesStaleSave(t *testing.T) {
+	for _, invalid := range []ReviewFacts{
+		{Status: ReviewFactsAvailable, AttentionGeneration: 2},
+		{Status: ReviewFactsPending, AttentionGeneration: 2},
+		{Status: ReviewFactsUnavailable, AttentionGeneration: 2},
+		{Status: ReviewFactsAvailable, AttentionGeneration: 1, ChangedFiles: 1},
+	} {
+		t.Run(fmt.Sprintf("%s/generation-%d", invalid.Status, invalid.AttentionGeneration), func(t *testing.T) {
+			store, _ := newTestStore(t)
+			original := Session{ID: "ready", Status: StatusIdle,
+				Attention:   Attention{State: AttentionReadyForReview, Generation: 2, SeenGeneration: 2},
+				ReviewFacts: ReviewFacts{Status: ReviewFactsAvailable, AttentionGeneration: 2, ChangedFiles: 1, ObservedAt: time.Unix(1, 0)},
+			}
+			if err := store.Save(original); err != nil {
+				t.Fatal(err)
+			}
+			updated := original
+			invalid.ObservedAt = time.Unix(2, 0)
+			updated.ReviewFacts = invalid
+			want := AttentionInfo{State: AttentionDone, Generation: 2, SeenGeneration: 2}
+			if got := updated.ToInfo(); got.Attention != want || got.Status != original.Status {
+				t.Fatalf("invalid evidence projection = %+v, want %+v", got.Attention, want)
+			}
+			// An older generation cannot replace current persisted facts.
+			if invalid.AttentionGeneration != original.Attention.Generation {
+				return
+			}
+			if err := store.Save(updated); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Save(original); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := store.Load(original.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Attention.State != AttentionDone || loaded.ToInfo().Attention != want {
+				t.Fatalf("stale save restored readiness: %+v", loaded.Attention)
+			}
+		})
 	}
 }
 
@@ -74,6 +119,43 @@ func TestManager_RefreshReviewPromotesNonEmptyDelta(t *testing.T) {
 	}
 	if loaded.ReviewFacts.Status != ReviewFactsAvailable || loaded.Attention.State != AttentionReadyForReview {
 		t.Fatalf("persisted review = %+v attention = %+v", loaded.ReviewFacts, loaded.Attention)
+	}
+	if _, err := mgr.MarkSeen(sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(managedWorktree, "change.txt")); err != nil {
+		t.Fatal(err)
+	}
+	info, err = mgr.RefreshReview(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ReviewFacts.ChangedFiles != 0 || info.Attention.State != AttentionDone || info.Attention.Unseen || info.Attention.Generation != 1 || info.Status != StatusIdle {
+		t.Fatalf("empty review = %+v attention = %+v", info.ReviewFacts, info.Attention)
+	}
+	if err := os.WriteFile(filepath.Join(managedWorktree, "change.txt"), []byte("again\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err = mgr.RefreshReview(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Attention.State != AttentionReadyForReview || info.Attention.Unseen || info.Attention.Generation != 1 {
+		t.Fatalf("restored review attention = %+v", info.Attention)
+	}
+	marker := filepath.Join(managedWorktree, ".git")
+	if err := os.Rename(marker, marker+".hidden"); err != nil {
+		t.Fatal(err)
+	}
+	info, err = mgr.RefreshReview(sess.ID)
+	if restoreErr := os.Rename(marker+".hidden", marker); restoreErr != nil {
+		t.Fatal(restoreErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ReviewFacts.Status != ReviewFactsUnavailable || info.Attention.State != AttentionDone || info.Attention.Unseen {
+		t.Fatalf("unavailable review = %+v attention = %+v", info.ReviewFacts, info.Attention)
 	}
 }
 

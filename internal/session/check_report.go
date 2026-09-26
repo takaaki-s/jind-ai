@@ -86,7 +86,9 @@ func mergeCheckReport(a, b CheckReport) CheckReport {
 
 // reconcileCheckAttention makes a current failed report the highest local
 // handoff state. Once that report is replaced, or newer workspace evidence
-// makes it stale, it stops blocking review readiness.
+// makes it stale, it stops blocking review readiness. Review readiness also
+// requires a non-empty assessment for this completion, including after a
+// stale snapshot's attention has been merged with newer facts at Store.Save.
 func reconcileCheckAttention(attention Attention, facts ReviewFacts, report CheckReport) Attention {
 	if attention.Generation == 0 {
 		return attention
@@ -95,7 +97,7 @@ func reconcileCheckAttention(attention Attention, facts ReviewFacts, report Chec
 		attention.State = AttentionChecksFailed
 		return attention
 	}
-	if attention.State == AttentionChecksFailed {
+	if attention.State == AttentionChecksFailed || attention.State == AttentionReadyForReview {
 		if facts.Status == ReviewFactsAvailable &&
 			facts.AttentionGeneration == attention.Generation && facts.ChangedFiles > 0 {
 			attention.State = AttentionReadyForReview
