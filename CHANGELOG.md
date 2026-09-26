@@ -5,75 +5,118 @@ attaches them to the corresponding [GitHub Release](https://github.com/takaaki-s
 This file is the curated overview — highlights per release, not a per-commit
 log.
 
-## Unreleased
+## 0.12.0
 
 ### Features
 
-- **A finished turn leaves a receipt you have to acknowledge.** Session status
-  says what an agent is doing now, which is the wrong question once several are
-  running: the one that finished a second ago and the one idle since lunch both
-  read `idle`. An applied task-completion transition now also raises a
-  monotonic `attention` counter, and it stays raised until you acknowledge it.
-  Three things do: attaching to the session from the TUI, the action palette's
-  "mark completion seen", and `jin session seen <selector>`. Nothing else —
-  not moving the cursor, not the CLI's `jin session attach`, not sending the
-  next prompt, not a plugin calling `jin session focus` — so a turn that ends
-  while you are reading another session is still marked when you come back.
+- **A Task now carries intent across isolated attempts.** `jin task new`
+  reserves a durable Task, Execution, worktree, branch, and agent Session in
+  one idempotent operation, then submits the prompt asynchronously. The prompt
+  body is never persisted: the journal keeps only bounded metadata, its SHA-256
+  digest, and byte count. A Task outlives any one Session, preserves execution
+  order, and reports a deleted Session as a missing reference instead of
+  erasing the attempt. `--repo` defaults to the caller's current git root.
 
-  The TUI shows it as an orange dot in a column of its own and floats those
-  sessions to the top of their fleet. `Enter`, a second click on the row, and a
-  pick from the switch-session popup all clear it once the attach lands,
-  including when the pane was already showing that session. `list`, `info`, `new`, `wait` and
-  `seen` all carry the same `attention` object under `--json`, with `unseen`
-  derived from `generation > seen_generation` — two counters rather than a
-  flag, so a turn finishing while you acknowledge the previous one is not
-  swallowed. A session with no `attention` object has nothing outstanding, so
-  records written by earlier versions need no migration.
+  A GitHub Issue can be read as bounded, explicitly untrusted prompt context
+  with `--issue`; the read path cannot mutate GitHub. The separate
+  preview/confirm `jin task comment` flow is the first provider mutation. It
+  journals a digest before I/O, embeds an idempotency marker, and stops for
+  inspection rather than risking a duplicate comment after an uncertain
+  outcome.
 
-  This is a receipt that a turn ended without an error. It makes no claim about
-  whether the work is any good. See
-  [docs/session-lifecycle.md](docs/session-lifecycle.md#completion-attention),
-  or `jin docs show orchestration` for the orchestration-facing version.
+- **Review and merge handoffs are evidence-bound instead of prompt-bound.** A
+  worktree records an immutable review base. `jin session review` derives local
+  commit/file/line facts and a workspace fingerprint; external checks and the
+  human review decision bind to that exact fingerprint. PR and merge provider
+  plugins receive explicit, capability-gated handoffs through separate
+  dry-run/confirm phases. Cleanup is another journaled operation and removes a
+  Session, worktree, and branch only after it can verify the expected merge.
+  A later workspace change makes earlier checks, review decisions, and
+  handoffs visibly stale rather than silently reusing them.
+
+- **The attention inbox distinguishes completion from a question that needs an
+  answer.** Every completed turn raises a monotonic receipt that stays visible
+  until the user attaches from the TUI or runs `jin session seen`. A separate
+  tri-state `needs_answer` projection is asserted only by explicit evidence
+  from an adapter that declares reliable support. The TUI orders unresolved
+  questions, failed checks, review-ready work, and unseen completions without
+  inferring any of them from pane text or timeouts.
+
+  Each adapter now publishes versioned `supported` / `unsupported` / `unknown`
+  capabilities for liveness, send, respond, resume, hooks, transcripts, and
+  reliable answer detection. Automation may act only on `supported`; Codex's
+  approval state therefore remains `unknown` instead of becoming a false
+  permission notification.
+
+- **An existing tmux pane can be adopted without restarting its process.** The
+  two-phase `jin session adopt` flow previews a reuse-resistant pane identity,
+  detects Claude Code, Codex, or opencode through registered adapter evidence,
+  and requires an explicit choice when detection is ambiguous. A pane with no
+  match gets the adoption-only `generic` kind. Adopted panes retain external
+  ownership: deleting their jin record never kills the pane, and capabilities
+  are narrowed to what adoption actually established.
+
+- **A Task can execute on an explicitly configured SSH target.** Experimental
+  remote execution negotiates protocol capabilities and stable server,
+  repository, and controller identities before it creates state. Repository
+  labels cross the boundary; target paths, transcripts, pane output, and
+  credentials do not. Start, inspect/sync, cancel, and cleanup use bounded
+  structured messages and durable idempotency receipts. A changed target
+  revision or server instance blocks reattachment instead of guessing.
+
+- **Onboarding is one dry-run-first command.** `jin onboard` checks git, tmux,
+  the selected agent and its capabilities, daemon socket/protocol health,
+  worktree placement, hook trust, and optional skill targets as one bounded
+  plan. Nothing is written or started until `--confirm`; an optional prompt or
+  Issue continues into the first isolated Task. Interrupted runs reuse a
+  prompt-free journal rather than repeating completed setup.
+
+- **Release installation no longer requires Go or a version-pinned URL.** The
+  new POSIX installer resolves the latest release, detects Linux/macOS and
+  amd64/arm64, verifies the selected archive against the published SHA-256
+  checksums, and atomically installs `jin` to `~/.local/bin`. The English and
+  Japanese entry points now present jin as the multi-agent tmux session manager
+  it is, with Claude Code, Codex, and opencode adapters shipped in-tree.
 
 ### Fixes
 
-- **Codex sessions no longer report the `permission` status.** Codex raises
-  its approval hook when an approval path opens, which is not the same as a
-  human being asked — and nothing in the payload jin receives says which it
-  was. jind-ai mapped that hook to the `permission` status anyway, so a session
-  whose approval resolved without anyone answering kept claiming it was waiting
-  on you. The status has no timer behind it, so it stayed until some later hook
-  happened to disagree, and `jin session respond` could not clear it: that
-  adapter deliberately does not read Codex's dialog.
+- **Codex sessions no longer get stuck in the `permission` status.** Codex's
+  approval hook says that an approval path opened, not that a human is still
+  being asked. It now maps to `thinking` without a notification, and recovery
+  rewrites stale persisted `permission` state the same way. Attach to the Codex
+  pane to answer a real approval; jin deliberately does not drive that dialog.
 
-  The hook now maps to `thinking`, with no notification, and daemon-restart
-  recovery rewrites a `permission` left on disk by an earlier version to
-  `thinking` as well.
+- **Daemon recovery no longer overwrites a hook that arrives during its tmux
+  probe.** A derived status is discarded when the live Session moved after the
+  recovery snapshot, so a completed turn cannot regress to the older reading.
 
-  **This changes what orchestration sees on codex sessions**, and only on
-  codex: `jin session wait --until idle,permission` returns only on `idle`, no
-  `permission` `JIN_NOTIFY_KIND` is dispatched to plugins, and a codex child
-  that really is waiting on an approval reads as `thinking` and stays there —
-  no timer moves a `thinking` session — so answer it by attaching to the pane.
-
-- **Daemon-restart recovery no longer discards a hook that arrives while it is
-  probing.** Recovery asks the agent adapter to re-derive a stale status, and
-  that answer is computed from a snapshot taken before the tmux probes run. It
-  was then applied even when a hook had moved the session in the meantime, so a
-  turn that ended mid-recovery could be overwritten by the older reading. The
-  answer is now withheld whenever the live status has moved since the snapshot,
-  which is the rule the no-adapter fallback already followed. Affects every
-  agent kind. Claude Code and opencode sessions are
-  unchanged.
+- **Relative paths are resolved by the caller, not by the daemon.** Relative
+  Session workdirs and Task repositories now use the CLI's current directory;
+  `jin task new` without `--repo` uses the containing git root. Daemon
+  connection errors also print the exact socket path, making stale tmux
+  environments diagnosable.
 
 ### Breaking changes
 
-- **The IPC protocol is now v3.** `session.Info` gained the optional
-  `attention` object, which `new`, `list`, `get` and `set-description` all
-  return, and
-  the idempotent `attention-seen` action was added. A CLI and daemon at
-  different versions refuse each other with the existing guidance — run `jin
-  daemon restart` after updating.
+- **The local daemon IPC protocol is now v18 (v2 in 0.11.0).** Session
+  responses gained attention, review, check, disposition, handoff, capability,
+  needs-answer, and tmux-binding projections. Task and remote-execution actions
+  were added through the same versioned contract. Mixed old/new CLI and daemon
+  processes fail closed with a protocol error. After replacing the binary, run
+  `jin daemon restart` before using Session or Task commands.
+
+### Upgrade notes
+
+- Existing Session records load without manual migration; new projections are
+  optional or derived live. Task records normalize older schema revisions on
+  load, and the new controller/server identities are created only when remote
+  execution is used.
+- Existing plugin manifests remain valid. PR and merge handoffs are opt-in
+  action capabilities, so a plugin receives no new authority until its manifest
+  explicitly declares it.
+- Remote Task execution is experimental and disabled until both controller and
+  target configuration opt in. Local Session and Task behavior is unchanged by
+  leaving `remote` unconfigured.
 
 ## 0.11.0
 
