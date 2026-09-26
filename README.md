@@ -480,6 +480,8 @@ jin session review <selector>
 
 This is local and read-only: it does not fetch, run tests, or retain filenames
 or patch contents.
+Review readiness is cleared while assessment is pending, or when the refreshed
+evidence is empty or unavailable. The completion and seen counters are preserved.
 
 jind-ai never guesses how to test a repository. After running the appropriate
 checks yourself (or from an integration), report their aggregate result with
