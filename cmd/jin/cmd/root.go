@@ -20,8 +20,10 @@ var jsonOutput bool
 
 var rootCmd = &cobra.Command{
 	Use:   "jin",
-	Short: "LLM session manager for Claude Code",
-	Long: `A CLI tool to manage multiple Claude Code sessions with attach/detach support.
+	Short: "Manage multiple coding-agent sessions in tmux",
+	Long: `A CLI/TUI for managing multiple interactive coding-agent sessions in tmux.
+
+Claude Code, Codex, and opencode can run side by side with attach/detach support.
 
 Driving jin from an agent? Run 'jin docs list'.`,
 	Version: version.Version,

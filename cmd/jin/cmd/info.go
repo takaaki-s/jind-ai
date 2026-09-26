@@ -14,7 +14,7 @@ import (
 var infoCmd = &cobra.Command{
 	Use:               "info <selector>",
 	Short:             "Show detailed information about a session",
-	Long:              `Show detailed information about a Claude Code session. The selector may be an ID prefix or a description substring (case-insensitive).`,
+	Long:              `Show detailed information about a coding-agent session. The selector may be an ID prefix or a description substring (case-insensitive).`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {

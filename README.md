@@ -1055,7 +1055,7 @@ tail -f ~/.local/state/jind-ai/daemon-debug.log
 
 - Go 1.26+
 - tmux 3.5+ (3.3a cannot re-attach to a session; 3.6a and 3.7a each have a display bug — see docs/gotchas.md)
-- Claude Code CLI installed
+- At least one [supported agent](#supported-agents) CLI: Claude Code, Codex, or opencode
 
 ## License
 

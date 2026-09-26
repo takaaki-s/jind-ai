@@ -33,7 +33,7 @@ type actionResult struct {
 var killCmd = &cobra.Command{
 	Use:               "kill <selector>",
 	Short:             "Kill a running session",
-	Long:              `Kill a running Claude Code session without deleting it. The selector may be an ID prefix or a description substring (case-insensitive).`,
+	Long:              `Kill a running coding-agent session without deleting it. The selector may be an ID prefix or a description substring (case-insensitive).`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -60,7 +60,7 @@ var deleteCmd = &cobra.Command{
 	Use:               "delete <selector>",
 	Aliases:           []string{"rm"},
 	Short:             "Delete a session",
-	Long:              `Delete a Claude Code session. This will kill the session if running. The selector may be an ID prefix or a description substring (case-insensitive).`,
+	Long:              `Delete a coding-agent session. This will kill the session if running. The selector may be an ID prefix or a description substring (case-insensitive).`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
