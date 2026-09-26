@@ -3,10 +3,10 @@
 ## Overview
 
 jind-ai is a CLI/TUI tool that manages multiple interactive agent sessions on
-tmux — Claude Code is the first-class citizen and, at present, the only
-adapter shipped in-tree; other adapters (Codex CLI, Aider, …) plug in via
-`internal/agent/<kind>/`. A daemon process provides IPC via Unix socket,
-with CLI and TUI connecting as clients.
+tmux. It ships in-tree adapters for Claude Code (the default and first-class
+integration), Codex, and opencode; additional agents plug in via
+`internal/agent/<kind>/`. A daemon process provides IPC via Unix socket, with
+CLI and TUI connecting as clients.
 
 ## Data Flow
 

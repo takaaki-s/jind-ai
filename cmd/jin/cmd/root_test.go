@@ -123,3 +123,24 @@ func TestRootDoesNotSilenceErrors(t *testing.T) {
 		t.Error("rootCmd.SilenceUsage = true; that silences usage errors too, use the PersistentPreRunE hook")
 	}
 }
+
+func TestRootHelpDescribesTheMultiAgentProduct(t *testing.T) {
+	help := rootCmd.Short + "\n" + rootCmd.Long
+	for _, want := range []string{"coding-agent sessions", "Claude Code", "Codex", "opencode"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("root help does not mention %q:\n%s", want, help)
+		}
+	}
+	if strings.Contains(help, "multiple Claude Code sessions") {
+		t.Errorf("root help still presents jin as Claude Code-only:\n%s", help)
+	}
+}
+
+func TestGenericSessionCommandsDoNotPresentAsClaudeOnly(t *testing.T) {
+	for _, command := range []*cobra.Command{sessionCmd, attachCmd, killCmd, deleteCmd, infoCmd, tuiCmd} {
+		help := command.Short + "\n" + command.Long
+		if strings.Contains(help, "Claude Code") {
+			t.Errorf("%s help presents a generic command as Claude Code-only:\n%s", command.CommandPath(), help)
+		}
+	}
+}

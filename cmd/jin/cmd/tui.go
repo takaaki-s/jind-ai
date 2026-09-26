@@ -403,7 +403,7 @@ var tuiCmd = &cobra.Command{
 	Use:     "ui",
 	Aliases: []string{"tui"},
 	Short:   "Open the interactive TUI",
-	Long:    `Open the interactive terminal user interface for managing Claude Code sessions.`,
+	Long:    `Open the interactive terminal user interface for managing coding-agent sessions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		agentFlag, _ := cmd.Flags().GetString("agent")
 		if err := validateTuiAgentFlag(agentFlag); err != nil {

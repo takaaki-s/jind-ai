@@ -13,7 +13,7 @@ import (
 var attachCmd = &cobra.Command{
 	Use:               "attach <selector>",
 	Short:             "Attach to a session",
-	Long:              `Attach to a Claude Code session. Stopped sessions are automatically resumed. The selector may be an ID prefix or a description substring (case-insensitive).`,
+	Long:              `Attach to a coding-agent session. Stopped sessions are automatically resumed. The selector may be an ID prefix or a description substring (case-insensitive).`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
