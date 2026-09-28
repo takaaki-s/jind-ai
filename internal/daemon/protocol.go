@@ -46,4 +46,5 @@ package daemon
 // cleanup actions and their durable receipts.
 // v19: session.Info can include the latest check receipt with caller metadata;
 // add fingerprint-checked, idempotent check-report-record ingestion.
-const ProtocolVersion = 19
+// v20: independent check-failure attention and acknowledgement cursors.
+const ProtocolVersion = 20

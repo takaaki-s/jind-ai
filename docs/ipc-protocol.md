@@ -442,6 +442,14 @@ are persisted. `review-refresh` performs no fetch and runs no repository tests.
 that execution. `check_report.stale` is derived from cached fingerprints;
 unknown or stale reports do not produce `checks-failed`.
 
+Protocol v20 adds optional attention counters
+`check_failure_generation` / `seen_check_failure_generation`. A new keyed failure
+increments the former, not the completion generation; identical retries do not.
+Plain reports deduplicate consecutive failures on the same fingerprint.
+`attention-seen` acknowledges both pairs. `unseen` is true for an unseen completion
+or a current `checks-failed` whose failure counter exceeds its seen counter.
+Stale/pass reports suppress failure-only unseen without changing completion seen.
+
 Protocol v19 adds optional `session.Info.check_receipt` for the latest aggregate
 and the `check-report-record` mutation. Its request contains `id`, `status`,
 `workspace_fingerprint` (64 lowercase hex digits), `idempotency_key`, `name`,

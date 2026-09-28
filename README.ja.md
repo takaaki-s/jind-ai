@@ -482,6 +482,13 @@ jin session check-report auth passed --name unit --reporter local-user \
 これらのフラグを付けない従来の報告は受付時の内容への手動報告で、キー付き再送の保証はありません。
 IPC更新のため、新しいバイナリへの更新後は`jin daemon restart`が必要です。
 
+新しいキーで失敗を報告すると、完了を確認済みでも
+再び未確認になります。同じキーの再送では増えず、別キーは別の実行として扱います。
+従来の簡易報告は同じfingerprintの連続した失敗を重複通知しません。`session seen`は
+完了と失敗の両方を確認済みにします。成功への更新や結果のstale化で失敗だけの未確認表示は
+解除されます。完了世代とprocess statusは変わりません。remote executionを使う場合は
+両側をstructured summary v2対応版へ更新してください。
+
 好みの diff ツールで変更を確認したら、
 `jin session review-disposition <selector> reviewed|changes-requested` で人間の判定を
 記録できます。daemon は先にローカルの

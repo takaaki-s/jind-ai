@@ -52,9 +52,12 @@ Attention (persisted, internal/session/attention.go)
 ├─ State          "" | "done" | "ready-for-review" | "checks-failed"
 │                            // "" is the zero value, so old records need no migration
 ├─ Generation     uint64        // one per applied completion
-└─ SeenGeneration uint64        // the one the operator acknowledged
+├─ SeenGeneration uint64        // the completion the operator acknowledged
+├─ CheckFailureGeneration uint64 // one per newly accepted failure
+└─ SeenCheckFailureGeneration uint64 // the failure the operator acknowledged
 
-unseen = State != "" && Generation > SeenGeneration   // derived, never stored
+unseen = State != "" && (Generation > SeenGeneration ||
+         (State == "checks-failed" && CheckFailureGeneration > SeenCheckFailureGeneration))
 ```
 
 Transitions:
@@ -63,11 +66,11 @@ Transitions:
 |---|---|
 | An applied verdict whose `Notify` is `NotifyTaskComplete` **and** whose status actually moved | `done`, `Generation + 1`, `SeenGeneration` untouched |
 | The bounded local review assessment finds a non-empty delta for that same generation | `ready-for-review`; generation and seen cursor untouched |
-| An explicitly reported aggregate failure matches the current workspace fingerprint | `checks-failed`; generation and seen cursor untouched |
+| A new keyed aggregate failure matches the current workspace fingerprint | `checks-failed`; failure generation increases, completion and seen cursors untouched; identical retries do not increase it |
 | New review evidence has a different fingerprint, or a passing report replaces the failure | the failed report no longer blocks; `ready-for-review` for a non-empty available delta, otherwise `done` |
 | The same verdict for a turn that already landed (status did not move) | unchanged |
 | `NotifyError`, permission, prompt, tool, CWD, recovery, kill, idle fallback | unchanged |
-| `Manager.MarkSeen` (`attention-seen` / `jin session seen` / a landed TUI attach) | `SeenGeneration = Generation`; state, generation and status untouched |
+| `Manager.MarkSeen` (`attention-seen` / `jin session seen` / a landed TUI attach) | both seen cursors catch up; state, generations and status untouched |
 | daemon restart | unchanged — the receipt is loaded from the session file as it was. A restart is not an acknowledgement: nothing knows whether anyone looked while the daemon was down, and recovery raises no completion verdict |
 
 The predicate is the adapter's normalized verdict, not the raw event name, so

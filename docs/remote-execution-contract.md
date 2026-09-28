@@ -186,7 +186,12 @@ Version 1 capability names are:
 - `execution.inspect.v1`
 - `execution.cancel.v1`
 - `execution.cleanup.v1`
-- `summary.structured.v1`
+- `summary.structured.v2`
+
+Structured summary v2 adds independent check-failure attention/seen counters.
+The envelope remains protocol v1. Both controller and target must support the
+v2 capability for execution operations; older peers fail capability negotiation
+before execution rather than misinterpreting `attention.unseen`.
 
 The examples in `test/remotecontract/testdata/` are the canonical version 1
 payloads. Adding an optional field does not require a version bump. Removing or

@@ -188,6 +188,9 @@ func (m *Manager) RecordChecks(id string, submission CheckReportSubmission) (Che
 	}
 	live.CheckReceipts = append(slices.Clone(live.CheckReceipts), receipt)
 	live.CheckReport = receipt.CheckReport
+	if receipt.Status == CheckStatusFailed {
+		live.Attention.CheckFailureGeneration++
+	}
 	live.Attention = reconcileCheckAttention(live.Attention, live.ReviewFacts, live.CheckReport)
 	saved := m.snapshotAndUnlock(live)
 	result := CheckReportRecordResult{Receipt: receipt, Session: saved.ToInfo()}

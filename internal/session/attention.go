@@ -25,32 +25,37 @@ const (
 
 // Attention is the persisted completion receipt. Generation counts applied
 // completions; SeenGeneration is the one the operator explicitly acknowledged.
-// "Unseen" is the gap between them and is never stored — see AttentionInfo.
+// CheckFailureGeneration independently counts newly accepted failures so that
+// completion-bound review evidence is not invalidated by a report.
 //
-// Every field is monotonic for the life of a session, which is what makes
+// Every counter is monotonic for the life of a session, which is what makes
 // mergeAttention a safe repair for a stale snapshot.
 type Attention struct {
-	State          AttentionState `json:"state,omitempty"`
-	Generation     uint64         `json:"generation,omitempty"`
-	SeenGeneration uint64         `json:"seen_generation,omitempty"`
+	State                      AttentionState `json:"state,omitempty"`
+	Generation                 uint64         `json:"generation,omitempty"`
+	SeenGeneration             uint64         `json:"seen_generation,omitempty"`
+	CheckFailureGeneration     uint64         `json:"check_failure_generation,omitempty"`
+	SeenCheckFailureGeneration uint64         `json:"seen_check_failure_generation,omitempty"`
 }
 
 // AttentionInfo is the wire projection. Unlike the persisted form it spells
-// out all four fields once the object exists, so a script can read
+// out the original fields once the object exists, so a script can read
 // `.attention.unseen` without testing for the key first. The object itself is
 // still omitted at zero (Info's `omitzero`), so a missing object means
 // none/seen.
 type AttentionInfo struct {
-	State          AttentionState `json:"state"`
-	Generation     uint64         `json:"generation"`
-	SeenGeneration uint64         `json:"seen_generation"`
-	Unseen         bool           `json:"unseen"`
+	State                      AttentionState `json:"state"`
+	Generation                 uint64         `json:"generation"`
+	SeenGeneration             uint64         `json:"seen_generation"`
+	Unseen                     bool           `json:"unseen"`
+	CheckFailureGeneration     uint64         `json:"check_failure_generation,omitempty"`
+	SeenCheckFailureGeneration uint64         `json:"seen_check_failure_generation,omitempty"`
 }
 
-// Unseen reports a completion the operator has not acknowledged.
+// Unseen reports an unacknowledged completion or a still-current failure.
 func (a Attention) Unseen() bool {
 	return (a.State == AttentionDone || a.State == AttentionReadyForReview || a.State == AttentionChecksFailed) &&
-		a.Generation > a.SeenGeneration
+		(a.Generation > a.SeenGeneration || (a.State == AttentionChecksFailed && a.CheckFailureGeneration > a.SeenCheckFailureGeneration))
 }
 
 func (a Attention) completed() Attention {
@@ -66,19 +71,21 @@ func (a Attention) readyForReview(generation uint64) Attention {
 	return a
 }
 
-// acknowledged raises SeenGeneration to Generation. State and Generation are
-// preserved, so the next completion is unseen again.
+// acknowledged raises both seen cursors without resolving a failure.
 func (a Attention) acknowledged() Attention {
 	a.SeenGeneration = a.Generation
+	a.SeenCheckFailureGeneration = a.CheckFailureGeneration
 	return a
 }
 
 func (a Attention) toInfo() AttentionInfo {
 	return AttentionInfo{
-		State:          a.State,
-		Generation:     a.Generation,
-		SeenGeneration: a.SeenGeneration,
-		Unseen:         a.Unseen(),
+		State:                      a.State,
+		Generation:                 a.Generation,
+		SeenGeneration:             a.SeenGeneration,
+		Unseen:                     a.Unseen(),
+		CheckFailureGeneration:     a.CheckFailureGeneration,
+		SeenCheckFailureGeneration: a.SeenCheckFailureGeneration,
 	}
 }
 
@@ -86,7 +93,7 @@ func (a Attention) toInfo() AttentionInfo {
 // keeping the larger of each counter. Why Store.Save needs it is in
 // docs/gotchas.md, under "Session persistence".
 //
-// Deliberately an unkeyed literal: a fourth field must not compile until this
+// Deliberately an unkeyed literal: a new field must not compile until this
 // function says what happens to it, or every Save would silently zero it.
 func mergeAttention(a, b Attention) Attention {
 	newer, older := a, b
@@ -116,5 +123,7 @@ func mergeAttention(a, b Attention) Attention {
 		state,
 		newer.Generation,
 		max(a.SeenGeneration, b.SeenGeneration),
+		max(a.CheckFailureGeneration, b.CheckFailureGeneration),
+		max(a.SeenCheckFailureGeneration, b.SeenCheckFailureGeneration),
 	}
 }

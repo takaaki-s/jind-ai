@@ -41,7 +41,7 @@ const (
 	CapabilityExecutionInspect    = "execution.inspect.v1"
 	CapabilityExecutionCancel     = "execution.cancel.v1"
 	CapabilityExecutionCleanup    = "execution.cleanup.v1"
-	CapabilityStructuredSummary   = "summary.structured.v1"
+	CapabilityStructuredSummary   = "summary.structured.v2"
 )
 
 var version1Capabilities = []string{
@@ -436,8 +436,10 @@ func ValidateSummary(summary task.RemoteSummary) *WireError {
 	attention := summary.Session.Attention
 	validAttentionState := attention.State == session.AttentionNone || attention.State == session.AttentionDone ||
 		attention.State == session.AttentionReadyForReview || attention.State == session.AttentionChecksFailed
-	expectedUnseen := attention.State != session.AttentionNone && attention.Generation > attention.SeenGeneration
+	expectedUnseen := attention.State != session.AttentionNone && (attention.Generation > attention.SeenGeneration ||
+		(attention.State == session.AttentionChecksFailed && attention.CheckFailureGeneration > attention.SeenCheckFailureGeneration))
 	if !validAttentionState || attention.SeenGeneration > attention.Generation || attention.Unseen != expectedUnseen ||
+		attention.SeenCheckFailureGeneration > attention.CheckFailureGeneration ||
 		(attention.State == session.AttentionNone && attention.Generation != 0) {
 		return NewWireError("invalid_response", "remote returned invalid attention summary", false)
 	}

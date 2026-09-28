@@ -167,6 +167,36 @@ func validHandshake() HandshakeResponse {
 	}
 }
 
+func TestCheckFailureSummaryAndCapability(t *testing.T) {
+	summary := task.RemoteSummary{
+		Sequence: 1, ObservedAt: time.Now(), Execution: task.RemoteExecutionSummary{Phase: task.ExecutionSubmitted},
+		Session: &task.RemoteSessionSummary{ID: "s1", Status: session.StatusIdle,
+			Attention: session.AttentionInfo{State: session.AttentionChecksFailed, Generation: 1, SeenGeneration: 1, CheckFailureGeneration: 2, SeenCheckFailureGeneration: 1, Unseen: true}},
+	}
+	if err := ValidateSummary(summary); err != nil {
+		t.Fatal(err)
+	}
+	summary.Session.Attention.Unseen = false
+	if err := ValidateSummary(summary); err == nil {
+		t.Fatal("accepted hidden failure")
+	}
+	summary.Session.Attention.SeenCheckFailureGeneration = 3
+	if err := ValidateSummary(summary); err == nil {
+		t.Fatal("accepted future acknowledgement")
+	}
+	for _, oldController := range []bool{false, true} {
+		request := HandshakeRequest{MinimumVersion: 1, MaximumVersion: 1, RequiredCapabilities: []string{CapabilityStructuredSummary}}
+		response := validHandshake()
+		response.Capabilities = []string{"summary.structured.v1"}
+		if oldController {
+			request.RequiredCapabilities, response.Capabilities = response.Capabilities, request.RequiredCapabilities
+		}
+		if err := ValidateHandshake(request, response); err == nil || err.Code != "missing_capability" {
+			t.Fatalf("mixed versions accepted: %+v", err)
+		}
+	}
+}
+
 func request(t *testing.T, id, controller string, operation Operation, payload any) Request {
 	t.Helper()
 	data, err := json.Marshal(payload)
