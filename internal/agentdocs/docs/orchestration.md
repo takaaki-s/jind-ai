@@ -295,6 +295,17 @@ commit does not authorize deleting the branch, worktree, or session.
 
 ## Accepting the work
 
+To record an external check run with safe retries, first obtain
+`review_facts.workspace_fingerprint` from `jin session review <selector> --json`.
+Run the checks in that worktree, then use `jin session check-report <selector>
+passed|failed --fingerprint <digest> --idempotency-key <run-key> --name <suite>
+--reporter <runner> --started-at <RFC3339> --finished-at <RFC3339> --json`.
+Use a new key for each run and identical fields when retrying an uncertain
+response. Changed workspaces are rejected for new records; rerun checks rather
+than attaching old success to a new fingerprint. Receipts are caller claims,
+not independent execution proof. Plain check-report without these flags is
+an unkeyed manual aggregate, not a retry-safe receipt.
+
 Do not forward a child's report as your own conclusion. For code changes,
 check `git diff` and run the tests yourself. If the work is short of the bar,
 send a correction to the *same* session — it still has the context:

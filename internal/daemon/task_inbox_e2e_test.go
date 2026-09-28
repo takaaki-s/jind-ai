@@ -248,7 +248,19 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 			current.ReviewFacts.Status == session.ReviewFactsAvailable && current.ReviewFacts.HeadCommit == head
 	})
 
-	taskInboxRequireSuccess(t, f.server, "check-report", CheckReportRequest{ID: info.ID, Status: session.CheckStatusPassed})
+	current, ok := f.manager.GetInfo(info.ID)
+	if !ok {
+		t.Fatal("session disappeared")
+	}
+	checkRequest := CheckReportRecordRequest{ID: info.ID, CheckReportSubmission: session.CheckReportSubmission{
+		Status: session.CheckStatusPassed, WorkspaceFingerprint: current.ReviewFacts.WorkspaceFingerprint,
+		CheckReportMetadata: session.CheckReportMetadata{IdempotencyKey: "e2e-check", Name: "unit", Reporter: "fixture", StartedAt: time.Unix(10, 0).UTC(), FinishedAt: time.Unix(20, 0).UTC()},
+	}}
+	checkDone := taskInboxCall[session.CheckReportRecordResult](t, f.server, "check-report-record", checkRequest)
+	checkRetry := taskInboxCall[session.CheckReportRecordResult](t, f.server, "check-report-record", checkRequest)
+	if checkDone.Reused || !checkRetry.Reused || checkDone.Receipt != checkRetry.Receipt {
+		t.Fatal("check retry changed receipt")
+	}
 	taskInboxRequireSuccess(t, f.server, "review-disposition", ReviewDispositionRequest{
 		ID: info.ID, Decision: session.ReviewDecisionReviewed,
 	})

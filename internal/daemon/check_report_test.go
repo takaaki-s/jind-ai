@@ -24,8 +24,37 @@ func TestHandleCheckReport_ValidatesAndDispatches(t *testing.T) {
 }
 
 func TestCheckReportIsNotReadOnly(t *testing.T) {
-	if readOnlyActions["check-report"] {
+	if readOnlyActions["check-report"] || readOnlyActions["check-report-record"] {
 		t.Fatal("check-report persists evidence and must report timeouts as outcome unknown")
+	}
+}
+
+func TestClientRecordChecksPreservesSubmissionAndReceipt(t *testing.T) {
+	submission := session.CheckReportSubmission{Status: session.CheckStatusPassed, WorkspaceFingerprint: strings.Repeat("a", 64),
+		CheckReportMetadata: session.CheckReportMetadata{IdempotencyKey: "run-1", Name: "unit", Reporter: "runner", Summary: "ok",
+			StartedAt: time.Unix(10, 0).UTC(), FinishedAt: time.Unix(20, 0).UTC()},
+	}
+	want := session.CheckReportRecordResult{Reused: true, Receipt: session.CheckReportReceipt{
+		CheckReport:         session.CheckReport{Source: session.CheckSourceReported, Status: submission.Status, WorkspaceFingerprint: submission.WorkspaceFingerprint, ReportedAt: time.Unix(30, 0).UTC()},
+		CheckReportMetadata: submission.CheckReportMetadata,
+	}}
+	body, _ := json.Marshal(want)
+	sock, received := fakeServer(t, Response{ProtocolVersion: ProtocolVersion, Success: true, Data: body})
+	got, err := NewClient(sock).RecordChecks("session", submission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req CheckReportRecordRequest
+	if err := json.Unmarshal(received.Data, &req); err != nil {
+		t.Fatal(err)
+	}
+	if received.Action != "check-report-record" || req.ID != "session" || req.CheckReportSubmission != submission || !got.Reused || got.Receipt != want.Receipt {
+		t.Fatalf("request=%+v result=%+v", req, got)
+	}
+	s := newTestServer(t)
+	invalid := s.handleRequest(&Request{Action: "check-report-record", Data: json.RawMessage(`{"id":"session"}`)})
+	if invalid.Success || strings.Contains(invalid.Error, "unknown action") {
+		t.Fatalf("invalid dispatch=%+v", invalid)
 	}
 }
 

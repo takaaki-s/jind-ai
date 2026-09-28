@@ -466,6 +466,11 @@ Who touches it:
   Different or unavailable later evidence makes the report stale, so it no
   longer overrides `ready-for-review`/`done`. Staleness is derived from cached
   fields and adds no work to `Manager.List`.
+  With explicit receipt metadata, `Manager.RecordChecks` checks the caller's
+  pre-run fingerprint and stores an immutable, keyed receipt. The bounded
+  append-only journal survives stale snapshot saves and retries after restart;
+  retrying an old key cannot overwrite a newer aggregate. `Info.check_receipt`
+  exposes only the receipt matching the latest report, not the full journal.
 - `jin session review-disposition <selector> reviewed|changes-requested`
   records a human decision after refreshing the same bounded evidence. It is
   accepted only for a non-empty fingerprinted workspace, becomes stale when

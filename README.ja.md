@@ -460,6 +460,28 @@ jind-ai はリポジトリのテスト方法を推測しません。適切なチ
 その後の完了または `session review` で異なる内容が観測されると結果は `stale` になり、
 古い、または状態不明のチェック結果は `ready-for-review` を妨げません。
 
+名前付きの記録を安全に再送する場合は、**チェック実行前**にfingerprintを取得し、
+実行ごとのキーとRFC3339形式の開始・終了時刻を付けて報告します:
+
+```bash
+jin session review auth --json  # review_facts.workspace_fingerprintを控える
+# 対象セッションのworktreeでチェックを実行し、開始・終了時刻を記録する
+jin session check-report auth passed --name unit --reporter local-user \
+  --fingerprint <保存したfingerprint> --idempotency-key unit-run-001 \
+  --started-at 2026-09-28T00:00:00Z --finished-at 2026-09-28T00:01:00Z \
+  --summary 'unit tests passed' --json
+```
+
+新規記録はworkspaceが変わっていれば拒否します。応答が不明な場合、同じキー・同じ内容で
+再送すると元の`receipt`と`reused`、現在のキャッシュ済み`session`、記録の`stale`を返します。
+再送で新しい合否結果を上書きしません。`session info --json`には最新の集約結果に対応する
+`check_receipt`も表示されます。複数suiteを合算する機能ではなく、最新の集約結果1件を扱います。
+名前・実行者・キーは各128 bytes、1行のsummaryは2048 bytesまでです。実行者は自己申告で、
+メタデータはローカルに保存するため秘密情報を含めないでください。記録はセッションごとに
+128件まで保持し、上限到達後は新しいexecutionで新規記録します。既存記録の再送は可能です。
+これらのフラグを付けない従来の報告は受付時の内容への手動報告で、キー付き再送の保証はありません。
+IPC更新のため、新しいバイナリへの更新後は`jin daemon restart`が必要です。
+
 好みの diff ツールで変更を確認したら、
 `jin session review-disposition <selector> reviewed|changes-requested` で人間の判定を
 記録できます。daemon は先にローカルの

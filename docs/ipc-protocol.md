@@ -174,6 +174,7 @@ it alone.
 | `attention-seen` | `IDRequest` | Acknowledge a session's completion receipt; returns the postcondition `session.Info`. Idempotent, changes no process status |
 | `review-refresh` | `IDRequest` | Run a bounded, local-only review assessment and return the updated `session.Info` |
 | `check-report` | `CheckReportRequest` (`id`, `status`: `passed` or `failed`) | Refresh local review evidence, bind an explicit aggregate check result to its workspace fingerprint, and return updated `session.Info` |
+| `check-report-record` | `CheckReportRecordRequest` | Validate caller fingerprint and bounded audit metadata, persist an immutable keyed receipt, return `CheckReportRecordResult` |
 | `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
 | `pr-handoff` | `PRHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Fail-closed preflight and optional synchronous invocation of a manifest-declared PR handoff provider; returns the bounded request, resolved target, and persisted outcome |
 | `merge-handoff` | `MergeHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Revalidate a successful PR handoff, synchronously query a manifest-declared merge provider, and optionally merge the exact reviewed head; returns provider preflight and persisted outcome |
@@ -440,6 +441,29 @@ are persisted. `review-refresh` performs no fetch and runs no repository tests.
 `check-report` also never runs tests: `source=reported` means the caller owns
 that execution. `check_report.stale` is derived from cached fingerprints;
 unknown or stale reports do not produce `checks-failed`.
+
+Protocol v19 adds optional `session.Info.check_receipt` for the latest aggregate
+and the `check-report-record` mutation. Its request contains `id`, `status`,
+`workspace_fingerprint` (64 lowercase hex digits), `idempotency_key`, `name`,
+`reporter`, `started_at`, `finished_at`, and optional `summary`. Required text
+fields are non-empty and at most 128 bytes; summary is at most 2048 bytes.
+All text must be UTF-8 without control/format characters. Both times are
+required RFC3339 timestamps with finish >= start; they are caller claims.
+The fingerprint must match a fresh bounded inspection before a new record is
+accepted. This is not proof of which command ran, who ran it, or that files
+remained unchanged throughout that run.
+
+Response: `{receipt, reused, stale, session}`. A receipt includes the submitted
+metadata plus `source=reported` and daemon `reported_at`. Keys are scoped to
+the session; identical retries return the same receipt even after a newer
+report or restart. Different content conflicts. Retries do not repeat git
+inspection or replace the latest result; freshness uses cached facts as with
+list/info. Unknown outcomes must be retried with the original key and fields.
+Session state keeps an append-only `check_receipts` journal capped at 128 entries.
+It never evicts keys: full journals reject new keys, not known retries. Stale
+snapshot saves union the journal and reject conflicting receipts. Legacy
+`check-report` remains unkeyed and only binds to the acceptance-time workspace.
+Free-form metadata is local-only; remote summaries retain aggregate fields.
 `review-disposition` similarly stores an explicit human claim only after a
 fresh, non-empty local assessment. `review_disposition.stale` is derived from
 the cached fingerprint. It neither acknowledges attention nor triggers merge
