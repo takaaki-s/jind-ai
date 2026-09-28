@@ -44,4 +44,6 @@ package daemon
 // target-side execution start/inspect adapters.
 // v18: add explicit idempotent remote execution cancel and target-owned
 // cleanup actions and their durable receipts.
-const ProtocolVersion = 18
+// v19: session.Info can include the latest check receipt with caller metadata;
+// add fingerprint-checked, idempotent check-report-record ingestion.
+const ProtocolVersion = 19

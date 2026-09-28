@@ -490,6 +490,31 @@ local workspace fingerprint first. A later completion or `session review` that
 observes different contents marks the report stale, and a stale/unknown report
 does not block `ready-for-review`.
 
+For retryable, named check records, capture the fingerprint **before** running
+checks and submit it with a unique run key and RFC3339 start/finish times:
+
+```bash
+jin session review auth --json  # save review_facts.workspace_fingerprint
+# Run the checks in that session's worktree, recording their start/finish times.
+jin session check-report auth passed --name unit --reporter local-user \
+  --fingerprint <saved-fingerprint> --idempotency-key unit-run-001 \
+  --started-at 2026-09-28T00:00:00Z --finished-at 2026-09-28T00:01:00Z \
+  --summary 'unit tests passed' --json
+```
+
+New records reject a changed workspace. Retry an uncertain response with the
+same key and identical fields: it returns the original `receipt` and `reused`,
+plus the current cached `session` and receipt `stale` flag, without replacing
+a newer report. `session info --json` includes `check_receipt` for the latest
+recorded aggregate. This remains one aggregate result, not per-suite merging.
+Names, reporters, and keys are limited to 128 bytes; single-line summaries to
+2048 bytes. Reporter is self-reported, and metadata is saved locally: omit
+secrets. Each session retains up to 128 immutable receipts; at capacity, new
+records require a new execution, while existing retries still work. Plain
+reports without these flags retain the manual, acceptance-time behavior and
+do not provide keyed retry guarantees. Updating to this IPC version requires
+`jin daemon restart`.
+
 After inspecting the change in your preferred diff tool, record the human
 decision with `jin session review-disposition <selector> reviewed|changes-requested`.
 The daemon refreshes the local review facts first

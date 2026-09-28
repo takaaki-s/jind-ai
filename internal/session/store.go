@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -101,6 +102,22 @@ func (s *Store) Save(session Session) error {
 	session.ReviewBase = mergeReviewBase(session.ReviewBase, persistedReviewBase(path))
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
+	var receiptState struct {
+		CheckReceipts []CheckReportReceipt `json:"check_receipts"`
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &receiptState); err != nil {
+			debugLog("[STORE] check receipts probe could not parse %s: %v", path, err)
+			receiptState.CheckReceipts = nil
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read check receipts: %w", err)
+	}
+	receipts, err := mergeCheckReceipts(session.CheckReceipts, receiptState.CheckReceipts)
+	if err != nil {
+		return err
+	}
+	session.CheckReceipts = receipts
 	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
 	session.PRHandoff = mergePRHandoff(session.PRHandoff, persistedPRHandoff(path))
 	session.MergeHandoff = mergeMergeHandoff(session.MergeHandoff, persistedMergeHandoff(path))

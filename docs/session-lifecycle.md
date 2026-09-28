@@ -135,6 +135,15 @@ discover commands or execute tests. `CheckReportInfo.stale` is derived by
 comparing cached fingerprints, so list/info/TUI reads remain I/O-free. A stale
 or unknown report never produces `checks-failed`.
 
+With receipt flags, the same CLI uses `check-report-record`: it requires the
+fingerprint captured before the external run, a stable key, name, self-reported
+reporter, start/finish timestamps, and optional bounded summary. A new receipt
+requires a matching refreshed fingerprint. Exact retries return the original
+receipt without overwriting a newer aggregate. Session state retains at most
+128 receipts without eviction, and stale saves preserve their union. See the
+IPC protocol for bounds and conflict behavior. Receipt metadata never changes
+the completion/seen counters, and is not forwarded in remote summaries.
+
 `jin session review-disposition <selector> reviewed|changes-requested` is the
 explicit human review-decision path. Like check reporting, it refreshes bounded
 review facts and binds the claim to their workspace fingerprint. Unlike
