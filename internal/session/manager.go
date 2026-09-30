@@ -2368,7 +2368,7 @@ func (m *Manager) PaneSendKeys(id, keys string, literal bool) error {
 	return tc.SendKeys(target, keys)
 }
 
-// MarkSeen acknowledges both independent inbox cursors. For NeedsAnswer this
+// MarkSeen acknowledges completion, check-failure and needs-answer cursors. For NeedsAnswer this
 // changes only SeenGeneration: an acknowledged wait remains unresolved until
 // a reliable adapter event or a verified RespondToBlock clears it.
 //
@@ -2454,6 +2454,10 @@ func (m *Manager) ReportChecks(id string, status CheckStatus) (Info, error) {
 		}
 		m.mu.Unlock()
 		return Info{}, fmt.Errorf("workspace fingerprint unavailable: %s", reason)
+	}
+	if status == CheckStatusFailed && (live.CheckReport.Status != CheckStatusFailed ||
+		live.CheckReport.WorkspaceFingerprint != live.ReviewFacts.WorkspaceFingerprint) {
+		live.Attention.CheckFailureGeneration++
 	}
 	live.CheckReport = CheckReport{
 		Source:               CheckSourceReported,

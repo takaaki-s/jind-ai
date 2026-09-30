@@ -125,6 +125,7 @@ func TestRecordChecksRejectsOldFingerprintWithoutRebinding(t *testing.T) {
 
 func TestRecordChecksConcurrentRetriesShareDurableReceipt(t *testing.T) {
 	mgr, id, _, submission := checkReceiptFixture(t)
+	submission.Status = CheckStatusFailed
 	var wg sync.WaitGroup
 	results := make(chan CheckReportRecordResult, 6)
 	for i := 0; i < 6; i++ {
@@ -151,6 +152,9 @@ func TestRecordChecksConcurrentRetriesShareDurableReceipt(t *testing.T) {
 	for result := range results {
 		if result.Receipt != loaded.CheckReceipts[0] {
 			t.Fatal("retry changed receipt")
+		}
+		if result.Session.Attention.CheckFailureGeneration != 1 {
+			t.Fatal("concurrent retry advanced failure cursor")
 		}
 	}
 }

@@ -13,7 +13,7 @@
       "execution.inspect.v1",
       "execution.cancel.v1",
       "execution.cleanup.v1",
-      "summary.structured.v1"
+      "summary.structured.v2"
     ]
   }
 }

@@ -515,6 +515,14 @@ reports without these flags retain the manual, acceptance-time behavior and
 do not provide keyed retry guarantees. Updating to this IPC version requires
 `jin daemon restart`.
 
+A new keyed failed report makes attention unseen again even
+after completion was acknowledged. Retrying the same key does not; a different
+key represents a new run. Plain reports deduplicate consecutive failures for
+the same fingerprint. `session seen` acknowledges both completion and failure;
+a passing or stale result clears failure-only attention. Completion generations
+and process status do not change. Remote execution requires updating both peers
+to structured summary v2.
+
 After inspecting the change in your preferred diff tool, record the human
 decision with `jin session review-disposition <selector> reviewed|changes-requested`.
 The daemon refreshes the local review facts first

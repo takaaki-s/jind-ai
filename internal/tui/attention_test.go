@@ -100,6 +100,27 @@ func TestRenderSession_ChecksFailedUsesDistinctGlyph(t *testing.T) {
 	}
 }
 
+func TestRenderSession_NewFailureAfterSeenCompletion(t *testing.T) {
+	m := plainModel()
+	sess := (&session.Session{ID: "s", Status: session.StatusIdle,
+		ReviewFacts: session.ReviewFacts{Status: session.ReviewFactsAvailable, WorkspaceFingerprint: "workspace"},
+		CheckReport: session.CheckReport{Source: session.CheckSourceReported, Status: session.CheckStatusFailed, WorkspaceFingerprint: "workspace"},
+		Attention: session.Attention{
+			State: session.AttentionChecksFailed, Generation: 1, SeenGeneration: 1,
+			CheckFailureGeneration: 2, SeenCheckFailureGeneration: 1,
+		}}).ToInfo()
+	line := sessionRowLines(m.renderSession(sess, false, false, 40))[0]
+	if !strings.Contains(line, checksFailedGlyph) {
+		t.Fatalf("missing new failure: %q", stripANSI(line))
+	}
+	sess.Attention.SeenCheckFailureGeneration = 2
+	sess.Attention.Unseen = false
+	line = sessionRowLines(m.renderSession(sess, false, false, 40))[0]
+	if strings.Contains(line, checksFailedGlyph) {
+		t.Fatalf("seen failure still highlighted: %q", stripANSI(line))
+	}
+}
+
 // The cell is blank in exactly the two states that are not a pending
 // completion, so the dot means one thing.
 func TestRenderSession_NoDotWhenNothingIsUnseen(t *testing.T) {
