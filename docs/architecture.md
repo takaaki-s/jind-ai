@@ -472,7 +472,11 @@ Who touches it:
   retrying an old key cannot overwrite a newer aggregate. `Info.check_receipt`
   exposes only the receipt matching the latest report, not the full journal.
 - `jin session review-disposition <selector> reviewed|changes-requested`
-  records a human decision after refreshing the same bounded evidence. It is
+  optionally uses `Manager.RecordReviewDisposition` for actor/note/key receipts
+  against a caller-inspected fingerprint. Its append-only bounded journal is
+  merged across stale saves; retries cannot replace newer decisions. Only the
+  latest receipt is projected in `Info`, without expanding remote summaries.
+  The plain command records a human decision after refreshing the same bounded evidence. It is
   accepted only for a non-empty fingerprinted workspace, becomes stale when
   cached evidence changes fingerprint, and remains independent of attention,
   checks, merge, deletion, and cleanup. The TUI action palette invokes this

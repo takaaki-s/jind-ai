@@ -113,7 +113,8 @@ type Session struct {
 	// caller. Its freshness is derived from ReviewFacts, without I/O on reads.
 	CheckReport CheckReport `json:"check_report,omitzero"`
 	// CheckReceipts is append-only; mutations must copy the slice before append.
-	CheckReceipts []CheckReportReceipt `json:"check_receipts,omitempty"`
+	CheckReceipts  []CheckReportReceipt       `json:"check_receipts,omitempty"`
+	ReviewReceipts []ReviewDispositionReceipt `json:"review_receipts,omitempty"`
 
 	// ReviewDisposition is the latest explicit human review decision. It is
 	// bound to ReviewFacts by workspace fingerprint and never implies merge or
@@ -202,14 +203,15 @@ type Info struct {
 	// Attention projects the completion receipt with `unseen` derived. Omitted
 	// entirely at zero, so a consumer that finds no object may read it as
 	// none/seen.
-	Attention         AttentionInfo         `json:"attention,omitzero"`
-	NeedsAnswer       NeedsAnswerInfo       `json:"needs_answer"`
-	ReviewFacts       ReviewFacts           `json:"review_facts,omitzero"`
-	CheckReport       CheckReportInfo       `json:"check_report,omitzero"`
-	CheckReceipt      CheckReportReceipt    `json:"check_receipt,omitzero"`
-	ReviewDisposition ReviewDispositionInfo `json:"review_disposition,omitzero"`
-	PRHandoff         PRHandoffInfo         `json:"pr_handoff,omitzero"`
-	MergeHandoff      MergeHandoffInfo      `json:"merge_handoff,omitzero"`
+	Attention         AttentionInfo            `json:"attention,omitzero"`
+	NeedsAnswer       NeedsAnswerInfo          `json:"needs_answer"`
+	ReviewFacts       ReviewFacts              `json:"review_facts,omitzero"`
+	CheckReport       CheckReportInfo          `json:"check_report,omitzero"`
+	CheckReceipt      CheckReportReceipt       `json:"check_receipt,omitzero"`
+	ReviewReceipt     ReviewDispositionReceipt `json:"review_receipt,omitzero"`
+	ReviewDisposition ReviewDispositionInfo    `json:"review_disposition,omitzero"`
+	PRHandoff         PRHandoffInfo            `json:"pr_handoff,omitzero"`
+	MergeHandoff      MergeHandoffInfo         `json:"merge_handoff,omitzero"`
 
 	// Tracked fields (dynamic, from daemon polling)
 	CurrentWorkDir string `json:"current_work_dir,omitempty"` // Current working directory
@@ -270,6 +272,7 @@ func (s *Session) ToInfo() Info {
 		ReviewFacts:       s.ReviewFacts,
 		CheckReport:       s.CheckReport.toInfo(s.ReviewFacts),
 		CheckReceipt:      s.latestCheckReceipt(),
+		ReviewReceipt:     s.latestReviewReceipt(),
 		ReviewDisposition: s.ReviewDisposition.toInfo(s.ReviewFacts),
 		PRHandoff:         s.PRHandoff.toInfo(s.ReviewFacts),
 		MergeHandoff:      s.MergeHandoff.toInfo(s.ReviewFacts, s.PRHandoff),

@@ -156,6 +156,15 @@ assessed. Changed or unavailable later evidence projects the prior decision as
 stale. Recording either decision changes no attention generation or process
 status and grants no merge, delete, or cleanup permission.
 
+With `--idempotency-key`, `--actor`, and the inspected `--fingerprint`, the
+decision becomes an immutable receipt in a separate bounded journal (128 keys,
+no eviction). Optional `--note` is bounded caller text, not trusted evidence.
+New receipts require fresh matching non-empty facts; identical retries preserve
+the original time/decision even after later decisions or restart. Conflicting
+payloads fail, and retries never acknowledge attention. The latest keyed
+decision exposes its metadata through `Info.review_receipt`; legacy decisions
+remain valid without metadata. Actor is self-reported and not authentication.
+
 `jin session pr-handoff <selector> <plugin> [action] --dry-run` is the next
 gate. It refreshes those facts again and fails closed unless the exact current
 workspace is reviewed, committed on a named branch, clean, and free of current

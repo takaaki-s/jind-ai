@@ -261,9 +261,15 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	if checkDone.Reused || !checkRetry.Reused || checkDone.Receipt != checkRetry.Receipt {
 		t.Fatal("check retry changed receipt")
 	}
-	taskInboxRequireSuccess(t, f.server, "review-disposition", ReviewDispositionRequest{
-		ID: info.ID, Decision: session.ReviewDecisionReviewed,
-	})
+	reviewRequest := ReviewDispositionRecordRequest{ID: info.ID, ReviewDispositionSubmission: session.ReviewDispositionSubmission{
+		Decision: session.ReviewDecisionReviewed, WorkspaceFingerprint: current.ReviewFacts.WorkspaceFingerprint,
+		ReviewDispositionMetadata: session.ReviewDispositionMetadata{IdempotencyKey: "e2e-review", Actor: "reviewer", Note: "inspected diff"},
+	}}
+	reviewDone := taskInboxCall[session.ReviewDispositionRecordResult](t, f.server, "review-disposition-record", reviewRequest)
+	reviewRetry := taskInboxCall[session.ReviewDispositionRecordResult](t, f.server, "review-disposition-record", reviewRequest)
+	if reviewDone.Reused || !reviewRetry.Reused || reviewDone.Receipt != reviewRetry.Receipt {
+		t.Fatal("review retry changed receipt")
+	}
 	installTaskInboxProviders(t, f, head)
 
 	prDry := taskInboxCall[PRHandoffResponse](t, f.server, "pr-handoff", PRHandoffRequest{

@@ -176,6 +176,7 @@ it alone.
 | `check-report` | `CheckReportRequest` (`id`, `status`: `passed` or `failed`) | Refresh local review evidence, bind an explicit aggregate check result to its workspace fingerprint, and return updated `session.Info` |
 | `check-report-record` | `CheckReportRecordRequest` | Validate caller fingerprint and bounded audit metadata, persist an immutable keyed receipt, return `CheckReportRecordResult` |
 | `review-disposition` | `ReviewDispositionRequest` (`id`, `decision`: `reviewed` or `changes-requested`) | Refresh local review evidence, require a non-empty delta, bind an explicit human decision to its workspace fingerprint, and return updated `session.Info` |
+| `review-disposition-record` | `ReviewDispositionRecordRequest` | Validate inspected fingerprint and bounded actor/note/key, persist an immutable review receipt, return `ReviewDispositionRecordResult` |
 | `pr-handoff` | `PRHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Fail-closed preflight and optional synchronous invocation of a manifest-declared PR handoff provider; returns the bounded request, resolved target, and persisted outcome |
 | `merge-handoff` | `MergeHandoffRequest` (`id`, `plugin`, optional `action`/`idempotency_key`, exactly one of `dry_run`/`confirm`) | Revalidate a successful PR handoff, synchronously query a manifest-declared merge provider, and optionally merge the exact reviewed head; returns provider preflight and persisted outcome |
 | `review-cleanup` | `ReviewCleanupRequest` (`id`, optional `idempotency_key`, exactly one of `dry_run`/`confirm`) | Preview or execute journaled local cleanup for an exact verified-merged session, managed worktree, and local branch |
@@ -441,6 +442,23 @@ are persisted. `review-refresh` performs no fetch and runs no repository tests.
 `check-report` also never runs tests: `source=reported` means the caller owns
 that execution. `check_report.stale` is derived from cached fingerprints;
 unknown or stale reports do not produce `checks-failed`.
+
+Protocol v21 adds `review-disposition-record` with
+`id`, `decision`, `workspace_fingerprint` (64 lowercase hex digits),
+`idempotency_key`, `actor`, and optional `note`. Key/actor are non-empty UTF-8
+text capped at 128 bytes; note is capped at 2048 bytes. Control/format characters
+are rejected. Actor is caller-reported, not authenticated. New records require
+a fresh, non-empty inspection matching the submitted fingerprint.
+Response: `{receipt, reused, stale, session}`. The receipt holds the decision,
+fingerprint, `source=reported`, daemon `reported_at`, actor, note and key.
+Identical retries return the original receipt without rebinding or replacing
+a later decision; different payloads conflict. Retry freshness is cached.
+The per-session `review_receipts` journal has 128 entries with no eviction;
+full journals reject only new keys. Stale saves union receipts and reject
+conflicts. Optional `Info.review_receipt` exposes only the latest keyed decision.
+Neither metadata nor the journal is sent in remote summaries or handoff payloads.
+Plain `review-disposition` and the TUI action remain unkeyed. No review operation
+implicitly acknowledges attention or executes a merge.
 
 Protocol v20 adds optional attention counters
 `check_failure_generation` / `seen_check_failure_generation`. A new keyed failure

@@ -399,6 +399,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		return s.handleCheckReport(req.Data)
 	case "check-report-record":
 		return s.handleCheckReportRecord(req.Data)
+	case "review-disposition-record":
+		return s.handleReviewDispositionRecord(req.Data)
 	case "review-disposition":
 		return s.handleReviewDisposition(req.Data)
 	case "pr-handoff":

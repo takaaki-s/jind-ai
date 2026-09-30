@@ -47,4 +47,5 @@ package daemon
 // v19: session.Info can include the latest check receipt with caller metadata;
 // add fingerprint-checked, idempotent check-report-record ingestion.
 // v20: independent check-failure attention and acknowledgement cursors.
-const ProtocolVersion = 20
+// v21: keyed human review receipts and optional Info.review_receipt metadata.
+const ProtocolVersion = 21

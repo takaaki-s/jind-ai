@@ -532,6 +532,28 @@ It is independent of seen/unseen attention and never merges, deletes, or cleans
 up a session. The same two decisions are available in the TUI action palette;
 full diff display remains the job of your editor, git tooling, or a plugin.
 
+For a retryable review record, capture the fingerprint before inspecting the
+diff, then submit that fingerprint with a stable decision key:
+
+```bash
+jin session review auth --json  # save review_facts.workspace_fingerprint
+# Inspect that workspace in your preferred diff tool.
+jin session review-disposition auth reviewed --actor local-user \
+  --fingerprint '<saved-fingerprint>' --idempotency-key review-001 \
+  --note 'inspected the change' --json
+```
+
+New receipts reject changed, unavailable, or empty evidence. Identical retries
+return the original receipt without overwriting a later decision; different
+content with the same key conflicts. Retry freshness uses cached facts.
+Actor is self-reported, not authenticated; omit secrets from actor/note.
+Key/actor are limited to 128 bytes each, the optional single-line note to 2048.
+The session retains at most 128 immutable review receipts without eviction;
+at capacity new keys require a new execution, but known retries still work.
+`session info --json` includes `review_receipt` for the latest keyed decision.
+Plain CLI/TUI decisions retain their unkeyed behavior. This adds no automatic
+approval or acknowledgement. Rebuild and restart the daemon for IPC v21.
+
 A plugin action declared with `handoff: true` can receive the reviewed commits
 through `jin session pr-handoff`. `--dry-run` refreshes and validates the
 evidence but never runs the plugin. `--confirm` is required to invoke it. The

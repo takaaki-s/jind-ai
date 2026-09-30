@@ -103,12 +103,14 @@ func (s *Store) Save(session Session) error {
 	session.ReviewFacts = mergeReviewFacts(session.ReviewFacts, persistedReviewFacts(path))
 	session.CheckReport = mergeCheckReport(session.CheckReport, persistedCheckReport(path))
 	var receiptState struct {
-		CheckReceipts []CheckReportReceipt `json:"check_receipts"`
+		CheckReceipts  []CheckReportReceipt       `json:"check_receipts"`
+		ReviewReceipts []ReviewDispositionReceipt `json:"review_receipts"`
 	}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &receiptState); err != nil {
 			debugLog("[STORE] check receipts probe could not parse %s: %v", path, err)
 			receiptState.CheckReceipts = nil
+			receiptState.ReviewReceipts = nil
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read check receipts: %w", err)
@@ -118,6 +120,11 @@ func (s *Store) Save(session Session) error {
 		return err
 	}
 	session.CheckReceipts = receipts
+	reviewReceipts, err := mergeReviewReceipts(session.ReviewReceipts, receiptState.ReviewReceipts)
+	if err != nil {
+		return err
+	}
+	session.ReviewReceipts = reviewReceipts
 	session.ReviewDisposition = mergeReviewDisposition(session.ReviewDisposition, persistedReviewDisposition(path))
 	session.PRHandoff = mergePRHandoff(session.PRHandoff, persistedPRHandoff(path))
 	session.MergeHandoff = mergeMergeHandoff(session.MergeHandoff, persistedMergeHandoff(path))
