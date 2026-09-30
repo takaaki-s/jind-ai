@@ -252,6 +252,10 @@ After you inspect that exact workspace, persist the human decision separately:
 
 ```bash
 jin session review-disposition fix-login reviewed
+# For a retryable human decision, use the fingerprint actually inspected:
+jin session review-disposition fix-login reviewed --actor reviewer \
+  --fingerprint '<inspected-fingerprint>' --idempotency-key review-001 \
+  --note 'human reviewed the diff' --json
 # or
 jin session review-disposition fix-login changes-requested
 ```

@@ -23,7 +23,7 @@ func TestHandleReviewDisposition_ValidatesAndDispatches(t *testing.T) {
 }
 
 func TestReviewDispositionIsNotReadOnly(t *testing.T) {
-	if readOnlyActions["review-disposition"] {
+	if readOnlyActions["review-disposition"] || readOnlyActions["review-disposition-record"] {
 		t.Fatal("review-disposition persists evidence and must report timeouts as outcome unknown")
 	}
 }

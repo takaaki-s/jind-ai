@@ -63,6 +63,17 @@ make build    # Build to bin/jin
 make install  # Install to $GOPATH/bin
 ```
 
+### Updating
+
+Update the binary using your installation method above, then restart the
+daemon with the updated `jin`:
+
+```bash
+jin daemon restart
+```
+
+For remote execution, update both the controller and target machines.
+
 ## What you can do
 
 **Know which one needs you.** Status is reported by the agent itself — thinking,
@@ -512,16 +523,14 @@ Names, reporters, and keys are limited to 128 bytes; single-line summaries to
 secrets. Each session retains up to 128 immutable receipts; at capacity, new
 records require a new execution, while existing retries still work. Plain
 reports without these flags retain the manual, acceptance-time behavior and
-do not provide keyed retry guarantees. Updating to this IPC version requires
-`jin daemon restart`.
+do not provide keyed retry guarantees.
 
 A new keyed failed report makes attention unseen again even
 after completion was acknowledged. Retrying the same key does not; a different
 key represents a new run. Plain reports deduplicate consecutive failures for
 the same fingerprint. `session seen` acknowledges both completion and failure;
 a passing or stale result clears failure-only attention. Completion generations
-and process status do not change. Remote execution requires updating both peers
-to structured summary v2.
+and process status do not change.
 
 After inspecting the change in your preferred diff tool, record the human
 decision with `jin session review-disposition <selector> reviewed|changes-requested`.
@@ -531,6 +540,28 @@ decision becomes stale when later review evidence observes different contents.
 It is independent of seen/unseen attention and never merges, deletes, or cleans
 up a session. The same two decisions are available in the TUI action palette;
 full diff display remains the job of your editor, git tooling, or a plugin.
+
+For a retryable review record, capture the fingerprint before inspecting the
+diff, then submit that fingerprint with a stable decision key:
+
+```bash
+jin session review auth --json  # save review_facts.workspace_fingerprint
+# Inspect that workspace in your preferred diff tool.
+jin session review-disposition auth reviewed --actor local-user \
+  --fingerprint '<saved-fingerprint>' --idempotency-key review-001 \
+  --note 'inspected the change' --json
+```
+
+New receipts reject changed, unavailable, or empty evidence. Identical retries
+return the original receipt without overwriting a later decision; different
+content with the same key conflicts. Retry freshness uses cached facts.
+Actor is self-reported, not authenticated; omit secrets from actor/note.
+Key/actor are limited to 128 bytes each, the optional single-line note to 2048.
+The session retains at most 128 immutable review receipts without eviction;
+at capacity new keys require a new execution, but known retries still work.
+`session info --json` includes `review_receipt` for the latest keyed decision.
+Plain CLI/TUI decisions retain their unkeyed behavior. This adds no automatic
+approval or acknowledgement.
 
 A plugin action declared with `handoff: true` can receive the reviewed commits
 through `jin session pr-handoff`. `--dry-run` refreshes and validates the

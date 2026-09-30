@@ -60,6 +60,16 @@ make build    # bin/jin にビルド
 make install  # $GOPATH/bin にインストール
 ```
 
+### 更新
+
+上記のインストール方法でバイナリを更新した後、更新した `jin` でdaemonを再起動してください:
+
+```bash
+jin daemon restart
+```
+
+remote executionを使う場合は、接続元と接続先の両方を更新してください。
+
 ## できること
 
 **どれが自分待ちか分かる。** 状態はエージェント自身が報告します（thinking / idle /
@@ -480,14 +490,12 @@ jin session check-report auth passed --name unit --reporter local-user \
 メタデータはローカルに保存するため秘密情報を含めないでください。記録はセッションごとに
 128件まで保持し、上限到達後は新しいexecutionで新規記録します。既存記録の再送は可能です。
 これらのフラグを付けない従来の報告は受付時の内容への手動報告で、キー付き再送の保証はありません。
-IPC更新のため、新しいバイナリへの更新後は`jin daemon restart`が必要です。
 
 新しいキーで失敗を報告すると、完了を確認済みでも
 再び未確認になります。同じキーの再送では増えず、別キーは別の実行として扱います。
 従来の簡易報告は同じfingerprintの連続した失敗を重複通知しません。`session seen`は
 完了と失敗の両方を確認済みにします。成功への更新や結果のstale化で失敗だけの未確認表示は
-解除されます。完了世代とprocess statusは変わりません。remote executionを使う場合は
-両側をstructured summary v2対応版へ更新してください。
+解除されます。完了世代とprocess statusは変わりません。
 
 好みの diff ツールで変更を確認したら、
 `jin session review-disposition <selector> reviewed|changes-requested` で人間の判定を
@@ -497,6 +505,24 @@ review facts を更新し、fingerprint を取得できる空でない workspace
 seen/unseen attention とは独立しており、session の merge、delete、cleanup は行いません。
 同じ 2 操作は TUI のアクションパレットからも選べます。patch 全体の表示は editor、git
 ツール、または plugin に任せます。
+
+判定を安全に再送するには、差分を見る前にfingerprintを取得し、その値と判定ごとのキーを報告します:
+
+```bash
+jin session review auth --json  # review_facts.workspace_fingerprintを控える
+# 好みのdiffツールで、そのworkspaceの変更を確認する
+jin session review-disposition auth reviewed --actor local-user \
+  --fingerprint '<保存したfingerprint>' --idempotency-key review-001 \
+  --note '変更内容を確認済み' --json
+```
+
+新規記録は根拠が変化・取得不能・空なら拒否します。同じキー・同じ内容の再送は元の記録を返し、
+後の判定を上書きしません。同じキーで異なる内容は拒否します。再送時のstale判定はキャッシュ済みの
+根拠を使います。actorは認証済みの本人情報ではなく自己申告です。actor/noteに秘密情報を含めないでください。
+キーとactorは各128 bytes、任意の1行noteは2048 bytesまで。セッションごとに128件まで保持し、
+古いキーは削除しません。上限後は新しいexecutionで新規記録し、既存記録の再送は引き続き可能です。
+`session info --json`の`review_receipt`に最新のキー付き判定の記録が表示されます。
+従来のCLI/TUI操作はキーなしのままです。自動承認や既読化は行いません。
 
 `handoff: true` を宣言した plugin action には、`jin session pr-handoff` で
 レビュー済み commit を渡せます。`--dry-run` は evidence を更新・検査するだけで
