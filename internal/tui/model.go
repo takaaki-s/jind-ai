@@ -2016,7 +2016,7 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 
 		// Check whether any deleting session has resolved: either the record
-		// disappeared (successful async finalize) or it flipped back to Stopped
+		// disappeared (successful async finalize) or it returned to its prior status
 		// with ErrorMessage set (MarkDeletionFailed rolled it back). Both clear the
 		// grey-out; only the record-gone case triggers a reswitch.
 		deleteCompleted := false
@@ -2032,11 +2032,12 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 					deleteCompleted = true
 					continue
 				}
-				// Async finalize failed: MarkDeletionFailed rolled Status
-				// back to Stopped and populated ErrorMessage. Drop the
-				// grey-out so the user can see the error and retry.
-				if live.Status == session.StatusStopped && live.ErrorMessage != "" {
+				// MarkDeletionFailed restores the pre-delete status, not
+				// necessarily stopped. A poll before acceptance has no new
+				// failure, so a non-deleting status alone is insufficient.
+				if live.Status != session.StatusDeleting && live.ErrorMessage != "" {
 					delete(m.deletingIDs, id)
+					m.err = fmt.Errorf("delete failed for %q: %s", live.Description, live.ErrorMessage)
 				}
 			}
 		}
