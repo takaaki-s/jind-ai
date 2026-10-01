@@ -197,6 +197,23 @@ func TestE2E_TaskInboxPromptCreatesIsolatedExecution(t *testing.T) {
 }
 
 func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
+	runTaskInboxToMergeCleanup(t, true, "", "")
+}
+
+func TestE2E_TaskInboxPromptToMergeCleanupSurvivesRestart(t *testing.T) {
+	runTaskInboxToMergeCleanup(t, false, "", "")
+}
+
+func TestE2E_TaskInboxRejectsUnsafeHandoffs(t *testing.T) {
+	for _, stage := range []string{"pr", "merge"} {
+		for _, gate := range []string{"failed-checks", "changes-requested", "stale-head", "dirty-worktree"} {
+			t.Run(stage+"/"+gate, func(t *testing.T) { runTaskInboxToMergeCleanup(t, false, stage, gate) })
+		}
+	}
+}
+
+func runTaskInboxToMergeCleanup(t *testing.T, fromIssue bool, rejectStage, gate string) {
+	t.Helper()
 	f := newTaskInboxE2EFixture(t)
 	ref, err := provider.ParseGitHubIssueReference("acme/demo#7")
 	if err != nil {
@@ -216,23 +233,35 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	f.server.issueCommentReader = comments
 	f.server.issueCommentWriter = comments
 
-	created := taskInboxTaskNew(t, f.server, TaskNewRequest{
+	request := TaskNewRequest{
 		IdempotencyKey: "issue-e2e", Issue: ref.URL, Repo: f.repo,
 		RequestedBase: "main", AgentKind: "e2e", NoHook: true,
-	})
+	}
+	if !fromIssue {
+		request.Issue = ""
+		request.Title = "Prompt-backed task"
+		request.Prompt = "Implement the bounded prompt change"
+	}
+	created := taskInboxTaskNew(t, f.server, request)
 	settled := waitForTaskRunPhase(t, f.taskManager, created.Task.ID, task.ExecutionSubmitted)
 	info, ok := f.manager.GetInfo(created.Session.ID)
 	if !ok {
 		t.Fatal("orchestrated session is missing")
 	}
 	t.Cleanup(func() { removeTaskInboxWorktree(f.repo, info.WorkDir, info.ReviewFacts.Branch) })
-	if settled.Source.Provider != "github" || settled.Source.Repository != "acme/demo" || settled.Source.ExternalID != "7" {
+	if fromIssue && (settled.Source.Provider != "github" || settled.Source.Repository != "acme/demo" || settled.Source.ExternalID != "7") {
 		t.Fatalf("issue source = %+v", settled.Source)
 	}
-	if got := f.driver.submittedPrompt(); !strings.Contains(got, issueBody) || !strings.Contains(got, "untrusted problem context") {
+	if got := f.driver.submittedPrompt(); fromIssue && (!strings.Contains(got, issueBody) || !strings.Contains(got, "untrusted problem context")) {
 		t.Fatalf("submitted Issue prompt = %q", got)
 	}
 	assertTaskInboxStateOmits(t, f.tasksDir, issueBody)
+	if !fromIssue {
+		if settled.Source.Kind != "prompt" || f.driver.submittedPrompt() != request.Prompt {
+			t.Fatal("prompt identity or submission changed")
+		}
+		assertTaskInboxStateOmits(t, f.tasksDir, request.Prompt)
+	}
 
 	if err := os.WriteFile(filepath.Join(info.WorkDir, "change.txt"), []byte("implemented\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -251,6 +280,13 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	current, ok := f.manager.GetInfo(info.ID)
 	if !ok {
 		t.Fatal("session disappeared")
+	}
+	if !current.Attention.Unseen {
+		t.Fatal("completion was not unseen")
+	}
+	seen := taskInboxCall[session.Info](t, f.server, "attention-seen", IDRequest{ID: info.ID})
+	if seen.Attention.Unseen || seen.Attention.Generation != current.Attention.Generation {
+		t.Fatal("completion acknowledgement failed")
 	}
 	checkRequest := CheckReportRecordRequest{ID: info.ID, CheckReportSubmission: session.CheckReportSubmission{
 		Status: session.CheckStatusPassed, WorkspaceFingerprint: current.ReviewFacts.WorkspaceFingerprint,
@@ -278,6 +314,10 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	if prDry.Payload.IdempotencyKey == "" || !prDry.Handoff.IsZero() {
 		t.Fatalf("PR dry-run = %+v", prDry)
 	}
+	if rejectStage == "pr" {
+		assertTaskInboxGateRejects(t, f, info, gate, "pr-handoff", prDry.Payload.IdempotencyKey)
+		return
+	}
 	prDone := taskInboxCall[PRHandoffResponse](t, f.server, "pr-handoff", PRHandoffRequest{
 		ID: info.ID, Plugin: "e2e-pr", Action: "create", Confirm: true,
 		IdempotencyKey: prDry.Payload.IdempotencyKey,
@@ -292,6 +332,10 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	if mergeDry.Payload.IdempotencyKey == "" || mergeDry.Preflight.Status != "ready" || !mergeDry.Handoff.IsZero() {
 		t.Fatalf("merge dry-run = %+v", mergeDry)
 	}
+	if rejectStage == "merge" {
+		assertTaskInboxGateRejects(t, f, info, gate, "merge-handoff", mergeDry.Payload.IdempotencyKey)
+		return
+	}
 	mergeDone := taskInboxCall[MergeHandoffResponse](t, f.server, "merge-handoff", MergeHandoffRequest{
 		ID: info.ID, Plugin: "e2e-merge", Action: "merge", Confirm: true,
 		IdempotencyKey: mergeDry.Payload.IdempotencyKey,
@@ -299,22 +343,29 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	if mergeDone.Handoff.Status != session.MergeHandoffSucceeded || mergeDone.Handoff.Result.HeadCommit != head {
 		t.Fatalf("merge handoff = %+v", mergeDone.Handoff)
 	}
+	if taskInboxProviderCalls(t, f, "e2e-pr") != 1 || taskInboxProviderCalls(t, f, "e2e-merge") != 3 {
+		t.Fatal("expected one PR call, two merge preflights and one merge mutation")
+	}
 
 	commentBody := "Implemented and merged; bounded comment marker."
-	commentDry := taskInboxCall[TaskCommentResponse](t, f.server, "task-comment", TaskCommentRequest{
-		TaskID: created.Task.ID, Body: commentBody, DryRun: true,
-	})
-	if commentDry.Plan.IdempotencyKey == "" || comments.createCalls != 0 {
-		t.Fatalf("comment dry-run = %+v calls=%d", commentDry.Plan, comments.createCalls)
+	wantMutations := 0
+	if fromIssue {
+		wantMutations = 1
+		commentDry := taskInboxCall[TaskCommentResponse](t, f.server, "task-comment", TaskCommentRequest{
+			TaskID: created.Task.ID, Body: commentBody, DryRun: true,
+		})
+		if commentDry.Plan.IdempotencyKey == "" || comments.createCalls != 0 {
+			t.Fatalf("comment dry-run = %+v calls=%d", commentDry.Plan, comments.createCalls)
+		}
+		commentDone := taskInboxCall[TaskCommentResponse](t, f.server, "task-comment", TaskCommentRequest{
+			TaskID: created.Task.ID, Body: commentBody, Confirm: true,
+			IdempotencyKey: commentDry.Plan.IdempotencyKey,
+		})
+		if comments.createCalls != 1 || commentDone.Mutation.Status != task.MutationSucceeded {
+			t.Fatalf("comment mutation = %+v calls=%d", commentDone.Mutation, comments.createCalls)
+		}
+		assertTaskInboxStateOmits(t, f.tasksDir, issueBody, commentBody)
 	}
-	commentDone := taskInboxCall[TaskCommentResponse](t, f.server, "task-comment", TaskCommentRequest{
-		TaskID: created.Task.ID, Body: commentBody, Confirm: true,
-		IdempotencyKey: commentDry.Plan.IdempotencyKey,
-	})
-	if comments.createCalls != 1 || commentDone.Mutation.Status != task.MutationSucceeded {
-		t.Fatalf("comment mutation = %+v calls=%d", commentDone.Mutation, comments.createCalls)
-	}
-	assertTaskInboxStateOmits(t, f.tasksDir, issueBody, commentBody)
 
 	cleanupDry := taskInboxCall[ReviewCleanupResponse](t, f.server, "review-cleanup", ReviewCleanupRequest{
 		ID: info.ID, DryRun: true,
@@ -345,7 +396,7 @@ func TestE2E_TaskInboxIssueToMergeCleanupSurvivesRestart(t *testing.T) {
 	}
 	restartedTask, ok := restartedTasks.Get(created.Task.ID)
 	if !ok || len(restartedTask.Executions) != 1 || restartedTask.Executions[0].ReferenceState != task.ReferenceMissing ||
-		len(restartedTask.Mutations) != 1 || restartedTask.Mutations[0].Status != task.MutationSucceeded {
+		len(restartedTask.Mutations) != wantMutations || (fromIssue && restartedTask.Mutations[0].Status != task.MutationSucceeded) {
 		t.Fatalf("restarted task = %+v found=%t", restartedTask, ok)
 	}
 	journal, err := restartedSessions.ReviewCleanupJournal(info.ID)
@@ -399,6 +450,7 @@ install:
 actions:
   - id: create
     entrypoint: |
+      printf 'call\n' >> calls.log
       cat > pr-request.json
       printf '%%s' '%s'
     handoff: true
@@ -425,6 +477,7 @@ install:
 actions:
   - id: merge
     entrypoint: |
+      printf 'call\n' >> calls.log
       body=$(cat)
       printf '%%s' "$body" > merge-request.json
       case "$body" in
