@@ -36,6 +36,17 @@ var confirmModes = []string{
 	ConfirmModeDelete,
 	ConfirmModeDeleteWorktree,
 	ConfirmModeDeleteWorktreeForce,
+	ConfirmModeDeleteSubmodules,
+}
+
+func TestSubmoduleRemovalConfirmation(t *testing.T) {
+	spec, ok := confirmSpecFor(ConfirmModeDeleteSubmodules, "repo")
+	if !ok || !strings.Contains(spec.subtitle, "commits may be lost") {
+		t.Fatalf("missing warning: %+v", spec)
+	}
+	if spec.results["y"] != ConfirmResultForceYes || spec.results["n"] != ConfirmResultForceNo || spec.results["enter"] != "" {
+		t.Fatal("force deletion must require explicit y")
+	}
 }
 
 // TestConfirmPopupModel_ViewShape asserts whole lines, not fragments: every

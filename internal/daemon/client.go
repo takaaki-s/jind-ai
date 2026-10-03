@@ -714,6 +714,9 @@ func (c *Client) Delete(id string, removeWorktree, forceRemoveWorktree bool) err
 		if strings.Contains(resp.Error, session.ErrWorktreeDirty.Error()) {
 			return session.ErrWorktreeDirty
 		}
+		if strings.Contains(resp.Error, session.ErrWorktreeSubmodules.Error()) {
+			return session.ErrWorktreeSubmodules
+		}
 		if strings.Contains(resp.Error, session.ErrNotWorktree.Error()) {
 			return session.ErrNotWorktree
 		}

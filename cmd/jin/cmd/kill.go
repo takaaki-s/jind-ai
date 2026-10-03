@@ -80,6 +80,9 @@ var deleteCmd = &cobra.Command{
 		}
 
 		if err := client.Delete(sessionID, removeWorktree, forceWorktree); err != nil {
+			if errors.Is(err, session.ErrWorktreeSubmodules) {
+				return fmt.Errorf("%w (use --worktree --force-worktree only after saving submodule changes and local commits)", err)
+			}
 			if errors.Is(err, session.ErrWorktreeDirty) {
 				return exitcode.Wrap(err, exitcode.WorktreeDirty,
 					"worktree has uncommitted changes (use --force-worktree to override)")

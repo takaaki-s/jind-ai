@@ -4285,6 +4285,8 @@ func TestConfirmFlagsOnWire(t *testing.T) {
 		{"worktree prompt, with worktree", ConfirmModeDeleteWorktree, ConfirmResultWorktree, "delete", true, false},
 		{"force prompt, forced", ConfirmModeDeleteWorktreeForce, ConfirmResultForceYes, "delete", true, true},
 		{"force prompt, declined", ConfirmModeDeleteWorktreeForce, ConfirmResultForceNo, "delete", false, false},
+		{"submodule prompt, forced", ConfirmModeDeleteSubmodules, ConfirmResultForceYes, "delete", true, true},
+		{"submodule prompt, declined", ConfirmModeDeleteSubmodules, ConfirmResultForceNo, "delete", false, false},
 	}
 
 	for _, tt := range cases {

@@ -416,6 +416,14 @@ jin cleanup stopped
 jin cleanup stopped --dry-run   # 削除対象の確認
 ```
 
+worktreeも削除する場合は `jin session delete <name> --worktree`、またはTUIで `d` → `w` を
+選びます。サブモジュールが登録されていれば、親がcleanでも未初期化でも追加の強制削除確認を
+表示します。Gitは初期化済みサブモジュールの削除にforceを要求し、親がcleanでもサブモジュール内の
+作業やローカルだけのコミットを安全に捨てられるとは限らないためです。必要な内容は先に退避してください。
+確認画面では `y` でworktreeを強制削除、`n` / `Esc` でworktreeを残してセッションだけ削除、
+`Ctrl+C` で何も削除せず中止します。CLIでは明示的に
+`jin session delete <name> --worktree --force-worktree` を指定します。
+
 adopt は confirm まで完全に read-only です。preview ではローカル tmux の exact
 server/session/window/pane、cwd、command、PID、process 開始時刻、process ancestry、現在の jin
 owner、ranked agent 候補を表示します。登録 adapter は正規化した executable 名を process tree

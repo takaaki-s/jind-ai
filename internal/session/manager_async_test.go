@@ -181,6 +181,9 @@ func TestPreCheckDelete_DirtyReturnsErrWorktreeDirty(t *testing.T) {
 			if len(args) >= 2 && args[0] == "status" && args[1] == "--porcelain" {
 				return []byte(" M foo.go\n"), nil // one modified file -> dirty
 			}
+			if len(args) > 0 && args[0] == "ls-files" {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("unexpected git call: %v", args)
 		},
 	}
@@ -429,6 +432,9 @@ func TestDelete_TwoFailedThenSucceed(t *testing.T) {
 				_ = os.RemoveAll(worktreeDir)
 				return nil, nil
 			}
+			if len(args) > 0 && args[0] == "ls-files" {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("unexpected git call: %s", joined)
 		},
 	}
@@ -607,6 +613,9 @@ func hookFailGitRunner() *scriptedGitRunner {
 				_ = os.RemoveAll(args[len(args)-1])
 				return nil, nil
 			case len(args) >= 2 && args[0] == "branch" && args[1] == "-D":
+				return nil, nil
+			}
+			if len(args) > 0 && args[0] == "ls-files" {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("unexpected git call: %s", joined)
