@@ -17,6 +17,7 @@ const (
 	ConfirmModeDelete              = "delete"
 	ConfirmModeDeleteWorktree      = "delete_worktree"
 	ConfirmModeDeleteWorktreeForce = "delete_worktree_force"
+	ConfirmModeDeleteSubmodules    = "delete_submodules"
 )
 
 // Confirm popup results, written back to JIN_CONFIRM_RESULT. The empty
@@ -114,7 +115,11 @@ func confirmSpecFor(mode, desc string) (confirmSpec, bool) {
 				"n": ConfirmResultNo, "N": ConfirmResultNo, "esc": ConfirmResultNo,
 			},
 		}, true
-	case ConfirmModeDeleteWorktreeForce:
+	case ConfirmModeDeleteWorktreeForce, ConfirmModeDeleteSubmodules:
+		subtitle := "Worktree has uncommitted changes"
+		if mode == ConfirmModeDeleteSubmodules {
+			subtitle = "Submodule work/commits may be lost"
+		}
 		return confirmSpec{
 			// Names the session like the other three modes: this prompt is
 			// raised asynchronously in a popup of its own, so the title is
@@ -126,7 +131,7 @@ func confirmSpecFor(mode, desc string) (confirmSpec, bool) {
 			// content width is 34, so the reason is lost for any name longer
 			// than six characters. Split, the title holds names up to 22.
 			title:    fmt.Sprintf("⚠ Delete '%s'?", desc),
-			subtitle: "Worktree has uncommitted changes",
+			subtitle: subtitle,
 			hints: []keyHint{
 				{"y", "force delete worktree"},
 				{"n", "delete session only"},

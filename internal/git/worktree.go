@@ -94,6 +94,22 @@ func (c *Client) IsDirty(workDir string) (bool, error) {
 	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
+// HasSubmodules checks for gitlinks, including uninitialized submodules.
+// Deletion requires explicit force consent: a clean parent does not prove
+// that submodule-local commits can be discarded safely.
+func (c *Client) HasSubmodules(workDir string) (bool, error) {
+	output, err := c.r.Run(workDir, "ls-files", "--stage", "-z")
+	if err != nil {
+		return false, fmt.Errorf("inspect worktree submodules: %w", err)
+	}
+	for record := range strings.SplitSeq(string(output), "\x00") {
+		if strings.HasPrefix(record, "160000 ") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // RemoveWorktree removes a git worktree at workDir.
 // Returns ErrDirty if the worktree has uncommitted changes and force is
 // false. Returns ErrNotWorktree if workDir is not a git worktree. A

@@ -583,8 +583,9 @@ type deleteErrMsg struct {
 	err       error
 }
 type worktreeDirtyMsg struct {
-	sessionID string
-	name      string
+	sessionID  string
+	name       string
+	submodules bool
 }
 
 type reviewDispositionMsg struct {
@@ -1783,13 +1784,13 @@ func (m Model) dispatchConfirmResult(mode, targetID, result string) (tea.Model, 
 	// prompt (which falls back to leaving the dirty worktree in place).
 	case mode == ConfirmModeDelete && result == ConfirmResultYes,
 		mode == ConfirmModeDeleteWorktree && result == ConfirmResultYes,
-		mode == ConfirmModeDeleteWorktreeForce && result == ConfirmResultForceNo:
+		(mode == ConfirmModeDeleteWorktreeForce || mode == ConfirmModeDeleteSubmodules) && result == ConfirmResultForceNo:
 		return m.deleteSession(targetID, false, false)
 
 	case mode == ConfirmModeDeleteWorktree && result == ConfirmResultWorktree:
 		return m.deleteSession(targetID, true, false)
 
-	case mode == ConfirmModeDeleteWorktreeForce && result == ConfirmResultForceYes:
+	case (mode == ConfirmModeDeleteWorktreeForce || mode == ConfirmModeDeleteSubmodules) && result == ConfirmResultForceYes:
 		return m.deleteSession(targetID, true, true)
 	}
 	return m, nil
@@ -1836,8 +1837,8 @@ func (m Model) deleteSession(targetID string, removeWorktree, force bool) (tea.M
 	client := m.client
 	return m, func() tea.Msg {
 		if err := client.Delete(targetID, removeWorktree, force); err != nil {
-			if errors.Is(err, session.ErrWorktreeDirty) {
-				return worktreeDirtyMsg{sessionID: targetID, name: name}
+			if errors.Is(err, session.ErrWorktreeDirty) || errors.Is(err, session.ErrWorktreeSubmodules) {
+				return worktreeDirtyMsg{sessionID: targetID, name: name, submodules: errors.Is(err, session.ErrWorktreeSubmodules)}
 			}
 			if errors.Is(err, session.ErrNotWorktree) {
 				return deleteErrMsg{
@@ -2149,11 +2150,15 @@ func (m Model) updateListMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreeDirtyMsg:
 		delete(m.deletingIDs, msg.sessionID)
 		m.processingMsg = ""
-		// The daemon refused the worktree removal because it is dirty. The
+		// The daemon refused removal without explicit force consent. The
 		// popup that asked the first question is already closed, so ask the
 		// force question in a fresh one.
+		mode := ConfirmModeDeleteWorktreeForce
+		if msg.submodules {
+			mode = ConfirmModeDeleteSubmodules
+		}
 		m.openConfirmPopup(confirmRequest{
-			mode:       ConfirmModeDeleteWorktreeForce,
+			mode:       mode,
 			targetID:   msg.sessionID,
 			targetDesc: msg.name,
 		})

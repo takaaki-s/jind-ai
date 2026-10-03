@@ -440,6 +440,16 @@ jin cleanup stopped
 jin cleanup stopped --dry-run   # Preview what will be deleted
 ```
 
+To delete a session together with its worktree, use `jin session delete <name>
+--worktree` or press `d`, then `w` in the TUI. Worktrees with registered
+submodules require an additional force confirmation, even when the parent is
+clean or the submodules are not initialized. Git requires force for initialized
+submodules, and a clean parent does not prove their local work/commits are safe
+to discard. Save them first. In the confirmation, `y` force-deletes the worktree,
+`n`/`Esc` deletes only the session (keeping the worktree), and `Ctrl+C` cancels
+without deleting anything. From the CLI, explicit consent is
+`jin session delete <name> --worktree --force-worktree`.
+
 Adoption is intentionally read-only until confirmation. The preview resolves
 the exact local server/session/window/pane, cwd, command, PID, process start
 time, process ancestry, current jin owner, and ranked agent candidates.

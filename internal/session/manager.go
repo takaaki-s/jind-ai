@@ -38,6 +38,9 @@ var reviewProbeTimeout = 5 * time.Second
 // and force removal was not requested.
 var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
 
+// ErrWorktreeSubmodules requires consent even when the parent appears clean.
+var ErrWorktreeSubmodules = errors.New("worktree contains submodules; force removal requires explicit confirmation")
+
 // ErrNotWorktree is returned when worktree removal was requested but the
 // resolved target directory is not a git worktree (e.g., the main repository
 // or a non-git directory). Returned instead of silently succeeding so the
@@ -4223,6 +4226,13 @@ func (m *Manager) PreCheckDelete(id string, removeWorktree, forceRemoveWorktree 
 	}
 
 	if !forceRemoveWorktree {
+		hasSubmodules, err := m.gitClient.HasSubmodules(workDir)
+		if err != nil {
+			return DeleteRequest{}, err
+		}
+		if hasSubmodules {
+			return DeleteRequest{}, ErrWorktreeSubmodules
+		}
 		dirty, err := m.gitClient.IsDirty(workDir)
 		if err != nil {
 			// git failure ≠ dirty; fall through and let the actual

@@ -232,6 +232,9 @@ func (r slowRemoveRunner) Run(dir string, args ...string) ([]byte, error) {
 		_ = os.RemoveAll(r.worktreeDir)
 		return nil, nil
 	}
+	if len(args) > 0 && args[0] == "ls-files" {
+		return nil, nil
+	}
 	return nil, fmt.Errorf("unexpected git call: %s", joined)
 }
 
@@ -241,6 +244,9 @@ type dirtyStatusRunner struct{}
 func (dirtyStatusRunner) Run(dir string, args ...string) ([]byte, error) {
 	if len(args) >= 2 && args[0] == "status" && args[1] == "--porcelain" {
 		return []byte(" M foo.go\n"), nil
+	}
+	if len(args) > 0 && args[0] == "ls-files" {
+		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected git call: %v", args)
 }
@@ -256,6 +262,9 @@ func (failingRemoveRunner) Run(dir string, args ...string) ([]byte, error) {
 		return nil, nil
 	case len(args) >= 2 && args[0] == "worktree" && args[1] == "remove":
 		return []byte("permission denied"), errors.New("exit status 128")
+	}
+	if len(args) > 0 && args[0] == "ls-files" {
+		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected git call: %s", joined)
 }
